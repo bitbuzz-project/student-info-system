@@ -41,6 +41,22 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+// Helper function to get academic year from semester code
+function getAcademicYearFromSemester(semesterCode) {
+  if (!semesterCode) return 0;
+  
+  const semesterMap = {
+    'S1': 1, 'S2': 1,  // Année 1
+    'S3': 2, 'S4': 2,  // Année 2
+    'S5': 3, 'S6': 3,  // Année 3
+    'S7': 4, 'S8': 4,  // Année 4
+    'S9': 5, 'S10': 5, // Année 5
+    'S11': 6, 'S12': 6 // Année 6
+  };
+  
+  return semesterMap[semesterCode] || 0;
+}
+
 // Routes
 
 // Health check
@@ -152,22 +168,26 @@ app.get('/student/me', authenticateToken, async (req, res) => {
   }
 });
 
-// Get current student grades
+// Get current student grades with ELEMENT_PEDAGOGI integration
 app.get('/student/grades', authenticateToken, async (req, res) => {
   try {
     const { year, session } = req.query;
     
     let query = `
       SELECT 
-        cod_anu,
-        cod_ses,
-        cod_elp,
-        lib_elp,
-        cod_nel,
-        not_elp,
-        cod_tre
-      FROM grades 
-      WHERE cod_etu = (
+        g.cod_anu,
+        g.cod_ses,
+        g.cod_elp,
+        g.not_elp,
+        g.cod_tre,
+        ep.cod_nel,
+        ep.cod_pel,
+        ep.lib_elp,
+        ep.lic_elp,
+        ep.lib_elp_arb
+      FROM grades g 
+      LEFT JOIN element_pedagogi ep ON g.cod_elp = ep.cod_elp
+      WHERE g.cod_etu = (
         SELECT cod_etu FROM students WHERE id = $1
       )
     `;
@@ -176,46 +196,64 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
     let paramIndex = 2;
     
     if (year) {
-      query += ` AND cod_anu = ${paramIndex}`;
+      query += ` AND g.cod_anu = ${paramIndex}`;
       params.push(year);
       paramIndex++;
     }
     
     if (session) {
-      query += ` AND cod_ses = ${paramIndex}`;
+      query += ` AND g.cod_ses = ${paramIndex}`;
       params.push(session);
       paramIndex++;
     }
     
-    query += ` ORDER BY cod_anu DESC, cod_ses, cod_nel, lib_elp`;
+    query += ` ORDER BY g.cod_anu DESC, g.cod_ses, ep.cod_pel, ep.lib_elp`;
     
     const result = await pool.query(query, params);
     
-    // Group grades by year and session
-    const gradesByYear = {};
+    // Organize grades by academic year and semester
+    const gradesByAcademicYear = {};
+    
     result.rows.forEach(grade => {
-      const year = grade.cod_anu;
+      const studyYear = grade.cod_anu;
       const session = grade.cod_ses;
+      const semester = grade.cod_pel; // S1, S2, S3, etc.
+      const academicYear = getAcademicYearFromSemester(semester);
       
-      if (!gradesByYear[year]) {
-        gradesByYear[year] = {};
+      // Skip if we can't determine academic year
+      if (academicYear === 0) return;
+      
+      // Initialize structure
+      if (!gradesByAcademicYear[studyYear]) {
+        gradesByAcademicYear[studyYear] = {};
       }
       
-      if (!gradesByYear[year][session]) {
-        gradesByYear[year][session] = [];
+      if (!gradesByAcademicYear[studyYear][session]) {
+        gradesByAcademicYear[studyYear][session] = {};
       }
       
-      gradesByYear[year][session].push({
+      if (!gradesByAcademicYear[studyYear][session][academicYear]) {
+        gradesByAcademicYear[studyYear][session][academicYear] = {};
+      }
+      
+      if (!gradesByAcademicYear[studyYear][session][academicYear][semester]) {
+        gradesByAcademicYear[studyYear][session][academicYear][semester] = [];
+      }
+      
+      gradesByAcademicYear[studyYear][session][academicYear][semester].push({
         cod_elp: grade.cod_elp,
-        lib_elp: grade.lib_elp,
+        lib_elp: grade.lib_elp || 'Module non trouvé',
+        lib_elp_arb: grade.lib_elp_arb || 'الوحدة غير موجودة',
+        lic_elp: grade.lic_elp,
         cod_nel: grade.cod_nel,
+        cod_pel: grade.cod_pel,
         not_elp: grade.not_elp,
         cod_tre: grade.cod_tre
       });
     });
     
     res.json({
-      grades: gradesByYear,
+      grades: gradesByAcademicYear,
       total_grades: result.rows.length
     });
     
@@ -230,18 +268,18 @@ app.get('/student/grade-stats', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT 
-        cod_anu,
-        cod_ses,
+        g.cod_anu,
+        g.cod_ses,
         COUNT(*) as total_subjects,
-        AVG(CASE WHEN not_elp IS NOT NULL THEN not_elp END) as average_grade,
-        COUNT(CASE WHEN not_elp >= 10 THEN 1 END) as passed_subjects,
-        COUNT(CASE WHEN not_elp < 10 THEN 1 END) as failed_subjects
-      FROM grades 
-      WHERE cod_etu = (
+        AVG(CASE WHEN g.not_elp IS NOT NULL THEN g.not_elp END) as average_grade,
+        COUNT(CASE WHEN g.not_elp >= 10 THEN 1 END) as passed_subjects,
+        COUNT(CASE WHEN g.not_elp < 10 THEN 1 END) as failed_subjects
+      FROM grades g 
+      WHERE g.cod_etu = (
         SELECT cod_etu FROM students WHERE id = $1
       )
-      GROUP BY cod_anu, cod_ses
-      ORDER BY cod_anu DESC, cod_ses
+      GROUP BY g.cod_anu, g.cod_ses
+      ORDER BY g.cod_anu DESC, g.cod_ses
     `, [req.user.studentId]);
     
     res.json({
@@ -271,30 +309,30 @@ app.get('/students/search', authenticateToken, async (req, res) => {
     let paramIndex = 1;
     
     if (cin) {
-      query += ` AND cin_ind ILIKE $${paramIndex}`;
+      query += ` AND cin_ind ILIKE ${paramIndex}`;
       params.push(`%${cin}%`);
       paramIndex++;
     }
     
     if (nom) {
-      query += ` AND lib_nom_pat_ind ILIKE $${paramIndex}`;
+      query += ` AND lib_nom_pat_ind ILIKE ${paramIndex}`;
       params.push(`%${nom}%`);
       paramIndex++;
     }
     
     if (prenom) {
-      query += ` AND lib_pr1_ind ILIKE $${paramIndex}`;
+      query += ` AND lib_pr1_ind ILIKE ${paramIndex}`;
       params.push(`%${prenom}%`);
       paramIndex++;
     }
     
     if (etape) {
-      query += ` AND cod_etp = $${paramIndex}`;
+      query += ` AND cod_etp = ${paramIndex}`;
       params.push(etape);
       paramIndex++;
     }
     
-    query += ` ORDER BY lib_nom_pat_ind, lib_pr1_ind LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    query += ` ORDER BY lib_nom_pat_ind, lib_pr1_ind LIMIT ${paramIndex} OFFSET ${paramIndex + 1}`;
     params.push(limit, offset);
     
     const result = await pool.query(query, params);
@@ -341,6 +379,7 @@ app.get('/stats', authenticateToken, async (req, res) => {
   try {
     const totalStudents = await pool.query('SELECT COUNT(*) FROM students');
     const totalGrades = await pool.query('SELECT COUNT(*) FROM grades');
+    const totalElements = await pool.query('SELECT COUNT(*) FROM element_pedagogi');
     const byEtape = await pool.query(`
       SELECT lib_etp, COUNT(*) as count 
       FROM students 
@@ -357,12 +396,35 @@ app.get('/stats', authenticateToken, async (req, res) => {
     res.json({
       total_students: parseInt(totalStudents.rows[0].count),
       total_grades: parseInt(totalGrades.rows[0].count),
+      total_elements: parseInt(totalElements.rows[0].count),
       by_etape: byEtape.rows,
       by_year: byYear.rows
     });
     
   } catch (error) {
     console.error('Get stats error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get element pedagogi data (for debugging)
+app.get('/element-pedagogi', authenticateToken, async (req, res) => {
+  try {
+    const { limit = 50, offset = 0 } = req.query;
+    
+    const result = await pool.query(`
+      SELECT * FROM element_pedagogi 
+      ORDER BY cod_pel, lib_elp
+      LIMIT $1 OFFSET $2
+    `, [limit, offset]);
+    
+    res.json({
+      elements: result.rows,
+      total: result.rows.length
+    });
+    
+  } catch (error) {
+    console.error('Get element pedagogi error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

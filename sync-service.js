@@ -42,30 +42,37 @@ const oracleConfig = {
   connectString: `${process.env.ORACLE_HOST}:${process.env.ORACLE_PORT}/${process.env.ORACLE_SID}`
 };
 
-// Updated Oracle query - get all needed data from ELEMENT_PEDAGOGI
+// Oracle query to get element pedagogi data
+const ELEMENT_PEDAGOGI_QUERY = `
+SELECT 
+  e.COD_ELP, 
+  e.COD_CMP, 
+  e.COD_NEL, 
+  e.COD_PEL, 
+  e.LIB_ELP, 
+  e.LIC_ELP, 
+  fix_encoding(e.LIB_ELP_ARB) as LIB_ELP_ARB
+FROM ELEMENT_PEDAGOGI e 
+WHERE COD_CMP = 'FJP'
+`;
+
+// Updated grades query with better joins
 const GRADES_QUERY = `
 SELECT 
   i.COD_ETU, 
   r.COD_ANU, 
   r.COD_SES, 
   r.COD_ELP, 
-  ep.LIB_ELP, 
-  ep.COD_NEL,
-  ep.COD_PEL,
-  ep.LIC_ELP,
-  fix_encoding(ep.LIB_ELP_ARB) as LIB_ELP_ARB,
   r.NOT_ELP, 
   r.COD_TRE
 FROM RESULTAT_ELP r
 JOIN INDIVIDU i ON r.COD_IND = i.COD_IND
-JOIN ELEMENT_PEDAGOGI ep ON r.COD_ELP = ep.COD_ELP
 JOIN INS_ADM_ETP iae ON r.COD_IND = iae.COD_IND AND r.COD_ANU = iae.COD_ANU
 WHERE r.COD_ADM = 1 
   AND r.COD_ANU = 2023
   AND iae.COD_CMP = 'FJP'
   AND iae.ETA_IAE = 'E'
   AND iae.TEM_IAE_PRM = 'O'
-  AND ep.COD_CMP = 'FJP'
 `;
 
 const ORACLE_QUERY = `
@@ -137,7 +144,10 @@ async function syncStudents() {
     oracleConnection = await oracledb.getConnection(oracleConfig);
     logger.info('✓ Oracle connection successful');
     
-    // Sync students first
+    // Sync element pedagogi first
+    await syncElementPedagogi(oracleConnection, pgClient);
+    
+    // Sync students
     await syncStudentsData(oracleConnection, pgClient);
     
     // Sync grades
@@ -170,6 +180,102 @@ async function syncStudents() {
       pgClient.release();
     }
   }
+}
+
+async function syncElementPedagogi(oracleConnection, pgClient) {
+  logger.info('Syncing element pedagogi data...');
+  
+  // Create table if not exists
+  await pgClient.query(`
+    CREATE TABLE IF NOT EXISTS element_pedagogi (
+      id SERIAL PRIMARY KEY,
+      cod_elp VARCHAR(20) UNIQUE NOT NULL,
+      cod_cmp VARCHAR(20),
+      cod_nel VARCHAR(20),
+      cod_pel VARCHAR(20),
+      lib_elp VARCHAR(200),
+      lic_elp VARCHAR(200),
+      lib_elp_arb VARCHAR(200),
+      last_sync TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  
+  // Fetch data from Oracle
+  const result = await oracleConnection.execute(ELEMENT_PEDAGOGI_QUERY);
+  const elements = result.rows;
+  
+  logger.info(`✓ Fetched ${elements.length} elements from Oracle`);
+  
+  if (elements.length === 0) {
+    logger.warn('No elements found in Oracle database');
+    return;
+  }
+  
+  // Begin transaction
+  await pgClient.query('BEGIN');
+  
+  let processedCount = 0;
+  let updatedCount = 0;
+  let insertedCount = 0;
+  
+  // Process elements in batches
+  const batchSize = 100;
+  for (let i = 0; i < elements.length; i += batchSize) {
+    const batch = elements.slice(i, i + batchSize);
+    
+    for (const element of batch) {
+      const [cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb] = element;
+      
+      // Check if element exists
+      const existingElement = await pgClient.query(
+        'SELECT id FROM element_pedagogi WHERE cod_elp = $1', 
+        [cod_elp]
+      );
+      
+      const isUpdate = existingElement.rows.length > 0;
+      
+      // Upsert element
+      await pgClient.query(`
+        INSERT INTO element_pedagogi (
+          cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb, last_sync
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (cod_elp) DO UPDATE SET
+          cod_cmp = EXCLUDED.cod_cmp,
+          cod_nel = EXCLUDED.cod_nel,
+          cod_pel = EXCLUDED.cod_pel,
+          lib_elp = EXCLUDED.lib_elp,
+          lic_elp = EXCLUDED.lic_elp,
+          lib_elp_arb = EXCLUDED.lib_elp_arb,
+          last_sync = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      `, [cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb]);
+      
+      if (isUpdate) {
+        updatedCount++;
+      } else {
+        insertedCount++;
+      }
+      
+      processedCount++;
+    }
+    
+    const progress = Math.round((i + batch.length) / elements.length * 100);
+    logger.info(`Elements Progress: ${progress}% (${processedCount}/${elements.length})`);
+  }
+  
+  await pgClient.query('COMMIT');
+  
+  // Log sync success
+  await pgClient.query(`
+    INSERT INTO sync_log (sync_type, records_processed, sync_status)
+    VALUES ('element_pedagogi', $1, 'success')
+  `, [processedCount]);
+  
+  logger.info(`✓ Element pedagogi sync completed: ${processedCount} total, ${insertedCount} new, ${updatedCount} updated`);
 }
 
 async function syncStudentsData(oracleConnection, pgClient) {
@@ -333,11 +439,7 @@ async function syncGradesData(oracleConnection, pgClient) {
     const batch = grades.slice(i, i + batchSize);
     
     for (const grade of batch) {
-      const [
-        cod_etu, cod_anu, cod_ses, cod_elp, 
-        lib_elp, cod_nel, cod_pel, lic_elp, lib_elp_arb,
-        not_elp, cod_tre
-      ] = grade;
+      const [cod_etu, cod_anu, cod_ses, cod_elp, not_elp, cod_tre] = grade;
       
       // Check if student exists first
       const studentExists = await pgClient.query(
@@ -347,7 +449,7 @@ async function syncGradesData(oracleConnection, pgClient) {
       
       if (studentExists.rows.length === 0) {
         skippedCount++;
-        continue; // Skip this grade if student doesn't exist
+        continue;
       }
       
       // Check if grade exists
@@ -358,28 +460,19 @@ async function syncGradesData(oracleConnection, pgClient) {
       
       const isUpdate = existingGrade.rows.length > 0;
       
-      // Upsert grade
+      // Upsert grade (simpler version, element_pedagogi will be joined in the API)
       await pgClient.query(`
         INSERT INTO grades (
-          cod_etu, cod_anu, cod_ses, cod_elp, lib_elp, 
-          cod_nel, cod_pel, lic_elp, lib_elp_arb, not_elp, cod_tre, last_sync
+          cod_etu, cod_anu, cod_ses, cod_elp, not_elp, cod_tre, last_sync
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP
+          $1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP
         )
         ON CONFLICT (cod_etu, cod_elp, cod_anu, cod_ses) DO UPDATE SET
-          lib_elp = EXCLUDED.lib_elp,
-          cod_nel = EXCLUDED.cod_nel,
-          cod_pel = EXCLUDED.cod_pel,
-          lic_elp = EXCLUDED.lic_elp,
-          lib_elp_arb = EXCLUDED.lib_elp_arb,
           not_elp = EXCLUDED.not_elp,
           cod_tre = EXCLUDED.cod_tre,
           last_sync = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
-      `, [
-        cod_etu, cod_anu, cod_ses, cod_elp, lib_elp, 
-        cod_nel, cod_pel, lic_elp, lib_elp_arb, not_elp, cod_tre
-      ]);
+      `, [cod_etu, cod_anu, cod_ses, cod_elp, not_elp, cod_tre]);
       
       if (isUpdate) {
         updatedCount++;
