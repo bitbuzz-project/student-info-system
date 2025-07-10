@@ -1,0 +1,1434 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>نظام معلومات الطلاب - Student Information System</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            width: 100%;
+            max-width: 1200px;
+            min-height: 600px;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            font-weight: 300;
+        }
+
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .login-section {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+            text-align: right;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #2c3e50;
+            font-size: 1.1em;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 1.1em;
+            transition: all 0.3s ease;
+            text-align: right;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #3498db;
+            box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 100%;
+            margin-top: 20px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(52, 152, 219, 0.3);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .student-info {
+            display: none;
+            animation: fadeIn 0.5s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .info-card {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-left: 5px solid #3498db;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .info-row:last-child {
+            border-bottom: none;
+        }
+
+        .info-label {
+            font-weight: 600;
+            color: #2c3e50;
+            flex: 1;
+        }
+
+        .info-value {
+            flex: 2;
+            text-align: left;
+            color: #34495e;
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+
+        .alert-error {
+            background: #fee;
+            color: #c33;
+            border: 1px solid #fcc;
+        }
+
+        .alert-success {
+            background: #efe;
+            color: #3c3;
+            border: 1px solid #cfc;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .logout-btn {
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+            margin-top: 30px;
+        }
+
+        .logout-btn:hover {
+            box-shadow: 0 5px 15px rgba(231, 76, 60, 0.3);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .stat-number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #3498db;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            color: #7f8c8d;
+            font-size: 0.9em;
+        }
+
+        /* Grades Section Styles */
+        .tab-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .tab-buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        .tab-button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            font-size: 1em;
+        }
+
+        .tab-button.active {
+            background: #3498db;
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.3);
+        }
+
+        .tab-button:not(.active) {
+            background: #ecf0f1;
+            color: #2c3e50;
+        }
+
+        .tab-button:hover {
+            transform: translateY(-2px);
+        }
+
+        .grades-filters {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .filter-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .filter-group label {
+            font-weight: 600;
+            color: #2c3e50;
+            white-space: nowrap;
+        }
+
+        .filter-group select {
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s ease;
+            min-width: 180px;
+        }
+
+        .filter-group select:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+
+        .grade-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .grade-table th,
+        .grade-table td {
+            padding: 15px;
+            text-align: center;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .grade-table th {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            font-weight: 600;
+            color: #2c3e50;
+            font-size: 1.1em;
+        }
+
+        .grade-table tr:hover {
+            background: #f8f9fa;
+        }
+
+        .grade-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        .grade-value {
+            font-weight: bold;
+            padding: 8px 12px;
+            border-radius: 6px;
+            color: white;
+            font-size: 1.1em;
+            min-width: 60px;
+            display: inline-block;
+        }
+
+        .grade-pass {
+            background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
+            box-shadow: 0 2px 8px rgba(46, 204, 113, 0.3);
+        }
+
+        .grade-fail {
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+            box-shadow: 0 2px 8px rgba(231, 76, 60, 0.3);
+        }
+
+        .grade-absent {
+            background: linear-gradient(135deg, #95a5a6 0%, #7f8c8d 100%);
+            box-shadow: 0 2px 8px rgba(149, 165, 166, 0.3);
+        }
+
+        .year-section {
+            margin-bottom: 30px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        .year-header {
+            background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+            color: white;
+            padding: 20px;
+            font-weight: 600;
+            text-align: center;
+            font-size: 1.2em;
+        }
+
+        .session-section {
+            margin-bottom: 0;
+        }
+
+        .session-header {
+            background: linear-gradient(135deg, #ecf0f1 0%, #d5dbdb 100%);
+            color: #2c3e50;
+            padding: 15px 20px;
+            font-weight: 600;
+            border-bottom: 2px solid #bdc3c7;
+            font-size: 1.1em;
+        }
+
+        .stats-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .summary-card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease;
+        }
+
+        .summary-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .summary-number {
+            font-size: 2em;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .summary-label {
+            font-size: 0.9em;
+            color: #7f8c8d;
+            font-weight: 500;
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 40px;
+            color: #7f8c8d;
+            font-size: 1.1em;
+        }
+
+        .no-data i {
+            font-size: 3em;
+            margin-bottom: 15px;
+            display: block;
+            opacity: 0.5;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                margin: 10px;
+                max-width: calc(100% - 20px);
+            }
+            
+            .header h1 {
+                font-size: 2em;
+            }
+            
+            .header p {
+                font-size: 1em;
+            }
+            
+            .content {
+                padding: 20px;
+            }
+            
+            .tab-header {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .tab-buttons {
+                justify-content: center;
+            }
+            
+            .grades-filters {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .filter-group {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .filter-group select {
+                min-width: 100%;
+            }
+            
+            .info-row {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            
+            .info-label {
+                margin-bottom: 5px;
+            }
+            
+            .grade-table {
+                font-size: 0.9em;
+            }
+            
+            .grade-table th,
+            .grade-table td {
+                padding: 10px 5px;
+            }
+            
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats-summary {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            /* Mobile semester layout */
+            .semester-grid {
+                grid-template-columns: 1fr !important;
+                gap: 10px !important;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .grade-table th,
+            .grade-table td {
+                padding: 8px 3px;
+                font-size: 0.8em;
+            }
+            
+            .grade-value {
+                padding: 6px 8px;
+                font-size: 0.9em;
+            }
+            
+            .stats-summary {
+                grid-template-columns: 1fr;
+            }
+            
+            .grade-table th:nth-child(3),
+            .grade-table td:nth-child(3) {
+                display: none; /* Hide Arabic name on very small screens */
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>نظام معلومات الطلاب</h1>
+            <p>Student Information System</p>
+        </div>
+
+        <div class="content">
+            <!-- Login Section -->
+            <div id="loginSection" class="login-section">
+                <h2 style="margin-bottom: 30px; color: #2c3e50;">تسجيل الدخول - Login</h2>
+                
+                <div id="alertContainer"></div>
+                
+                <form id="loginForm">
+                    <div class="form-group">
+                        <label for="cin">رقم بطاقة التعريف الوطنية - CIN:</label>
+                        <input type="text" id="cin" name="cin" required placeholder="أدخل رقم بطاقة التعريف">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="password">كلمة المرور - Password:</label>
+                        <input type="password" id="password" name="password" required placeholder="أدخل كلمة المرور">
+                    </div>
+                    
+                    <button type="submit" class="btn" id="loginBtn">
+                        تسجيل الدخول - Login
+                    </button>
+                </form>
+            </div>
+
+            <!-- Student Info Section -->
+            <div id="studentInfo" class="student-info">
+                <div class="tab-header">
+                    <h2 style="color: #2c3e50;">معلومات الطالب - Student Information</h2>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <div class="tab-buttons">
+                            <button id="showInfoBtn" class="tab-button active">
+                                المعلومات - Info
+                            </button>
+                            <button id="showGradesBtn" class="tab-button">
+                                النقط - Grades
+                            </button>
+                        </div>
+                        <button id="logoutBtn" class="btn logout-btn" style="width: auto; margin: 0; padding: 12px 24px;">
+                            تسجيل الخروج - Logout
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Personal Information Tab -->
+                <div id="personalInfoTab">
+                    <div class="info-card">
+                        <h3 style="margin-bottom: 20px; color: #2c3e50; text-align: center;">المعلومات الشخصية - Personal Information</h3>
+                        
+                        <div class="info-row">
+                            <div class="info-label">رقم الطالب - Student Code:</div>
+                            <div class="info-value" id="studentCode">-</div>
+                        </div>
+                        
+                        <div class="info-row">
+                            <div class="info-label">الاسم الكامل - Full Name:</div>
+                            <div class="info-value" id="fullName">-</div>
+                        </div>
+                        
+                        <div class="info-row">
+                            <div class="info-label">الاسم بالعربية - Arabic Name:</div>
+                            <div class="info-value" id="arabicName">-</div>
+                        </div>
+                        
+                        <div class="info-row">
+                            <div class="info-label">رقم بطاقة التعريف - CIN:</div>
+                            <div class="info-value" id="cinNumber">-</div>
+                        </div>
+                        
+                        <div class="info-row">
+                            <div class="info-label">تاريخ الميلاد - Date of Birth:</div>
+                            <div class="info-value" id="dateOfBirth">-</div>
+                        </div>
+                        
+                        <div class="info-row">
+                            <div class="info-label">مكان الميلاد - Place of Birth:</div>
+                            <div class="info-value" id="placeOfBirth">-</div>
+                        </div>
+                        
+                        <div class="info-row">
+                            <div class="info-label">الجنس - Gender:</div>
+                            <div class="info-value" id="gender">-</div>
+                        </div>
+                    </div>
+
+                    <div class="info-card">
+                        <h3 style="margin-bottom: 20px; color: #2c3e50; text-align: center;">المعلومات الأكاديمية - Academic Information</h3>
+                        
+                        <div class="info-row">
+                            <div class="info-label">التخصص - Specialization:</div>
+                            <div class="info-value" id="specialization">-</div>
+                        </div>
+                        
+                        <div class="info-row">
+                            <div class="info-label">رخصة التخصص - License:</div>
+                            <div class="info-value" id="license">-</div>
+                        </div>
+                        
+                        <div class="info-row">
+                            <div class="info-label">السنة الجامعية - Academic Year:</div>
+                            <div class="info-value" id="academicYear">-</div>
+                        </div>
+                        
+                        <div class="info-row">
+                            <div class="info-label">الدبلوم - Diploma:</div>
+                            <div class="info-value" id="diploma">-</div>
+                        </div>
+                        
+                        <div class="stats-grid">
+                            <div class="stat-card">
+                                <div class="stat-number" id="cycleInscriptions">0</div>
+                                <div class="stat-label">تسجيلات الدورة - Cycle Inscriptions</div>
+                            </div>
+                            
+                            <div class="stat-card">
+                                <div class="stat-number" id="stageInscriptions">0</div>
+                                <div class="stat-label">تسجيلات المرحلة - Stage Inscriptions</div>
+                            </div>
+                            
+                            <div class="stat-card">
+                                <div class="stat-number" id="diplomaInscriptions">0</div>
+                                <div class="stat-label">تسجيلات الدبلوم - Diploma Inscriptions</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="info-card">
+                        <div class="info-row">
+                            <div class="info-label">آخر تحديث - Last Update:</div>
+                            <div class="info-value" id="lastUpdate">-</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Grades Tab -->
+                <div id="gradesTab" style="display: none;">
+                    <div class="info-card">
+                        <h3 style="margin-bottom: 20px; color: #2c3e50; text-align: center;">إحصائيات النقط - Grade Statistics</h3>
+                        <div id="gradeStatsContainer">
+                            <div class="no-data">
+                                <i>📊</i>
+                                جاري تحميل الإحصائيات...<br>
+                                Loading statistics...
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="info-card">
+                        <h3 style="margin-bottom: 20px; color: #2c3e50; text-align: center;">النقط التفصيلية - Detailed Grades</h3>
+                        
+                        <div class="grades-filters">
+                            <div class="filter-group">
+                                <label for="yearFilter">السنة الدراسية - Academic Year:</label>
+                                <select id="yearFilter">
+                                    <option value="">جميع السنوات - All Years</option>
+                                </select>
+                            </div>
+                            
+                            <div class="filter-group">
+                                <label for="sessionFilter">الدورة - Session:</label>
+                                <select id="sessionFilter">
+                                    <option value="">جميع الدورات - All Sessions</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div id="gradesContainer">
+                            <div class="no-data">
+                                <i>📋</i>
+                                جاري تحميل النقط...<br>
+                                Loading grades...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Loading Section -->
+            <div id="loadingSection" class="loading" style="display: none;">
+                <div class="loading-spinner"></div>
+                <p>جاري التحميل... Loading...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration - Make sure this matches your server
+        const API_BASE_URL = 'http://localhost:3000'; // Verify this is correct
+        
+        // Test API connection on page load
+        async function testAPIConnection() {
+            try {
+                console.log('Testing API connection to:', API_BASE_URL);
+                const response = await fetch(`${API_BASE_URL}/health`);
+                const data = await response.json();
+                console.log('API health check successful:', data);
+                return true;
+            } catch (error) {
+                console.error('API connection failed:', error);
+                showAlert('خطأ في الاتصال بالخادم - Server connection error');
+                return false;
+            }
+        }
+        
+        let authToken = localStorage.getItem('authToken');
+
+        // DOM Elements
+        const loginSection = document.getElementById('loginSection');
+        const studentInfo = document.getElementById('studentInfo');
+        const loadingSection = document.getElementById('loadingSection');
+        const loginForm = document.getElementById('loginForm');
+        const logoutBtn = document.getElementById('logoutBtn');
+        const alertContainer = document.getElementById('alertContainer');
+        const showInfoBtn = document.getElementById('showInfoBtn');
+        const showGradesBtn = document.getElementById('showGradesBtn');
+        const personalInfoTab = document.getElementById('personalInfoTab');
+        const gradesTab = document.getElementById('gradesTab');
+        const yearFilter = document.getElementById('yearFilter');
+        const sessionFilter = document.getElementById('sessionFilter');
+
+        // Current tab state
+        let currentTab = 'info';
+        let currentGrades = null;
+        let currentGradeStats = null;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            // Test API connection first
+            testAPIConnection();
+            
+            if (authToken) {
+                loadStudentInfo();
+            }
+            
+            // Tab switching
+            showInfoBtn.addEventListener('click', () => switchTab('info'));
+            showGradesBtn.addEventListener('click', () => switchTab('grades'));
+            
+            // Filter events
+            yearFilter.addEventListener('change', filterGrades);
+            sessionFilter.addEventListener('change', filterGrades);
+        });
+
+        // Switch between tabs
+        function switchTab(tab) {
+            currentTab = tab;
+            
+            if (tab === 'info') {
+                personalInfoTab.style.display = 'block';
+                gradesTab.style.display = 'none';
+                showInfoBtn.classList.add('active');
+                showGradesBtn.classList.remove('active');
+            } else if (tab === 'grades') {
+                personalInfoTab.style.display = 'none';
+                gradesTab.style.display = 'block';
+                showInfoBtn.classList.remove('active');
+                showGradesBtn.classList.add('active');
+                
+                // Load grades if not already loaded
+                if (!currentGrades) {
+                    loadStudentGrades();
+                }
+            }
+        }
+
+        // Show alert
+        function showAlert(message, type = 'error') {
+            alertContainer.innerHTML = `
+                <div class="alert alert-${type}">
+                    ${message}
+                </div>
+            `;
+            setTimeout(() => {
+                alertContainer.innerHTML = '';
+            }, 5000);
+        }
+
+        // Show loading
+        function showLoading() {
+            loginSection.style.display = 'none';
+            studentInfo.style.display = 'none';
+            loadingSection.style.display = 'block';
+        }
+
+        // Hide loading
+        function hideLoading() {
+            loadingSection.style.display = 'none';
+        }
+
+        // Show login section
+        function showLogin() {
+            hideLoading();
+            loginSection.style.display = 'block';
+            studentInfo.style.display = 'none';
+        }
+
+        // Show student info section
+        function showStudentInfo() {
+            hideLoading();
+            loginSection.style.display = 'none';
+            studentInfo.style.display = 'block';
+        }
+
+        // Login form submission
+        loginForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const cin = document.getElementById('cin').value.trim();
+            const password = document.getElementById('password').value.trim();
+            
+            if (!cin || !password) {
+                showAlert('يرجى إدخال جميع البيانات المطلوبة - Please enter all required fields');
+                return;
+            }
+            
+            showLoading();
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ cin, password }),
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    authToken = data.token;
+                    localStorage.setItem('authToken', authToken);
+                    showAlert('تم تسجيل الدخول بنجاح - Login successful', 'success');
+                    setTimeout(() => {
+                        loadStudentInfo();
+                    }, 1000);
+                } else {
+                    showLogin();
+                    showAlert(data.error || 'خطأ في تسجيل الدخول - Login failed');
+                }
+            } catch (error) {
+                showLogin();
+                showAlert('خطأ في الاتصال بالخادم - Server connection error');
+                console.error('Login error:', error);
+            }
+        });
+
+        // Load student information
+        async function loadStudentInfo() {
+            if (!authToken) {
+                showLogin();
+                return;
+            }
+            
+            showLoading();
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/student/me`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                    },
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    populateStudentInfo(data.student);
+                    switchTab('info'); // Start with info tab
+                    showStudentInfo();
+                } else {
+                    localStorage.removeItem('authToken');
+                    authToken = null;
+                    showLogin();
+                    showAlert(data.error || 'خطأ في تحميل المعلومات - Failed to load information');
+                }
+            } catch (error) {
+                showLogin();
+                showAlert('خطأ في الاتصال بالخادم - Server connection error');
+                console.error('Load student info error:', error);
+            }
+        }
+
+        // Load student grades with better error handling
+        async function loadStudentGrades() {
+            if (!authToken) {
+                showLogin();
+                return;
+            }
+            
+            try {
+                console.log('Loading student grades...');
+                console.log('Auth token:', authToken ? 'Present' : 'Missing');
+                
+                // Test API connection first
+                const healthCheck = await fetch(`${API_BASE_URL}/health`);
+                if (!healthCheck.ok) {
+                    throw new Error('Server not responding');
+                }
+                
+                // Load grades
+                console.log('Fetching grades from:', `${API_BASE_URL}/student/grades`);
+                const gradesResponse = await fetch(`${API_BASE_URL}/student/grades`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                });
+                
+                console.log('Grades response status:', gradesResponse.status);
+                console.log('Grades response headers:', gradesResponse.headers);
+                
+                if (!gradesResponse.ok) {
+                    const errorText = await gradesResponse.text();
+                    console.error('Grades API error:', errorText);
+                    throw new Error(`Grades API error: ${gradesResponse.status} - ${errorText}`);
+                }
+                
+                const gradesData = await gradesResponse.json();
+                console.log('Grades response:', gradesData);
+                
+                // Load grade statistics
+                console.log('Fetching stats from:', `${API_BASE_URL}/student/grade-stats`);
+                const statsResponse = await fetch(`${API_BASE_URL}/student/grade-stats`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                });
+                
+                console.log('Stats response status:', statsResponse.status);
+                
+                if (!statsResponse.ok) {
+                    const errorText = await statsResponse.text();
+                    console.error('Stats API error:', errorText);
+                    throw new Error(`Stats API error: ${statsResponse.status} - ${errorText}`);
+                }
+                
+                const statsData = await statsResponse.json();
+                console.log('Stats response:', statsData);
+                
+                // Set current data
+                currentGrades = gradesData.grades;
+                currentGradeStats = statsData.statistics;
+                
+                console.log('Current grades:', currentGrades);
+                console.log('Current stats:', currentGradeStats);
+                
+                // Update interface
+                populateGradeFilters();
+                populateGradeStats();
+                displayGrades();
+                
+            } catch (error) {
+                console.error('Load grades error:', error);
+                showAlert(`خطأ في تحميل النقط - ${error.message}`);
+                
+                // Show error details in grades container
+                const container = document.getElementById('gradesContainer');
+                container.innerHTML = `
+                    <div class="no-data">
+                        <i>❌</i>
+                        خطأ في تحميل النقط<br>
+                        Error: ${error.message}<br>
+                        <small>Check browser console for details</small>
+                    </div>
+                `;
+            }
+        }
+
+        // Populate grade filters
+        function populateGradeFilters() {
+            if (!currentGrades) return;
+            
+            const years = Object.keys(currentGrades).sort((a, b) => b - a);
+            const sessions = new Set();
+            
+            // Clear existing options
+            yearFilter.innerHTML = '<option value="">جميع السنوات - All Years</option>';
+            
+            years.forEach(year => {
+                const option = document.createElement('option');
+                option.value = year;
+                option.textContent = `${year} - ${parseInt(year) + 1}`;
+                yearFilter.appendChild(option);
+                
+                // Collect all sessions
+                Object.keys(currentGrades[year]).forEach(session => {
+                    sessions.add(session);
+                });
+            });
+            
+            // Populate session filter
+            sessionFilter.innerHTML = '<option value="">جميع الدورات - All Sessions</option>';
+            Array.from(sessions).sort().forEach(session => {
+                const option = document.createElement('option');
+                option.value = session;
+                option.textContent = getSessionName(session);
+                sessionFilter.appendChild(option);
+            });
+        }
+
+        // Get academic year from semester code
+        function getAcademicYear(codPel) {
+            if (!codPel) return 0;
+            
+            const semesterMap = {
+                'S1': 1, 'S2': 1,  // Année 1
+                'S3': 2, 'S4': 2,  // Année 2
+                'S5': 3, 'S6': 3,  // Année 3
+                'S7': 4, 'S8': 4,  // Année 4
+                'S9': 5, 'S10': 5, // Année 5
+                'S11': 6, 'S12': 6 // Année 6
+            };
+            
+            return semesterMap[codPel] || 0;
+        }
+
+        // Get semester name in Arabic/French
+        function getSemesterName(codPel) {
+            const semesterNames = {
+                'S1': 'الفصل الأول - Semestre 1',
+                'S2': 'الفصل الثاني - Semestre 2',
+                'S3': 'الفصل الثالث - Semestre 3',
+                'S4': 'الفصل الرابع - Semestre 4',
+                'S5': 'الفصل الخامس - Semestre 5',
+                'S6': 'الفصل السادس - Semestre 6',
+                'S7': 'الفصل السابع - Semestre 7',
+                'S8': 'الفصل الثامن - Semestre 8',
+                'S9': 'الفصل التاسع - Semestre 9',
+                'S10': 'الفصل العاشر - Semestre 10',
+                'S11': 'الفصل الحادي عشر - Semestre 11',
+                'S12': 'الفصل الثاني عشر - Semestre 12'
+            };
+            
+            return semesterNames[codPel] || codPel;
+        }
+
+        // Get academic year name
+        function getAcademicYearName(year) {
+            const yearNames = {
+                1: 'السنة الأولى - 1ère Année',
+                2: 'السنة الثانية - 2ème Année',
+                3: 'السنة الثالثة - 3ème Année',
+                4: 'السنة الرابعة - 4ème Année',
+                5: 'السنة الخامسة - 5ème Année',
+                6: 'السنة السادسة - 6ème Année'
+            };
+            
+            return yearNames[year] || `السنة ${year} - Année ${year}`;
+        }
+
+        // Organize grades by academic year and semester
+        function organizeGradesByYearSemester(grades) {
+            const organized = {};
+            
+            grades.forEach(grade => {
+                const academicYear = getAcademicYear(grade.cod_pel);
+                const semester = grade.cod_pel;
+                
+                if (!organized[academicYear]) {
+                    organized[academicYear] = {};
+                }
+                
+                if (!organized[academicYear][semester]) {
+                    organized[academicYear][semester] = [];
+                }
+                
+                organized[academicYear][semester].push(grade);
+            });
+            
+            return organized;
+        }
+
+        // Get session name in Arabic/English
+        function getSessionName(sessionCode) {
+            const sessionNames = {
+                '1': 'دورة عادية - Session Normale',
+                '2': 'دورة الاستدراك - Session Rattrapage',
+                'S1': 'الفصل الأول - Semester 1',
+                'S2': 'الفصل الثاني - Semester 2'
+            };
+            return sessionNames[sessionCode] || `الدورة ${sessionCode} - Session ${sessionCode}`;
+        }
+
+        // Populate grade statistics
+        function populateGradeStats() {
+            const container = document.getElementById('gradeStatsContainer');
+            container.innerHTML = '';
+            
+            if (!currentGradeStats || currentGradeStats.length === 0) {
+                container.innerHTML = `
+                    <div class="no-data">
+                        <i>📊</i>
+                        لا توجد إحصائيات متاحة<br>
+                        No statistics available
+                    </div>
+                `;
+                return;
+            }
+            
+            currentGradeStats.forEach(stat => {
+                const statCard = document.createElement('div');
+                statCard.className = 'year-section';
+                statCard.innerHTML = `
+                    <div class="year-header">
+                        السنة الدراسية ${stat.academic_year} - ${parseInt(stat.academic_year) + 1} | ${getSessionName(stat.session)}
+                    </div>
+                    <div style="padding: 20px;">
+                        <div class="stats-summary">
+                            <div class="summary-card">
+                                <div class="summary-number" style="color: #3498db;">${stat.total_subjects}</div>
+                                <div class="summary-label">إجمالي المواد<br>Total Subjects</div>
+                            </div>
+                            <div class="summary-card">
+                                <div class="summary-number" style="color: #27ae60;">${stat.passed_subjects}</div>
+                                <div class="summary-label">مواد منجحة<br>Passed</div>
+                            </div>
+                            <div class="summary-card">
+                                <div class="summary-number" style="color: #e74c3c;">${stat.failed_subjects}</div>
+                                <div class="summary-label">مواد راسبة<br>Failed</div>
+                            </div>
+                            <div class="summary-card">
+                                <div class="summary-number" style="color: #9b59b6;">${stat.average_grade || 'N/A'}</div>
+                                <div class="summary-label">المعدل العام<br>Average</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(statCard);
+            });
+        }
+
+        // Display grades based on current filters
+        function displayGrades() {
+            const container = document.getElementById('gradesContainer');
+            container.innerHTML = '';
+            
+            console.log('Displaying grades, currentGrades:', currentGrades); // Debug log
+            
+            if (!currentGrades || Object.keys(currentGrades).length === 0) {
+                container.innerHTML = `
+                    <div class="no-data">
+                        <i>📋</i>
+                        لا توجد نقط متاحة<br>
+                        No grades available
+                    </div>
+                `;
+                return;
+            }
+            
+            const selectedYear = yearFilter.value;
+            const selectedSession = sessionFilter.value;
+            
+            console.log('Selected filters - Year:', selectedYear, 'Session:', selectedSession); // Debug log
+            
+            // Filter grades
+            const filteredGrades = {};
+            
+            Object.keys(currentGrades).forEach(year => {
+                if (selectedYear && year !== selectedYear) return;
+                
+                if (currentGrades[year] && typeof currentGrades[year] === 'object') {
+                    Object.keys(currentGrades[year]).forEach(session => {
+                        if (selectedSession && session !== selectedSession) return;
+                        
+                        if (!filteredGrades[year]) filteredGrades[year] = {};
+                        filteredGrades[year][session] = currentGrades[year][session];
+                    });
+                }
+            });
+            
+            console.log('Filtered grades:', filteredGrades); // Debug log
+            
+            // Display filtered grades
+            if (Object.keys(filteredGrades).length === 0) {
+                container.innerHTML = `
+                    <div class="no-data">
+                        <i>📋</i>
+                        لا توجد نقط متاحة للفلترة المحددة<br>
+                        No grades available for selected filters
+                    </div>
+                `;
+                return;
+            }
+            
+            Object.keys(filteredGrades).sort((a, b) => b - a).forEach(studyYear => {
+                const yearDiv = document.createElement('div');
+                yearDiv.className = 'year-section';
+                
+                const yearHeader = document.createElement('div');
+                yearHeader.className = 'year-header';
+                yearHeader.textContent = `السنة الدراسية ${studyYear} - ${parseInt(studyYear) + 1}`;
+                yearDiv.appendChild(yearHeader);
+                
+                Object.keys(filteredGrades[studyYear]).sort().forEach(session => {
+                    const sessionDiv = document.createElement('div');
+                    sessionDiv.className = 'session-section';
+                    
+                    const sessionHeader = document.createElement('div');
+                    sessionHeader.className = 'session-header';
+                    sessionHeader.textContent = getSessionName(session);
+                    sessionDiv.appendChild(sessionHeader);
+                    
+                    const grades = filteredGrades[studyYear][session];
+                    if (!grades || !Array.isArray(grades)) {
+                        console.warn('Invalid grades data for year', studyYear, 'session', session, ':', grades);
+                        return;
+                    }
+                    
+                    // Organize grades by academic year and semester
+                    const gradesByYearSemester = organizeGradesByYearSemester(grades);
+                    
+                    // Display each academic year
+                    Object.keys(gradesByYearSemester).sort((a, b) => a - b).forEach(academicYear => {
+                        if (academicYear === '0') return; // Skip invalid years
+                        
+                        const academicYearDiv = document.createElement('div');
+                        academicYearDiv.style.cssText = `
+                            margin-bottom: 20px;
+                            border: 1px solid #e0e0e0;
+                            border-radius: 8px;
+                            overflow: hidden;
+                        `;
+                        
+                        const academicYearHeader = document.createElement('div');
+                        academicYearHeader.style.cssText = `
+                            background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+                            color: white;
+                            padding: 15px;
+                            font-weight: 600;
+                            text-align: center;
+                            font-size: 1.1em;
+                        `;
+                        academicYearHeader.textContent = getAcademicYearName(parseInt(academicYear));
+                        academicYearDiv.appendChild(academicYearHeader);
+                        
+                        const semestersDiv = document.createElement('div');
+                        semestersDiv.className = 'semester-grid';
+                        semestersDiv.style.cssText = `
+                            display: grid;
+                            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+                            gap: 20px;
+                            padding: 20px;
+                        `;
+                        
+                        // Display each semester
+                        Object.keys(gradesByYearSemester[academicYear]).sort().forEach(semester => {
+                            const semesterGrades = gradesByYearSemester[academicYear][semester];
+                            
+                            const semesterDiv = document.createElement('div');
+                            semesterDiv.style.cssText = `
+                                border: 1px solid #e0e0e0;
+                                border-radius: 8px;
+                                overflow: hidden;
+                            `;
+                            
+                            const semesterHeader = document.createElement('div');
+                            semesterHeader.style.cssText = `
+                                background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
+                                color: white;
+                                padding: 12px;
+                                font-weight: 600;
+                                text-align: center;
+                            `;
+                            semesterHeader.textContent = getSemesterName(semester);
+                            semesterDiv.appendChild(semesterHeader);
+                            
+                            const table = document.createElement('table');
+                            table.className = 'grade-table';
+                            table.style.margin = '0';
+                            table.innerHTML = `
+                                <thead>
+                                    <tr>
+                                        <th>رمز المادة<br>Subject Code</th>
+                                        <th>اسم المادة<br>Subject Name</th>
+                                        <th>الاسم بالعربية<br>Arabic Name</th>
+                                        <th>النقطة<br>Grade</th>
+                                        <th>كود النتيجة<br>Result Code</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${semesterGrades.map(grade => `
+                                        <tr>
+                                            <td style="font-weight: 600;">${grade.cod_elp || 'N/A'}</td>
+                                            <td style="text-align: right; font-weight: 500;">${grade.lib_elp || 'N/A'}</td>
+                                            <td style="text-align: right; font-weight: 500; color: #27ae60;">${grade.lib_elp_arb || 'غير متاح'}</td>
+                                            <td>
+                                                <span class="grade-value ${getGradeClass(grade.not_elp)}">
+                                                    ${grade.not_elp !== null && grade.not_elp !== undefined ? parseFloat(grade.not_elp).toFixed(2) : 'ABS'}
+                                                </span>
+                                            </td>
+                                            <td style="font-weight: 600; color: #2c3e50;">${grade.cod_tre || '-'}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            `;
+                            
+                            semesterDiv.appendChild(table);
+                            semestersDiv.appendChild(semesterDiv);
+                        });
+                        
+                        academicYearDiv.appendChild(semestersDiv);
+                        sessionDiv.appendChild(academicYearDiv);
+                    });
+                    
+                    yearDiv.appendChild(sessionDiv);
+                });
+                
+                container.appendChild(yearDiv);
+            });_elp !== undefined ? parseFloat(grade.not_elp).toFixed(2) : 'ABS'}
+                
+
+        // Get grade CSS class
+        function getGradeClass(grade) {
+            if (grade === null || grade === undefined) return 'grade-absent';
+            const numGrade = parseFloat(grade);
+            if (numGrade >= 10) return 'grade-pass';
+            return 'grade-fail';
+        }
+
+        // Filter grades based on selected filters
+        function filterGrades() {
+            displayGrades();
+        }
+
+        // Populate student information
+        function populateStudentInfo(student) {
+            document.getElementById('studentCode').textContent = student.cod_etu || '-';
+            document.getElementById('fullName').textContent = student.nom_complet || '-';
+            document.getElementById('arabicName').textContent = student.nom_arabe || '-';
+            document.getElementById('cinNumber').textContent = student.cin || '-';
+            document.getElementById('dateOfBirth').textContent = formatDate(student.date_naissance) || '-';
+            document.getElementById('placeOfBirth').textContent = (student.lieu_naissance || '-') + (student.lieu_naissance_arabe ? ` - ${student.lieu_naissance_arabe}` : '');
+            document.getElementById('gender').textContent = student.sexe === 'M' ? 'ذكر - Male' : student.sexe === 'F' ? 'أنثى - Female' : '-';
+            document.getElementById('specialization').textContent = student.etape || '-';
+            document.getElementById('license').textContent = student.licence_etape || '-';
+            document.getElementById('academicYear').textContent = student.annee_universitaire || '-';
+            document.getElementById('diploma').textContent = student.diplome || '-';
+            document.getElementById('cycleInscriptions').textContent = student.nombre_inscriptions_cycle || '0';
+            document.getElementById('stageInscriptions').textContent = student.nombre_inscriptions_etape || '0';
+            document.getElementById('diplomaInscriptions').textContent = student.nombre_inscriptions_diplome || '0';
+            document.getElementById('lastUpdate').textContent = formatDate(student.derniere_mise_a_jour) || '-';
+        }
+
+        // Format date
+        function formatDate(dateString) {
+            if (!dateString) return '-';
+            try {
+                const date = new Date(dateString);
+                return date.toLocaleDateString('ar-MA', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric'
+                });
+            } catch (error) {
+                return dateString;
+            }
+        }
+
+        // Logout
+        logoutBtn.addEventListener('click', function() {
+            localStorage.removeItem('authToken');
+            authToken = null;
+            currentGrades = null;
+            currentGradeStats = null;
+            document.getElementById('loginForm').reset();
+            showLogin();
+            showAlert('تم تسجيل الخروج بنجاح - Logged out successfully', 'success');
+        });
+
+        // Auto-logout on token expiry
+        setInterval(function() {
+            if (authToken && studentInfo.style.display === 'block') {
+                fetch(`${API_BASE_URL}/student/me`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                    },
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        localStorage.removeItem('authToken');
+                        authToken = null;
+                        showLogin();
+                        showAlert('انتهت صلاحية الجلسة - Session expired');
+                    }
+                })
+                .catch(error => {
+                    console.error('Token check error:', error);
+                });
+            }
+        }, 300000); // Check every 5 minutes
+    </script>
+</body>
+</html>
