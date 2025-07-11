@@ -156,7 +156,7 @@ const GradeTable = ({ gradesData, hasArabicNames = false }) => {
                                   <TableCell sx={{ textAlign: 'center' }}>
                                     <Typography variant="body2" sx={{ fontWeight: 600 }}>
                                       {grade.not_elp !== null ? 
-                                        parseFloat(grade.not_elp).toFixed(2) : 'ABS'
+                                        parseFloat(grade.not_elp).toFixed(2) : '-'
                                       }
                                     </Typography>
                                   </TableCell>
