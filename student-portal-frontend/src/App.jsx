@@ -1,3 +1,4 @@
+// src/App.jsx
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
@@ -23,7 +24,7 @@ function App() {
       
       {/* Protected Routes */}
       <Route 
-        path="/dashboard" 
+        path="/dashboard/*" 
         element={
           <ProtectedRoute>
             <Dashboard />

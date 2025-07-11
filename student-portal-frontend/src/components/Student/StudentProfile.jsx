@@ -1,3 +1,7 @@
+// Remove the old StudentNavigation.jsx component since we're using sidebar navigation now
+
+// Update the imports in StudentProfile.jsx to remove navigation dependency
+// src/components/Student/StudentProfile.jsx
 import React, { useState, useEffect } from 'react';
 import {
   Box,
@@ -105,7 +109,8 @@ const StudentProfile = () => {
           fontWeight={500}
           sx={{ 
             direction: isArabic ? 'rtl' : 'ltr',
-            fontFamily: isArabic ? 'Arabic UI Text, Arial' : 'inherit'
+            fontFamily: isArabic ? 'Arabic UI Text, Arial' : 'inherit',
+            textAlign: isArabic ? 'right' : 'left'
           }}
         >
           {value || '-'}
@@ -144,7 +149,17 @@ const StudentProfile = () => {
   );
 
   return (
-    <Box sx={{ p: 3 }}>
+    <Box>
+      {/* Page Header */}
+      <Box sx={{ mb: 4 }}>
+        <Typography variant="h4" fontWeight="600" color="primary" gutterBottom>
+          👤 المعلومات الشخصية - Personal Information
+        </Typography>
+        <Typography variant="body1" color="text.secondary">
+          عرض جميع المعلومات الشخصية والأكاديمية الخاصة بك
+        </Typography>
+      </Box>
+
       {/* Header with Avatar */}
       <Card sx={{ mb: 3, borderRadius: 3 }}>
         <CardContent sx={{ p: 4 }}>
@@ -171,7 +186,9 @@ const StudentProfile = () => {
                   color="text.secondary" 
                   sx={{ 
                     direction: 'rtl',
-                    fontFamily: 'Arabic UI Text, Arial'
+                    fontFamily: 'Arabic UI Text, Arial',
+                    textAlign: 'right',
+                    mb: 1
                   }}
                 >
                   {studentData.nom_arabe}

@@ -150,17 +150,7 @@ const StudentGrades = () => {
       />
 
       {/* Instructions */}
-      {!hasActiveFilters && (
-        <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 3, mb: 3 }}>
-          <SchoolIcon sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} />
-          <Typography variant="h6" color="text.secondary" gutterBottom>
-            {t('selectFilters')}
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            استخدم الفلاتر أعلاه لعرض النقط حسب السنة والدورة
-          </Typography>
-        </Paper>
-      )}
+   
 
       {/* No Results Message */}
       {hasActiveFilters && !hasFilteredResults && (
@@ -178,17 +168,7 @@ const StudentGrades = () => {
       {hasFilteredResults && (
         <Box>
           {/* Results Summary */}
-          <Alert 
-            severity="info" 
-            sx={{ mb: 3, borderRadius: 2 }}
-            icon={<SchoolIcon />}
-          >
-            <Typography variant="body2">
-              📊 عرض النقط حسب الفلاتر المختارة | 
-              عدد السنوات: {Object.keys(filteredGrades).length} | 
-              {hasArabicNames ? 'متوفر بالعربية ✅' : 'غير متوفر بالعربية ❌'}
-            </Typography>
-          </Alert>
+      
 
           {/* Grades Table */}
           <GradeTable 
@@ -199,12 +179,7 @@ const StudentGrades = () => {
       )}
 
       {/* Footer Info */}
-      <Paper sx={{ p: 3, mt: 3, borderRadius: 3, bgcolor: '#f8f9fa' }}>
-        <Typography variant="body2" color="text.secondary" textAlign="center">
-          💡 نصيحة: استخدم الفلاتر لعرض النقط حسب السنة الجامعية ونوع الدورة.
-          الدورة العادية (1) والدورة الاستدراكية (2) متاحة لكل فصل.
-        </Typography>
-      </Paper>
+ 
     </Box>
   );
 };

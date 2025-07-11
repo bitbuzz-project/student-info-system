@@ -1,3 +1,4 @@
+// src/components/Student/GradeTable.jsx
 import React from 'react';
 import {
   Box,
@@ -15,15 +16,11 @@ import {
   AccordionDetails,
   Card,
   CardContent,
-  Grid,
-  Stack
+  Grid
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
-  School as SchoolIcon,
-  Star as StarIcon,
-  TrendingUp as TrendingUpIcon,
-  TrendingDown as TrendingDownIcon
+  School as SchoolIcon
 } from '@mui/icons-material';
 import { useTranslation } from 'react-i18next';
 
@@ -41,34 +38,6 @@ const GradeTable = ({ gradesData, hasArabicNames = false }) => {
     );
   }
 
-  const getGradeColor = (grade) => {
-    if (grade === null || grade === undefined) return 'default';
-    const numGrade = parseFloat(grade);
-    if (numGrade >= 16) return 'success';
-    if (numGrade >= 14) return 'info';
-    if (numGrade >= 12) return 'primary';
-    if (numGrade >= 10) return 'warning';
-    return 'error';
-  };
-
-  const getGradeIcon = (grade) => {
-    if (grade === null || grade === undefined) return '❌';
-    const numGrade = parseFloat(grade);
-    if (numGrade >= 16) return '🌟';
-    if (numGrade >= 14) return '⭐';
-    if (numGrade >= 12) return '✨';
-    if (numGrade >= 10) return '✅';
-    return '❌';
-  };
-
-  const getResultLabel = (result, grade) => {
-    if (result === 'V') return '✅ مقبول - Validé';
-    if (result === 'NV') return '❌ مرفوض - Non Validé';
-    if (result === 'AJ') return '⏳ مؤجل - Ajourné';
-    if (grade === null || grade === undefined) return '❌ غائب - Absent';
-    return result || '-';
-  };
-
   const getSemesterColor = (semester) => {
     const colors = {
       'S1': '#3498db', 'S2': '#e67e22', 'S3': '#2ecc71',
@@ -81,11 +50,8 @@ const GradeTable = ({ gradesData, hasArabicNames = false }) => {
     const validGrades = grades.filter(g => g.not_elp !== null && g.not_elp !== undefined);
     const total = validGrades.length;
     const passed = validGrades.filter(g => parseFloat(g.not_elp) >= 10).length;
-    const average = total > 0 ? 
-      (validGrades.reduce((sum, g) => sum + parseFloat(g.not_elp), 0) / total).toFixed(2) : 
-      null;
     
-    return { total, passed, failed: total - passed, average };
+    return { total, passed, failed: total - passed };
   };
 
   const renderGradesForStructure = (structure) => {
@@ -140,22 +106,13 @@ const GradeTable = ({ gradesData, hasArabicNames = false }) => {
                             <Grid item xs={12} sm={6}>
                               <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                                 <Chip
-                                  icon={<SchoolIcon />}
                                   label={`${stats.total} مواد`}
                                   sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: 'white' }}
                                 />
                                 <Chip
-                                  icon={<TrendingUpIcon />}
                                   label={`${stats.passed} نجح`}
                                   sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: 'white' }}
                                 />
-                                {stats.average && (
-                                  <Chip
-                                    icon={<StarIcon />}
-                                    label={`معدل: ${stats.average}`}
-                                    sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: 'white' }}
-                                  />
-                                )}
                               </Box>
                             </Grid>
                           </Grid>
@@ -169,7 +126,7 @@ const GradeTable = ({ gradesData, hasArabicNames = false }) => {
                                 <TableCell sx={{ fontWeight: 600 }}>رمز المادة</TableCell>
                                 <TableCell sx={{ fontWeight: 600 }}>اسم المادة</TableCell>
                                 {hasArabicNames && (
-                                  <TableCell sx={{ fontWeight: 600 }}>الاسم بالعربية</TableCell>
+                                  <TableCell sx={{ fontWeight: 600, direction: 'rtl' }}>الاسم بالعربية</TableCell>
                                 )}
                                 <TableCell sx={{ fontWeight: 600, textAlign: 'center' }}>النقطة</TableCell>
                                 <TableCell sx={{ fontWeight: 600, textAlign: 'center' }}>النتيجة</TableCell>
@@ -201,7 +158,9 @@ const GradeTable = ({ gradesData, hasArabicNames = false }) => {
                                         variant="body2" 
                                         sx={{ 
                                           fontWeight: 500,
-                                          fontFamily: 'Arabic UI Text, Arial'
+                                          fontFamily: 'Arabic UI Text, Arial',
+                                          direction: 'rtl',
+                                          textAlign: 'right'
                                         }}
                                       >
                                         {grade.lib_elp_arb || grade.lib_elp}
@@ -209,21 +168,15 @@ const GradeTable = ({ gradesData, hasArabicNames = false }) => {
                                     </TableCell>
                                   )}
                                   <TableCell sx={{ textAlign: 'center' }}>
-                                    <Chip
-                                      icon={<span>{getGradeIcon(grade.not_elp)}</span>}
-                                      label={grade.not_elp !== null ? 
+                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                      {grade.not_elp !== null ? 
                                         parseFloat(grade.not_elp).toFixed(2) : 'ABS'
                                       }
-                                      color={getGradeColor(grade.not_elp)}
-                                      sx={{ 
-                                        fontWeight: 600,
-                                        minWidth: 80
-                                      }}
-                                    />
+                                    </Typography>
                                   </TableCell>
                                   <TableCell sx={{ textAlign: 'center' }}>
                                     <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                                      {getResultLabel(grade.cod_tre, grade.not_elp)}
+                                      {grade.cod_tre || '-'}
                                     </Typography>
                                   </TableCell>
                                   <TableCell sx={{ textAlign: 'center' }}>
@@ -243,29 +196,23 @@ const GradeTable = ({ gradesData, hasArabicNames = false }) => {
                         {/* Semester Summary */}
                         <Box sx={{ mt: 2, p: 2, bgcolor: '#f8f9fa', borderRadius: 2 }}>
                           <Grid container spacing={2} textAlign="center">
-                            <Grid item xs={3}>
+                            <Grid item xs={4}>
                               <Typography variant="h6" color="primary.main" fontWeight="bold">
                                 {stats.total}
                               </Typography>
                               <Typography variant="caption">إجمالي</Typography>
                             </Grid>
-                            <Grid item xs={3}>
+                            <Grid item xs={4}>
                               <Typography variant="h6" color="success.main" fontWeight="bold">
                                 {stats.passed}
                               </Typography>
                               <Typography variant="caption">نجح</Typography>
                             </Grid>
-                            <Grid item xs={3}>
+                            <Grid item xs={4}>
                               <Typography variant="h6" color="error.main" fontWeight="bold">
                                 {stats.failed}
                               </Typography>
                               <Typography variant="caption">رسب</Typography>
-                            </Grid>
-                            <Grid item xs={3}>
-                              <Typography variant="h6" color="info.main" fontWeight="bold">
-                                {stats.average || 'N/A'}
-                              </Typography>
-                              <Typography variant="caption">معدل</Typography>
                             </Grid>
                           </Grid>
                         </Box>
