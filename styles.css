@@ -530,3 +530,123 @@ body {
         display: none;
     }
 }
+/* Add these styles to your styles.css file */
+
+/* Status badge styles */
+.status-badge {
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 0.85em;
+    font-weight: 600;
+    text-align: center;
+    display: inline-block;
+    min-width: 80px;
+    color: white;
+}
+
+.status-validated {
+    background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
+    box-shadow: 0 2px 8px rgba(243, 156, 18, 0.3);
+}
+
+.status-passed {
+    background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
+    box-shadow: 0 2px 8px rgba(46, 204, 113, 0.3);
+}
+
+.status-failed {
+    background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+    box-shadow: 0 2px 8px rgba(231, 76, 60, 0.3);
+}
+
+.status-absent {
+    background: linear-gradient(135deg, #95a5a6 0%, #7f8c8d 100%);
+    box-shadow: 0 2px 8px rgba(149, 165, 166, 0.3);
+}
+
+/* Special styling for carried over grades */
+.grade-carried-over {
+    position: relative;
+    background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%) !important;
+}
+
+.grade-carried-over::after {
+    content: "✓";
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    background: #27ae60;
+    color: white;
+    border-radius: 50%;
+    width: 16px;
+    height: 16px;
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+}
+
+/* Tooltip for carried over grades */
+.grade-carried-over:hover::before {
+    content: "Grade carried over from Session 1";
+    position: absolute;
+    bottom: 120%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #2c3e50;
+    color: white;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+    z-index: 1000;
+    opacity: 0;
+    animation: fadeInTooltip 0.3s ease-in-out forwards;
+}
+
+@keyframes fadeInTooltip {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(5px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+}
+
+/* Update table column widths to accommodate status column */
+.grade-table th:last-child,
+.grade-table td:last-child {
+    width: 120px;
+    min-width: 120px;
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 768px) {
+    .status-badge {
+        font-size: 0.75em;
+        padding: 4px 6px;
+        min-width: 60px;
+    }
+    
+    .grade-table th:last-child,
+    .grade-table td:last-child {
+        width: 100px;
+        min-width: 100px;
+    }
+}
+
+@media (max-width: 480px) {
+    /* Hide status column on very small screens to save space */
+    .grade-table th:last-child,
+    .grade-table td:last-child {
+        display: none;
+    }
+    
+    /* Make carried over grades more obvious on mobile */
+    .grade-carried-over {
+        border: 2px solid #f39c12;
+    }
+}

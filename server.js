@@ -434,3 +434,501 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV}`);
 });
+
+
+// Add these admin authentication routes to your server.js file
+
+// Admin credentials (in production, store these securely in environment variables)
+const ADMIN_CREDENTIALS = {
+  username: process.env.ADMIN_USERNAME || 'admin',
+  password: process.env.ADMIN_PASSWORD || 'admin123'
+};
+
+// Admin authentication middleware
+const authenticateAdmin = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ error: 'Admin access token required' });
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, admin) => {
+    if (err || !admin.isAdmin) {
+      return res.status(403).json({ error: 'Invalid admin token' });
+    }
+    req.admin = admin;
+    next();
+  });
+};
+
+// Admin login endpoint
+app.post('/admin/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
+    }
+    
+    // Check admin credentials
+    if (username === ADMIN_CREDENTIALS.username && password === ADMIN_CREDENTIALS.password) {
+      // Generate admin JWT token
+      const adminToken = jwt.sign(
+        { 
+          username: username,
+          isAdmin: true,
+          loginTime: new Date().toISOString()
+        },
+        process.env.JWT_SECRET,
+        { expiresIn: '8h' } // Admin sessions expire in 8 hours
+      );
+      
+      // Log admin login
+      console.log(`Admin login: ${username} at ${new Date().toISOString()}`);
+      
+      res.json({
+        success: true,
+        token: adminToken,
+        message: 'Admin login successful',
+        expiresIn: '8h'
+      });
+      
+    } else {
+      // Log failed login attempt
+      console.log(`Failed admin login attempt: ${username} at ${new Date().toISOString()}`);
+      
+      res.status(401).json({ 
+        error: 'Invalid admin credentials',
+        message: 'Please check your username and password'
+      });
+    }
+    
+  } catch (error) {
+    console.error('Admin login error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin logout endpoint
+app.post('/admin/logout', authenticateAdmin, (req, res) => {
+  // In a real application, you might want to blacklist the token
+  console.log(`Admin logout: ${req.admin.username} at ${new Date().toISOString()}`);
+  res.json({ success: true, message: 'Logged out successfully' });
+});
+
+// Verify admin token endpoint
+app.get('/admin/verify', authenticateAdmin, (req, res) => {
+  res.json({ 
+    valid: true, 
+    admin: {
+      username: req.admin.username,
+      loginTime: req.admin.loginTime
+    }
+  });
+});
+
+// Update all existing admin routes to use authentication
+// Replace the existing admin routes with these authenticated versions:
+
+// Serve admin dashboard (no auth needed for the HTML file)
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin.html'));
+});
+
+// Admin - Get system statistics (with auth)
+app.get('/admin/stats', authenticateAdmin, async (req, res) => {
+  try {
+    const totalStudents = await pool.query('SELECT COUNT(*) FROM students');
+    const totalGrades = await pool.query('SELECT COUNT(*) FROM grades');
+    const totalElements = await pool.query('SELECT COUNT(*) FROM element_pedagogi');
+    
+    // Get last sync time
+    const lastSyncQuery = await pool.query(`
+      SELECT sync_timestamp FROM sync_log 
+      ORDER BY sync_timestamp DESC 
+      LIMIT 1
+    `);
+    
+    const lastSync = lastSyncQuery.rows[0]?.sync_timestamp || null;
+    
+    res.json({
+      total_students: parseInt(totalStudents.rows[0].count),
+      total_grades: parseInt(totalGrades.rows[0].count),
+      total_elements: parseInt(totalElements.rows[0].count),
+      last_sync: lastSync
+    });
+    
+  } catch (error) {
+    console.error('Error getting admin stats:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin - Get sync status (with auth)
+app.get('/admin/sync-status', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT sync_type, records_processed, sync_status, error_message, sync_timestamp
+      FROM sync_log 
+      ORDER BY sync_timestamp DESC 
+      LIMIT 1
+    `);
+    
+    res.json({
+      last_sync: result.rows[0] || null,
+      sync_history: result.rows
+    });
+    
+  } catch (error) {
+    console.error('Error getting sync status:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin - Get data overview (with auth)
+app.get('/admin/data-overview', authenticateAdmin, async (req, res) => {
+  try {
+    // Get students by year
+    const students2023 = await pool.query('SELECT COUNT(*) FROM students WHERE cod_anu = 2023');
+    const students2024 = await pool.query('SELECT COUNT(*) FROM students WHERE cod_anu = 2024');
+    
+    // Get grades by year
+    const grades2023 = await pool.query('SELECT COUNT(*) FROM grades WHERE cod_anu = 2023');
+    const grades2024 = await pool.query('SELECT COUNT(*) FROM grades WHERE cod_anu = 2024');
+    
+    // Get unique programs
+    const uniquePrograms = await pool.query('SELECT COUNT(DISTINCT lib_etp) FROM students WHERE lib_etp IS NOT NULL');
+    
+    // Get recent activity
+    const recentStudents = await pool.query(`
+      SELECT COUNT(*) FROM students 
+      WHERE last_sync >= NOW() - INTERVAL '24 hours'
+    `);
+    
+    const recentGrades = await pool.query(`
+      SELECT COUNT(*) FROM grades 
+      WHERE last_sync >= NOW() - INTERVAL '24 hours'
+    `);
+    
+    res.json({
+      students_2023: parseInt(students2023.rows[0].count),
+      students_2024: parseInt(students2024.rows[0].count),
+      grades_2023: parseInt(grades2023.rows[0].count),
+      grades_2024: parseInt(grades2024.rows[0].count),
+      unique_programs: parseInt(uniquePrograms.rows[0].count),
+      recent_students: parseInt(recentStudents.rows[0].count),
+      recent_grades: parseInt(recentGrades.rows[0].count)
+    });
+    
+  } catch (error) {
+    console.error('Error getting data overview:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin - Get sync logs (with auth)
+app.get('/admin/sync-logs', authenticateAdmin, async (req, res) => {
+  try {
+    const { limit = 20 } = req.query;
+    
+    const result = await pool.query(`
+      SELECT sync_type, records_processed, sync_status, error_message, sync_timestamp
+      FROM sync_log 
+      ORDER BY sync_timestamp DESC 
+      LIMIT $1
+    `, [limit]);
+    
+    res.json({
+      logs: result.rows
+    });
+    
+  } catch (error) {
+    console.error('Error getting sync logs:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin - Search students (with auth)
+app.get('/admin/search-students', authenticateAdmin, async (req, res) => {
+  try {
+    const { cin, nom, limit = 50 } = req.query;
+    
+    let query = `
+      SELECT 
+        cod_etu, 
+        lib_nom_pat_ind || ' ' || lib_pr1_ind as nom_complet,
+        cin_ind as cin,
+        lib_etp as etape,
+        cod_anu as annee,
+        last_sync
+      FROM students 
+      WHERE 1=1
+    `;
+    
+    let params = [];
+    let paramIndex = 1;
+    
+    if (cin) {
+      query += ` AND cin_ind ILIKE $${paramIndex}`;
+      params.push(`%${cin}%`);
+      paramIndex++;
+    }
+    
+    if (nom) {
+      query += ` AND (lib_nom_pat_ind ILIKE $${paramIndex} OR lib_pr1_ind ILIKE $${paramIndex})`;
+      params.push(`%${nom}%`);
+      paramIndex++;
+    }
+    
+    query += ` ORDER BY lib_nom_pat_ind, lib_pr1_ind LIMIT $${paramIndex}`;
+    params.push(limit);
+    
+    const result = await pool.query(query, params);
+    
+    res.json({
+      students: result.rows,
+      total: result.rows.length
+    });
+    
+  } catch (error) {
+    console.error('Error searching students:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin - Manual sync trigger (with auth)
+app.post('/admin/manual-sync', authenticateAdmin, async (req, res) => {
+  try {
+    // Import the sync function
+    const { syncStudents } = require('./sync-service');
+    
+    // Log who started the sync
+    console.log(`Manual sync requested by admin: ${req.admin.username} at ${new Date().toISOString()}`);
+    
+    // Log the sync request
+    await pool.query(`
+      INSERT INTO sync_log (sync_type, records_processed, sync_status, error_message)
+      VALUES ('manual_trigger', 0, 'started', $1)
+    `, [`Manual sync initiated by admin: ${req.admin.username}`]);
+    
+    // Run sync asynchronously
+    syncStudents()
+      .then(() => {
+        console.log(`Manual sync completed successfully (initiated by ${req.admin.username})`);
+      })
+      .catch((error) => {
+        console.error('Manual sync failed:', error);
+        // Log the error
+        pool.query(`
+          INSERT INTO sync_log (sync_type, records_processed, sync_status, error_message)
+          VALUES ('manual_sync', 0, 'error', $1)
+        `, [`Sync failed (initiated by ${req.admin.username}): ${error.message}`]);
+      });
+    
+    res.json({ 
+      success: true, 
+      message: 'Manual sync started. Check sync logs for progress.',
+      initiated_by: req.admin.username
+    });
+    
+  } catch (error) {
+    console.error('Error starting manual sync:', error);
+    
+    // Log the error
+    await pool.query(`
+      INSERT INTO sync_log (sync_type, records_processed, sync_status, error_message)
+      VALUES ('manual_sync', 0, 'error', $1)
+    `, [`Failed to start sync (by ${req.admin.username}): ${error.message}`]);
+    
+    res.status(500).json({ error: 'Failed to start manual sync' });
+  }
+});
+
+// Admin - Get detailed student info (with auth)
+app.get('/admin/student/:codEtu', authenticateAdmin, async (req, res) => {
+  try {
+    const { codEtu } = req.params;
+    
+    // Get student info
+    const studentResult = await pool.query(`
+      SELECT * FROM students WHERE cod_etu = $1
+    `, [codEtu]);
+    
+    if (studentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+    
+    const student = studentResult.rows[0];
+    
+    // Get student grades
+    const gradesResult = await pool.query(`
+      SELECT 
+        g.cod_anu,
+        g.cod_ses,
+        g.cod_elp,
+        g.not_elp,
+        g.cod_tre,
+        ep.lib_elp,
+        ep.lib_elp_arb,
+        ep.cod_pel
+      FROM grades g
+      LEFT JOIN element_pedagogi ep ON g.cod_elp = ep.cod_elp
+      WHERE g.cod_etu = $1
+      ORDER BY g.cod_anu DESC, g.cod_ses, ep.cod_pel, ep.lib_elp
+    `, [codEtu]);
+    
+    // Get grade statistics
+    const statsResult = await pool.query(`
+      SELECT 
+        cod_anu,
+        cod_ses,
+        COUNT(*) as total_subjects,
+        AVG(CASE WHEN not_elp IS NOT NULL THEN not_elp END) as average_grade,
+        COUNT(CASE WHEN not_elp >= 10 THEN 1 END) as passed_subjects,
+        COUNT(CASE WHEN not_elp < 10 THEN 1 END) as failed_subjects
+      FROM grades 
+      WHERE cod_etu = $1
+      GROUP BY cod_anu, cod_ses
+      ORDER BY cod_anu DESC, cod_ses
+    `, [codEtu]);
+    
+    res.json({
+      student: student,
+      grades: gradesResult.rows,
+      statistics: statsResult.rows
+    });
+    
+  } catch (error) {
+    console.error('Error getting student details:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin - Get database health check (with auth)
+app.get('/admin/health-check', authenticateAdmin, async (req, res) => {
+  try {
+    const checks = {
+      postgresql: false,
+      tables: {
+        students: false,
+        grades: false,
+        element_pedagogi: false,
+        sync_log: false
+      },
+      data_integrity: {
+        orphaned_grades: 0,
+        missing_elements: 0,
+        duplicate_students: 0
+      }
+    };
+    
+    // Check PostgreSQL connection
+    try {
+      await pool.query('SELECT 1');
+      checks.postgresql = true;
+    } catch (error) {
+      console.error('PostgreSQL check failed:', error);
+    }
+    
+    // Check tables exist and have data
+    const tables = ['students', 'grades', 'element_pedagogi', 'sync_log'];
+    for (const table of tables) {
+      try {
+        const result = await pool.query(`SELECT COUNT(*) FROM ${table}`);
+        checks.tables[table] = parseInt(result.rows[0].count) > 0;
+      } catch (error) {
+        console.error(`Table check failed for ${table}:`, error);
+      }
+    }
+    
+    // Check data integrity
+    try {
+      // Orphaned grades (grades without students)
+      const orphanedGrades = await pool.query(`
+        SELECT COUNT(*) FROM grades g
+        LEFT JOIN students s ON g.cod_etu = s.cod_etu
+        WHERE s.cod_etu IS NULL
+      `);
+      checks.data_integrity.orphaned_grades = parseInt(orphanedGrades.rows[0].count);
+      
+      // Missing elements (grades without element_pedagogi)
+      const missingElements = await pool.query(`
+        SELECT COUNT(*) FROM grades g
+        LEFT JOIN element_pedagogi ep ON g.cod_elp = ep.cod_elp
+        WHERE ep.cod_elp IS NULL
+      `);
+      checks.data_integrity.missing_elements = parseInt(missingElements.rows[0].count);
+      
+      // Duplicate students
+      const duplicateStudents = await pool.query(`
+        SELECT COUNT(*) FROM (
+          SELECT cod_etu, COUNT(*) 
+          FROM students 
+          GROUP BY cod_etu 
+          HAVING COUNT(*) > 1
+        ) duplicates
+      `);
+      checks.data_integrity.duplicate_students = parseInt(duplicateStudents.rows[0].count);
+      
+    } catch (error) {
+      console.error('Data integrity check failed:', error);
+    }
+    
+    res.json({
+      status: 'completed',
+      timestamp: new Date().toISOString(),
+      checks: checks,
+      checked_by: req.admin.username
+    });
+    
+  } catch (error) {
+    console.error('Error performing health check:', error);
+    res.status(500).json({ error: 'Health check failed' });
+  }
+});
+
+// Admin - Get sync statistics (with auth)
+app.get('/admin/sync-statistics', authenticateAdmin, async (req, res) => {
+  try {
+    const { days = 7 } = req.query;
+    
+    // Get sync history for the last N days
+    const syncHistory = await pool.query(`
+      SELECT 
+        DATE(sync_timestamp) as sync_date,
+        sync_type,
+        COUNT(*) as sync_count,
+        SUM(records_processed) as total_records,
+        COUNT(CASE WHEN sync_status = 'success' THEN 1 END) as successful_syncs,
+        COUNT(CASE WHEN sync_status = 'error' THEN 1 END) as failed_syncs
+      FROM sync_log
+      WHERE sync_timestamp >= NOW() - INTERVAL '${days} days'
+      GROUP BY DATE(sync_timestamp), sync_type
+      ORDER BY sync_date DESC, sync_type
+    `);
+    
+    // Get sync performance metrics
+    const performanceMetrics = await pool.query(`
+      SELECT 
+        sync_type,
+        AVG(records_processed) as avg_records_per_sync,
+        MAX(records_processed) as max_records_per_sync,
+        MIN(records_processed) as min_records_per_sync
+      FROM sync_log
+      WHERE sync_status = 'success' 
+        AND sync_timestamp >= NOW() - INTERVAL '30 days'
+      GROUP BY sync_type
+    `);
+    
+    res.json({
+      sync_history: syncHistory.rows,
+      performance_metrics: performanceMetrics.rows,
+      period_days: days
+    });
+    
+  } catch (error) {
+    console.error('Error getting sync statistics:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});

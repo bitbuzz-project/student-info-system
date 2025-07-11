@@ -56,7 +56,7 @@ FROM ELEMENT_PEDAGOGI e
 WHERE COD_CMP = 'FJP'
 `;
 
-// Updated grades query with better joins
+// Updated grades query to include both 2023 and 2024
 const GRADES_QUERY = `
 SELECT 
   i.COD_ETU, 
@@ -69,10 +69,11 @@ FROM RESULTAT_ELP r
 JOIN INDIVIDU i ON r.COD_IND = i.COD_IND
 JOIN INS_ADM_ETP iae ON r.COD_IND = iae.COD_IND AND r.COD_ANU = iae.COD_ANU
 WHERE r.COD_ADM = 1 
-  AND r.COD_ANU = 2023
+  AND r.COD_ANU IN (2023, 2024)
   AND iae.COD_CMP = 'FJP'
   AND iae.ETA_IAE = 'E'
   AND iae.TEM_IAE_PRM = 'O'
+ORDER BY r.COD_ANU DESC, i.COD_ETU, r.COD_SES, r.COD_ELP
 `;
 
 const ORACLE_QUERY = `
@@ -118,9 +119,10 @@ FROM INS_ADM_ETP i
 JOIN INDIVIDU ind ON i.COD_IND = ind.COD_IND
 JOIN ETAPE e ON i.COD_ETP = e.COD_ETP
 WHERE i.ETA_IAE = 'E'
-  AND i.COD_ANU = 2024
+  AND i.COD_ANU IN (2023, 2024)
   AND i.COD_CMP = 'FJP'
   AND i.TEM_IAE_PRM = 'O'
+ORDER BY i.COD_ANU DESC, ind.COD_ETU
 `;
 
 async function syncStudents() {
@@ -131,6 +133,7 @@ async function syncStudents() {
   try {
     logger.info('=====================================');
     logger.info('Starting manual sync process...');
+    logger.info('🔄 Syncing data for years 2023 and 2024');
     logger.info('=====================================');
     
     // Test PostgreSQL connection first
@@ -159,6 +162,7 @@ async function syncStudents() {
     logger.info('=====================================');
     logger.info('✓ COMPLETE SYNC FINISHED!');
     logger.info(`✓ Duration: ${duration} seconds`);
+    logger.info('✓ Data available for 2023 and 2024');
     logger.info('=====================================');
     
   } catch (error) {
@@ -279,13 +283,13 @@ async function syncElementPedagogi(oracleConnection, pgClient) {
 }
 
 async function syncStudentsData(oracleConnection, pgClient) {
-  logger.info('Syncing students data...');
+  logger.info('Syncing students data for 2023 and 2024...');
   
   // Fetch data from Oracle
   const result = await oracleConnection.execute(ORACLE_QUERY);
   const students = result.rows;
   
-  logger.info(`✓ Fetched ${students.length} students from Oracle`);
+  logger.info(`✓ Fetched ${students.length} students from Oracle (2023 & 2024)`);
   
   if (students.length === 0) {
     logger.warn('No students found in Oracle database');
@@ -412,13 +416,13 @@ async function syncStudentsData(oracleConnection, pgClient) {
 }
 
 async function syncGradesData(oracleConnection, pgClient) {
-  logger.info('Syncing grades data...');
+  logger.info('Syncing grades data for 2023 and 2024...');
   
   // Fetch grades from Oracle
   const result = await oracleConnection.execute(GRADES_QUERY);
   const grades = result.rows;
   
-  logger.info(`✓ Fetched ${grades.length} grades from Oracle`);
+  logger.info(`✓ Fetched ${grades.length} grades from Oracle (2023 & 2024)`);
   
   if (grades.length === 0) {
     logger.warn('No grades found in Oracle database');
@@ -433,6 +437,10 @@ async function syncGradesData(oracleConnection, pgClient) {
   let insertedCount = 0;
   let skippedCount = 0;
   
+  // Track grades by year for statistics
+  let grades2023 = 0;
+  let grades2024 = 0;
+  
   // Process grades in batches
   const batchSize = 200;
   for (let i = 0; i < grades.length; i += batchSize) {
@@ -440,6 +448,10 @@ async function syncGradesData(oracleConnection, pgClient) {
     
     for (const grade of batch) {
       const [cod_etu, cod_anu, cod_ses, cod_elp, not_elp, cod_tre] = grade;
+      
+      // Track grades by year
+      if (cod_anu === 2023) grades2023++;
+      if (cod_anu === 2024) grades2024++;
       
       // Check if student exists first
       const studentExists = await pgClient.query(
@@ -460,7 +472,7 @@ async function syncGradesData(oracleConnection, pgClient) {
       
       const isUpdate = existingGrade.rows.length > 0;
       
-      // Upsert grade (simpler version, element_pedagogi will be joined in the API)
+      // Upsert grade
       await pgClient.query(`
         INSERT INTO grades (
           cod_etu, cod_anu, cod_ses, cod_elp, not_elp, cod_tre, last_sync
@@ -497,6 +509,7 @@ async function syncGradesData(oracleConnection, pgClient) {
   `, [processedCount]);
   
   logger.info(`✓ Grades sync completed: ${processedCount} total, ${insertedCount} new, ${updatedCount} updated, ${skippedCount} skipped`);
+  logger.info(`📊 Year breakdown: 2023 (${grades2023} grades), 2024 (${grades2024} grades)`);
   
   if (skippedCount > 0) {
     logger.warn(`⚠️  ${skippedCount} grades skipped due to missing student records`);
@@ -505,7 +518,7 @@ async function syncGradesData(oracleConnection, pgClient) {
 
 // Manual sync execution
 if (require.main === module) {
-  console.log('Starting manual sync...');
+  console.log('Starting manual sync for 2023 and 2024...');
   syncStudents()
     .then(() => {
       console.log('Manual sync completed. Exiting...');
