@@ -57,49 +57,100 @@ const StudentGrades = () => {
     }
   };
 
-  // Simplified filtering - only basic year/session filtering, NO grade manipulation
+  // Helper function to flatten the nested grades structure
+  const flattenGrades = (grades) => {
+    const flatList = [];
+    if (!grades) return flatList;
+
+    Object.entries(grades).forEach(([studyYear, yearData]) => {
+      Object.entries(yearData).forEach(([sessionNum, sessionData]) => {
+        Object.entries(sessionData).forEach(([sessionType, sessionTypeData]) => {
+          Object.entries(sessionTypeData).forEach(([academicYearLogical, academicYearGrades]) => {
+            Object.entries(academicYearGrades).forEach(([semesterCode, semesterGrades]) => {
+              semesterGrades.forEach(grade => {
+                flatList.push({
+                  ...grade,
+                  study_year: studyYear,
+                  session_number: sessionNum,      // '1' or '2' (Normal/Catch-up)
+                  session_type: sessionType,       // 'automne' or 'printemps'
+                  academic_year_logical: academicYearLogical, // Logical year (e.g., '1' for S1/S2)
+                  semester_code: semesterCode      // 'S1', 'S2', etc.
+                });
+              });
+            });
+          });
+        });
+      });
+    });
+    return flatList;
+  };
+
+  // Helper function to re-nest grades for the GradeTable component
+  const reNestGrades = (flatGrades) => {
+    const nested = {};
+    flatGrades.forEach(grade => {
+      const { study_year, session_number, session_type, academic_year_logical, semester_code } = grade;
+      if (!nested[study_year]) nested[study_year] = {};
+      if (!nested[study_year][session_number]) nested[study_year][session_number] = {};
+      if (!nested[study_year][session_number][session_type]) nested[study_year][session_number][session_type] = {};
+      if (!nested[study_year][session_number][session_type][academic_year_logical]) nested[study_year][session_number][session_type][academic_year_logical] = {};
+      if (!nested[study_year][session_number][session_type][academic_year_logical][semester_code]) nested[study_year][session_number][session_type][academic_year_logical][semester_code] = [];
+      
+      nested[study_year][session_number][session_type][academic_year_logical][semester_code].push(grade);
+    });
+    return nested;
+  };
+
+
   const applyFilters = (grades, currentFilters) => {
     if (!grades) {
       setFilteredGrades(null);
       return;
     }
 
-    let filtered = { ...grades };
+    const allFlatGrades = flattenGrades(grades);
+    let workingGrades = [...allFlatGrades];
 
-    // Only apply basic year filtering
+    // Apply main filters
     if (currentFilters.year) {
-      filtered = {
-        [currentFilters.year]: filtered[currentFilters.year] || {}
-      };
+        workingGrades = workingGrades.filter(grade => grade.study_year === String(currentFilters.year));
+    }
+    if (currentFilters.sessionType) {
+        workingGrades = workingGrades.filter(grade => grade.session_type === currentFilters.sessionType);
+    }
+    if (currentFilters.session) {
+        workingGrades = workingGrades.filter(grade => grade.session_number === String(currentFilters.session));
     }
 
-    // Filter by session type and session number if specified
-    const processedFiltered = {};
-    
-    Object.entries(filtered).forEach(([year, yearData]) => {
-      Object.entries(yearData).forEach(([sessionNum, sessionData]) => {
-        // Filter by session number (1 or 2) if specified
-        if (currentFilters.session && sessionNum !== currentFilters.session) {
-          return;
-        }
+    // Implement Rattrapage logic: if Session 2 is selected, remove modules already passed in Session 1
+    if (currentFilters.session === '2') {
+        const session1GradesForComparison = allFlatGrades.filter(g =>
+            g.study_year === String(currentFilters.year) &&
+            g.session_type === currentFilters.sessionType &&
+            g.session_number === '1'
+        );
 
-        Object.entries(sessionData).forEach(([sessionType, sessionTypeData]) => {
-          // Filter by session type (automne/printemps) if specified
-          if (currentFilters.sessionType && sessionType !== currentFilters.sessionType) {
-            return;
-          }
-
-          // Initialize structure
-          if (!processedFiltered[year]) processedFiltered[year] = {};
-          if (!processedFiltered[year][sessionNum]) processedFiltered[year][sessionNum] = {};
-          if (!processedFiltered[year][sessionNum][sessionType]) {
-            processedFiltered[year][sessionNum][sessionType] = sessionTypeData;
-          }
+        const passedModulesInSession1 = new Set(); // Stores unique module identifiers for passed grades
+        session1GradesForComparison.forEach(grade => {
+            // Check for passing grade (>=10) or validated status ('V')
+            if ((grade.not_elp !== null && parseFloat(grade.not_elp) >= 10) || grade.cod_tre === 'V') {
+                // Use a unique key for the module: academic year + semester code + module code
+                const moduleIdentifier = `${grade.study_year}-${grade.semester_code}-${grade.cod_elp}`;
+                passedModulesInSession1.add(moduleIdentifier);
+            }
         });
-      });
-    });
 
-    setFilteredGrades(processedFiltered);
+        // Filter out grades from Session 2 that correspond to modules passed in Session 1
+        workingGrades = workingGrades.filter(grade => {
+            const moduleIdentifier = `${grade.study_year}-${grade.semester_code}-${grade.cod_elp}`;
+            return !passedModulesInSession1.has(moduleIdentifier);
+        });
+    }
+
+    // Reorganize filtered grades back into the nested structure for GradeTable
+    const reorganizedFilteredGrades = reNestGrades(workingGrades);
+
+    setFilteredGrades(reorganizedFilteredGrades);
   };
 
   const handleFiltersChange = (newFilters) => {
@@ -151,19 +202,7 @@ const StudentGrades = () => {
       />
 
       {/* Instructions */}
-      {!hasActiveFilters && (
-        <Paper sx={{ p: 3, mb: 3, borderRadius: 3, bgcolor: '#f8f9fa' }}>
-          <Typography variant="h6" gutterBottom color="primary">
-            📋 تعليمات الاستخدام - Usage Instructions
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            🔹 استخدم الفلاتر أعلاه لعرض النقط حسب السنة الدراسية ونوع الدورة والدورة<br/>
-            🔹 Use the filters above to display grades by academic year, session type, and session<br/>
-            🔹 النقط معروضة كما هي مسجلة في قاعدة البيانات بدون تعديل<br/>
-            🔹 Grades are displayed exactly as recorded in the database without modification
-          </Typography>
-        </Paper>
-      )}
+ 
 
       {/* No Results Message */}
       {hasActiveFilters && !hasFilteredResults && (
@@ -181,14 +220,7 @@ const StudentGrades = () => {
       {hasFilteredResults && (
         <Box>
           {/* Results Summary */}
-          <Paper sx={{ p: 2, mb: 3, borderRadius: 3, bgcolor: '#e8f5e8' }}>
-            <Typography variant="body1" color="success.main" fontWeight="600">
-              ✅ عرض النقط المفلترة - Displaying filtered grades
-              {filters.year && ` | السنة: ${filters.year}`}
-              {filters.sessionType && ` | النوع: ${filters.sessionType === 'automne' ? 'خريف' : 'ربيع'}`}
-              {filters.session && ` | الدورة: ${filters.session === '1' ? 'عادية' : 'استدراكية'}`}
-            </Typography>
-          </Paper>
+      
 
           {/* Grades Table */}
           <GradeTable 

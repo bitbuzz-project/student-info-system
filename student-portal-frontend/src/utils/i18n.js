@@ -5,12 +5,14 @@ import { initReactI18next } from 'react-i18next';
 const resources = {
   ar: {
     translation: {
+
       // Common
+      'dashboard': 'الرئيسية',
       'loading': 'جاري التحميل...',
       'error': 'خطأ',
       'success': 'نجح',
       'login': 'تسجيل الدخول',
-      'logout': 'تسجيل الخروج',
+      'logout': '  تسجيل الخروج',
       'cancel': 'إلغاء',
       'save': 'حفظ',
       'close': 'إغلاق',
@@ -29,7 +31,7 @@ const resources = {
       // Student Info
       'studentInfo': 'معلومات الطالب',
       'personalInfo': 'المعلومات الشخصية',
-      'academicInfo': 'المعلومات الأكاديمية',
+      'academicInfo': 'المعلومات الجامعية',
       'grades': 'النقط',
       'studentCode': 'رقم الطالب',
       'fullName': 'الاسم الكامل',
@@ -43,18 +45,18 @@ const resources = {
       'diploma': 'الدبلوم',
       
       // Grades
-      'gradesTitle': 'النقط التفصيلية',
+      'gradesTitle': ' النتائج',
       'gradeStats': 'إحصائيات النقط',
-      'filterByYear': 'تصفية حسب السنة',
-      'filterBySession': 'تصفية حسب الدورة',
+      'filterByYear': ' حسب السنة',
+      'filterBySession': ' حسب الدورة',
       'allYears': 'جميع السنوات',
       'allSessions': 'جميع الدورات',
-      'sessionType': 'نوع الدورة',
+      'sessionType': 'حسب الدورة ',
       'autumnSession': 'الدورة الخريفية',
       'springSession': 'الدورة الربيعية',
       'normalSession': 'دورة عادية',
       'catchupSession': 'دورة الاستدراكية',
-      'semester': 'الفصل',
+      'semester': 'السداسي',
       'subject': 'المادة',
       'grade': 'النقطة',
       'result': 'النتيجة',
@@ -91,7 +93,7 @@ const resources = {
       'cancel': 'Annuler',
       'save': 'Enregistrer',
       'close': 'Fermer',
-      
+      'dashboard': 'Dashboard',
       // Login
       'welcome': 'Bienvenue',
       'studentSystem': 'Système d\'Information des Étudiants',

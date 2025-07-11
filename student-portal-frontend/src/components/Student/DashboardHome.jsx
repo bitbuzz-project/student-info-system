@@ -193,22 +193,10 @@ const DashboardHome = ({ onNavigate }) => {
               <Typography variant="h5" fontWeight="600" gutterBottom>
                 {user?.nom_complet || user?.cod_etu}
               </Typography>
-              {user?.nom_arabe && (
-                <Typography 
-                  variant="h6" 
-                  sx={{ 
-                    opacity: 0.9, 
-                    direction: 'rtl',
-                    fontFamily: 'Arabic UI Text, Arial',
-                    mb: 1
-                  }}
-                >
-                  {user.nom_arabe}
-                </Typography>
-              )}
+            
               <Typography variant="body1" sx={{ opacity: 0.9, mt: 2 }}>
                 {i18n.language === 'ar' 
-                  ? 'مرحباً بك في نظام معلومات الطلاب. يمكنك هنا الاطلاع على جميع معلوماتك الأكاديمية ونقطك.'
+                  ? 'مرحباً بك في تطبيق وضعيتي – المنصة الخاصة بطلبة كلية العلوم القانونية والسياسية بسطات. يمكنك من خلاله الاطلاع على وضعيتك الجامعية، نقاطك، وتتبع مسارك الدراسي بكل سهولة وفي أي وقت.'
                   : 'Bienvenue dans le système d\'information des étudiants. Vous pouvez consulter toutes vos informations académiques et notes ici.'
                 }
               </Typography>
@@ -228,17 +216,7 @@ const DashboardHome = ({ onNavigate }) => {
               >
                 {user?.nom_complet?.charAt(0) || user?.cod_etu?.charAt(0) || 'S'}
               </Avatar>
-              <Box sx={{ mt: 2 }}>
-                <Chip
-                  icon={<SchoolIcon />}
-                  label={user?.etape || 'Étudiant'}
-                  sx={{ 
-                    bgcolor: 'rgba(255,255,255,0.2)', 
-                    color: 'white',
-                    backdropFilter: 'blur(10px)'
-                  }}
-                />
-              </Box>
+            
             </Grid>
           </Grid>
         </Box>
@@ -278,8 +256,8 @@ const DashboardHome = ({ onNavigate }) => {
         <Grid container spacing={3}>
           <Grid item xs={12} sm={6} md={3}>
             <QuickActionCard
-              title="معلوماتي الشخصية"
-              description="عرض وإدارة معلوماتك الشخصية والأكاديمية"
+              title=" بياناتي"
+              description="عرض وإدارة معلوماتك الشخصية والجامعية"
               icon={<PersonIcon sx={{ fontSize: 30 }} />}
               color="#3498db"
               onClick={() => onNavigate('profile')}
@@ -288,7 +266,7 @@ const DashboardHome = ({ onNavigate }) => {
           <Grid item xs={12} sm={6} md={3}>
             <QuickActionCard
               title="نقطي"
-              description="استعراض جميع نقطك مفصلة حسب السنة والفصل"
+              description="عرض جميع نقطك مفصلة حسب السنة والفصل"
               icon={<GradeIcon sx={{ fontSize: 30 }} />}
               color="#e74c3c"
               onClick={() => onNavigate('grades')}

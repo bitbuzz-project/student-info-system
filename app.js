@@ -592,12 +592,12 @@ function createSessionDisplayWithSemesters(grades, sessionTitle) {
 
 function getSemesterDisplayName(semester) {
     const semesterNames = {
-        'S1': 'الفصل الأول - Semester 1',
-        'S2': 'الفصل الثاني - Semester 2',
-        'S3': 'الفصل الثالث - Semester 3',
-        'S4': 'الفصل الرابع - Semester 4',
-        'S5': 'الفصل الخامس - Semester 5',
-        'S6': 'الفصل السادس - Semester 6'
+        'S1': 'السداسي الأول - Semester 1',
+        'S2': 'السداسي الثاني - Semester 2',
+        'S3': 'السداسي الثالث - Semester 3',
+        'S4': 'السداسي الرابع - Semester 4',
+        'S5': 'السداسي الخامس - Semester 5',
+        'S6': 'السداسي السادس - Semester 6'
     };
     
     return semesterNames[semester] || semester;

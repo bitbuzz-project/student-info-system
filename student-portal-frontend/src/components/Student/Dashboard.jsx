@@ -84,19 +84,19 @@ const Dashboard = () => {
   const navigationItems = [
     {
       id: 'dashboard',
-      label: 'الرئيسية - Dashboard',
+      label: t('dashboard'),
       icon: <DashboardIcon />,
       color: '#3498db'
     },
     {
       id: 'profile',
-      label: 'المعلومات الشخصية - Profile',
+      label: ' بياناتي الشخصية ',
       icon: <PersonIcon />,
       color: '#2ecc71'
     },
     {
       id: 'grades',
-      label: 'النقط - Grades',
+      label: 'النقط والنتائج',
       icon: <GradeIcon />,
       color: '#e74c3c'
     },
@@ -229,7 +229,7 @@ const Dashboard = () => {
           fullWidth
           variant="outlined"
           color="error"
-          startIcon={<LogoutIcon />}
+       
           onClick={handleLogout}
           sx={{ borderRadius: 3 }}
         >

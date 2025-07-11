@@ -16,13 +16,13 @@ import {
   AccordionDetails,
   Card,
   CardContent,
-  Grid
+  Grid, // Keep Grid for the new legend layout
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
   School as SchoolIcon
 } from '@mui/icons-material';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from 'react-i18next'; // Keep useTranslation for other parts of the component
 
 const GradeTable = ({ gradesData, hasArabicNames = false }) => {
   const { t } = useTranslation();
@@ -46,13 +46,9 @@ const GradeTable = ({ gradesData, hasArabicNames = false }) => {
     return colors[semester] || '#95a5a6';
   };
 
-  const calculateSemesterStats = (grades) => {
-    const validGrades = grades.filter(g => g.not_elp !== null && g.not_elp !== undefined);
-    const total = validGrades.length;
-    const passed = validGrades.filter(g => parseFloat(g.not_elp) >= 10).length;
-    
-    return { total, passed, failed: total - passed };
-  };
+
+
+  // Removed the getResultStatusLabel function as it's no longer needed.
 
   const renderGradesForStructure = (structure) => {
     return Object.entries(structure).map(([studyYear, yearData]) => (
@@ -77,7 +73,7 @@ const GradeTable = ({ gradesData, hasArabicNames = false }) => {
             Object.entries(sessionData).map(([sessionType, sessionTypeData]) =>
               Object.entries(sessionTypeData).map(([academicYear, academicYearData]) =>
                 Object.entries(academicYearData).map(([semester, semesterGrades]) => {
-                  const stats = calculateSemesterStats(semesterGrades);
+                  
                   const semesterColor = getSemesterColor(semester);
                   
                   return (
@@ -96,24 +92,15 @@ const GradeTable = ({ gradesData, hasArabicNames = false }) => {
                           <Grid container alignItems="center">
                             <Grid item xs={12} sm={6}>
                               <Typography variant="h6" fontWeight="600">
-                                {semester} - الفصل {semester.replace('S', '')}
+                                {semester} - السداسي {semester.replace('S', '')}
                               </Typography>
                               <Typography variant="body2" sx={{ opacity: 0.9 }}>
-                                {sessionType === 'automne' ? '🍂 دورة الخريف' : '🌸 دورة الربيع'} | 
+                                {sessionType === 'automne' ? '  الدورة الخريفية' : '  الدورة الربيعية'} | 
                                 {sessionNum === '1' ? ' عادية' : ' استدراكية'}
                               </Typography>
                             </Grid>
                             <Grid item xs={12} sm={6}>
-                              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                                <Chip
-                                  label={`${stats.total} مواد`}
-                                  sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: 'white' }}
-                                />
-                                <Chip
-                                  label={`${stats.passed} نجح`}
-                                  sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: 'white' }}
-                                />
-                              </Box>
+                             
                             </Grid>
                           </Grid>
                         </Box>
@@ -123,14 +110,13 @@ const GradeTable = ({ gradesData, hasArabicNames = false }) => {
                           <Table>
                             <TableHead>
                               <TableRow sx={{ bgcolor: '#f8f9fa' }}>
-                                <TableCell sx={{ fontWeight: 600 }}>رمز المادة</TableCell>
-                                <TableCell sx={{ fontWeight: 600 }}>اسم المادة</TableCell>
+                                <TableCell sx={{ fontWeight: 600 }}>Code </TableCell>
+                                <TableCell sx={{ fontWeight: 600 }}> Module</TableCell>
                                 {hasArabicNames && (
                                   <TableCell sx={{ fontWeight: 600, direction: 'rtl' }}>الاسم بالعربية</TableCell>
                                 )}
-                                <TableCell sx={{ fontWeight: 600, textAlign: 'center' }}>النقطة</TableCell>
-                                <TableCell sx={{ fontWeight: 600, textAlign: 'center' }}>النتيجة</TableCell>
-                                <TableCell sx={{ fontWeight: 600, textAlign: 'center' }}>النوع</TableCell>
+                                <TableCell sx={{ fontWeight: 600, textAlign: 'center' }}>Note</TableCell>
+                                <TableCell sx={{ fontWeight: 600, textAlign: 'center' }}>Resultat</TableCell>
                               </TableRow>
                             </TableHead>
                             <TableBody>
@@ -176,43 +162,45 @@ const GradeTable = ({ gradesData, hasArabicNames = false }) => {
                                   </TableCell>
                                   <TableCell sx={{ textAlign: 'center' }}>
                                     <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                                      {grade.cod_tre || '-'}
+                                      {grade.cod_tre || '-'} {/* Displaying the raw code */}
                                     </Typography>
                                   </TableCell>
-                                  <TableCell sx={{ textAlign: 'center' }}>
-                                    <Chip
-                                      label={grade.is_module ? 'وحدة' : 'مادة'}
-                                      size="small"
-                                      color={grade.is_module ? 'secondary' : 'primary'}
-                                      variant="outlined"
-                                    />
-                                  </TableCell>
+                                  
                                 </TableRow>
                               ))}
                             </TableBody>
                           </Table>
                         </TableContainer>
 
-                        {/* Semester Summary */}
+                        {/* Result Legend (replaces old Semester Summary) */}
                         <Box sx={{ mt: 2, p: 2, bgcolor: '#f8f9fa', borderRadius: 2 }}>
-                          <Grid container spacing={2} textAlign="center">
-                            <Grid item xs={4}>
-                              <Typography variant="h6" color="primary.main" fontWeight="bold">
-                                {stats.total}
-                              </Typography>
-                              <Typography variant="caption">إجمالي</Typography>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                           Explication des codes de résultat:
+                          </Typography>
+                          <Grid container spacing={1} sx={{ fontSize: '0.9em' }}>
+                            <Grid item xs={6}>
+                              <Typography variant="body2" fontWeight="bold">V:</Typography>
                             </Grid>
-                            <Grid item xs={4}>
-                              <Typography variant="h6" color="success.main" fontWeight="bold">
-                                {stats.passed}
-                              </Typography>
-                              <Typography variant="caption">نجح</Typography>
+                            <Grid item xs={6}>
+                              <Typography variant="body2">Validé </Typography>
                             </Grid>
-                            <Grid item xs={4}>
-                              <Typography variant="h6" color="error.main" fontWeight="bold">
-                                {stats.failed}
-                              </Typography>
-                              <Typography variant="caption">رسب</Typography>
+                            <Grid item xs={6}>
+                              <Typography variant="body2" fontWeight="bold">NV:</Typography>
+                            </Grid>
+                            <Grid item xs={6}>
+                              <Typography variant="body2">Non validé </Typography>
+                            </Grid>
+                            <Grid item xs={6}>
+                              <Typography variant="body2" fontWeight="bold">VAR:</Typography>
+                            </Grid>
+                            <Grid item xs={6}>
+                              <Typography variant="body2">Validé après rattrapage </Typography>
+                            </Grid>
+                            <Grid item xs={6}>
+                              <Typography variant="body2" fontWeight="bold">ACR:</Typography>
+                            </Grid>
+                            <Grid item xs={6}>
+                              <Typography variant="body2">Acquis par compensation</Typography>
                             </Grid>
                           </Grid>
                         </Box>

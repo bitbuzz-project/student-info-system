@@ -11,6 +11,7 @@ import createCache from '@emotion/cache'
 import App from './App.jsx'
 import { AuthProvider } from './contexts/AuthContext.jsx'
 import './utils/i18n.js' // Initialize i18n
+import './index.css' // <--- ADD THIS LINE to import your global CSS
 
 // Create RTL cache for Arabic support
 const cacheRtl = createCache({
@@ -39,13 +40,9 @@ const theme = createTheme({
   },
   typography: {
     fontFamily: [
-      'Segoe UI',
-      'Tahoma',
-      'Geneva',
-      'Verdana',
-      'sans-serif',
-      'Arabic UI Text',
-      'Arial'
+      'Almarai',
+      'sans-serif'
+    
     ].join(','),
     h4: {
       fontWeight: 600,

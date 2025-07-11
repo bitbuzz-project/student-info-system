@@ -1,3 +1,7 @@
+/* src/index.css */
+
+@import url('https://fonts.googleapis.com/css2?family=Almarai:wght@300;400;700;800&family=Ancizar+Sans:ital,wght@0,100..1000;1,100..1000&display=swap');
+
 :root {
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
@@ -10,7 +14,7 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  -moz-osx-smoothing: grayscale;
 }
 
 a {
@@ -24,10 +28,11 @@ a:hover {
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+  /* REMOVE these lines: */
+  /* display: flex; */
+  /* place-items: center; */
+  /* min-width: 320px; */
+  min-height: 100vh; /* Keep this to ensure full viewport height */
 }
 
 h1 {

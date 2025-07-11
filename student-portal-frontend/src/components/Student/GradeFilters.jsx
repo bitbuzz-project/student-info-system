@@ -46,7 +46,7 @@ const GradeFilters = ({ filters, onFiltersChange, availableYears = [] }) => {
         <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
           <FilterIcon sx={{ mr: 2, color: 'primary.main' }} />
           <Typography variant="h6" fontWeight="600">
-            تصفية النقط - Grade Filters
+             Filtrer les notes
           </Typography>
           {hasActiveFilters && (
             <Button
@@ -55,7 +55,7 @@ const GradeFilters = ({ filters, onFiltersChange, availableYears = [] }) => {
               sx={{ ml: 'auto' }}
               color="secondary"
             >
-              مسح الفلاتر - Clear Filters
+             Effacer les filtres
             </Button>
           )}
         </Box>
@@ -131,7 +131,7 @@ const GradeFilters = ({ filters, onFiltersChange, availableYears = [] }) => {
         {hasActiveFilters && (
           <Box sx={{ mt: 3 }}>
             <Typography variant="body2" color="text.secondary" gutterBottom>
-              الفلاتر النشطة - Active Filters:
+             Filtres actifs:
             </Typography>
             <Stack direction="row" spacing={1} flexWrap="wrap">
               {filters.year && (
@@ -145,7 +145,7 @@ const GradeFilters = ({ filters, onFiltersChange, availableYears = [] }) => {
               )}
               {filters.sessionType && (
                 <Chip
-                  label={`النوع: ${filters.sessionType === 'automne' ? 'خريف' : 'ربيع'}`}
+                  label={`النوع: ${filters.sessionType === 'automne' ? 'خريفية' : 'ربيعية'}`}
                   onDelete={() => handleFilterChange('sessionType', '')}
                   color="secondary"
                   variant="outlined"
