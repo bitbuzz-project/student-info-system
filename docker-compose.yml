@@ -1,0 +1,107 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: students_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  api:
+    build: .
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+    environment:
+      NODE_ENV: development
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_DATABASE: students_db
+      PG_USER: postgres
+      PG_PASSWORD: password
+      JWT_SECRET: your-secret-key
+    volumes:
+      - .:/app
+      - /app/node_modules
+
+volumes:
+  postgres_data:
+
+# ===========================================
+# Dockerfile
+# ===========================================
+FROM node:18-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+
+COPY . .
+
+EXPOSE 3000
+
+CMD ["npm", "start"]
+
+# ===========================================
+# README.md - Setup Instructions
+# ===========================================
+# Student Information System
+
+## Setup Instructions
+
+### 1. Install Dependencies
+```bash
+npm install
+```
+
+### 2. Configure Environment
+Copy `.env.example` to `.env` and configure your database settings.
+
+### 3. Setup Database
+```bash
+npm run setup-db
+```
+
+### 4. Start Development Server
+```bash
+npm run dev
+```
+
+### 5. Start Sync Service (separate terminal)
+```bash
+npm run sync
+```
+
+## API Endpoints
+
+### Authentication
+- `POST /auth/login` - Login with CIN and password
+- `GET /student/me` - Get current student info
+
+### Students
+- `GET /students/search` - Search students
+- `GET /stats` - Get system statistics
+
+### System
+- `GET /health` - Health check
+- `GET /sync/status` - Sync status
+
+## Usage
+
+1. Login using CIN as username and student code as password
+2. Access student information via API endpoints
+3. Sync service runs automatically every 15 minutes
+
+## Production Deployment
+
+1. Update Oracle connection settings in `.env`
+2. Run sync service on server with Oracle access
+3. Run API service on web server
+4. Use reverse proxy (nginx) for production

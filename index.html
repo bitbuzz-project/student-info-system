@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>نظام معلومات الطلاب - Student Information System</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>نظام معلومات الطلاب</h1>
+            <p>Student Information System</p>
+        </div>
+
+        <div class="content">
+            <div id="loginSection" class="login-section">
+                <h2 style="margin-bottom: 30px; color: #2c3e50;">تسجيل الدخول - Login</h2>
+                
+                <div id="alertContainer"></div>
+                
+                <form id="loginForm">
+                    <div class="form-group">
+                        <label for="cin">رقم بطاقة التعريف الوطنية - CIN:</label>
+                        <input type="text" id="cin" name="cin" required placeholder="أدخل رقم بطاقة التعريف">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="password">كلمة المرور - Password:</label>
+                        <input type="password" id="password" name="password" required placeholder="أدخل كلمة المرور">
+                    </div>
+                    
+                    <button type="submit" class="btn" id="loginBtn">
+                        تسجيل الدخول - Login
+                    </button>
+                </form>
+            </div>
+
+            <div id="studentInfo" class="student-info">
+                <div class="tab-header">
+                    <h2 style="color: #2c3e50;">معلومات الطالب - Student Information</h2>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <div class="tab-buttons">
+                            <button id="showInfoBtn" class="tab-button active">
+                                المعلومات - Info
+                            </button>
+                            <button id="showGradesBtn" class="tab-button">
+                                النقط - Grades
+                            </button>
+                        </div>
+                        <button id="logoutBtn" class="btn logout-btn" style="width: auto; margin: 0; padding: 12px 24px;">
+                            تسجيل الخروج - Logout
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="personalInfoTab">
+                    <div class="info-card">
+                        <h3 style="margin-bottom: 20px; color: #2c3e50; text-align: center;">المعلومات الشخصية - Personal Information</h3>
+                        
+                        <div class="info-row">
+                            <div class="info-label">رقم الطالب - Student Code:</div>
+                            <div class="info-value" id="studentCode">-</div>
+                        </div>
+                        
+                        <div class="info-row">
+                            <div class="info-label">الاسم الكامل - Full Name:</div>
+                            <div class="info-value" id="fullName">-</div>
+                        </div>
+                        
+                        <div class="info-row">
+                            <div class="info-label">الاسم بالعربية - Arabic Name:</div>
+                            <div class="info-value" id="arabicName">-</div>
+                        </div>
+                        
+                        <div class="info-row">
+                            <div class="info-label">رقم بطاقة التعريف - CIN:</div>
+                            <div class="info-value" id="cinNumber">-</div>
+                        </div>
+                        
+                        <div class="info-row">
+                            <div class="info-label">تاريخ الميلاد - Date of Birth:</div>
+                            <div class="info-value" id="dateOfBirth">-</div>
+                        </div>
+                        
+                        <div class="info-row">
+                            <div class="info-label">مكان الميلاد - Place of Birth:</div>
+                            <div class="info-value" id="placeOfBirth">-</div>
+                        </div>
+                        
+                        <div class="info-row">
+                            <div class="info-label">الجنس - Gender:</div>
+                            <div class="info-value" id="gender">-</div>
+                        </div>
+                    </div>
+
+                    <div class="info-card">
+                        <h3 style="margin-bottom: 20px; color: #2c3e50; text-align: center;">المعلومات الأكاديمية - Academic Information</h3>
+                        
+                        <div class="info-row">
+                            <div class="info-label">التخصص - Specialization:</div>
+                            <div class="info-value" id="specialization">-</div>
+                        </div>
+                        
+                        <div class="info-row">
+                            <div class="info-label">رخصة التخصص - License:</div>
+                            <div class="info-value" id="license">-</div>
+                        </div>
+                        
+                        <div class="info-row">
+                            <div class="info-label">السنة الجامعية - Academic Year:</div>
+                            <div class="info-value" id="academicYear">-</div>
+                        </div>
+                        
+                        <div class="info-row">
+                            <div class="info-label">الدبلوم - Diploma:</div>
+                            <div class="info-value" id="diploma">-</div>
+                        </div>
+                        
+                        <div class="stats-grid">
+                            <div class="stat-card">
+                                <div class="stat-number" id="cycleInscriptions">0</div>
+                                <div class="stat-label">تسجيلات الدورة - Cycle Inscriptions</div>
+                            </div>
+                            
+                            <div class="stat-card">
+                                <div class="stat-number" id="stageInscriptions">0</div>
+                                <div class="stat-label">تسجيلات المرحلة - Stage Inscriptions</div>
+                            </div>
+                            
+                            <div class="stat-card">
+                                <div class="stat-number" id="diplomaInscriptions">0</div>
+                                <div class="stat-label">تسجيلات الدبلوم - Diploma Inscriptions</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="info-card">
+                        <div class="info-row">
+                            <div class="info-label">آخر تحديث - Last Update:</div>
+                            <div class="info-value" id="lastUpdate">-</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="gradesTab" style="display: none;">
+    <div class="info-card">
+        <div id="gradeStatsContainer">
+            <div class="no-data">
+                <i>📊</i>
+                جاري تحميل الإحصائيات...<br>
+                Loading statistics...
+            </div>
+        </div>
+    </div>
+
+    <div class="info-card">
+        <h3 style="margin-bottom: 20px; color: #2c3e50; text-align: center;">النقط التفصيلية - Detailed Grades</h3>
+        
+        <div class="grades-filters">
+            <div class="filter-group">
+                <label for="yearFilter">السنة الدراسية - Academic Year:</label>
+                <select id="yearFilter">
+                    <option value="">جميع السنوات - All Years</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="semesterTypeFilter">نوع الدورة - Session Type:</label>
+                <select id="semesterTypeFilter">
+                    <option value="">جميع الأنواع - All Types</option>
+                    <option value="automne">الدورة الخريفية - Autumn Session</option>
+                    <option value="printemps">الدورة الربيعية - Spring Session</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="sessionTypeFilter">الدورة - Session:</label>
+                <select id="sessionTypeFilter">
+                    <option value="">جميع الدورات - All Sessions</option>
+                    <option value="1">دورة عادية - Session Normale</option>
+                    <option value="2">دورة الاستدراكية - Session Rattrapage</option>
+                </select>
+            </div>
+        </div>
+        
+        <div id="filteredGradesContainer">
+             <div class="no-data">
+                <i>📋</i>
+                اختر الفلاتر لعرض النقط.<br>
+                Select filters to display grades.
+            </div>
+        </div>
+    </div>
+</div>
+            </div>
+
+            <div id="loadingSection" class="loading" style="display: none;">
+                <div class="loading-spinner"></div>
+                <p>جاري التحميل... Loading...</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
