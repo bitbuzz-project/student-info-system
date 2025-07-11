@@ -248,19 +248,50 @@ async function syncElementPedagogi(oracleConnection, pgClient) {
     for (const element of batch) {
       const [cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb] = element;
       
-      // Determine element type and semester number
       let elementType = 'MATIERE'; // default
       let semesterNumber = null;
       
+      // Try to determine element type and semester from COD_NEL or COD_PEL directly
       if (cod_nel && (cod_nel.startsWith('S') || cod_nel.includes('SM'))) {
         elementType = 'SEMESTRE';
-        // Extract semester number from cod_nel or cod_pel
-        const semMatch = (cod_nel || cod_pel || '').match(/S?(\d+)/);
+        const semMatch = (cod_nel || '').match(/S?(\d+)/);
         if (semMatch) {
           semesterNumber = parseInt(semMatch[1]);
         }
-      } else if (cod_nel && cod_nel === 'MOD') {
+      } else if (cod_pel && (cod_pel.startsWith('S') || cod_pel.includes('SM'))) { // Check cod_pel as well
+        elementType = 'SEMESTRE';
+        const semMatch = (cod_pel || '').match(/S?(\d+)/);
+        if (semMatch) {
+          semesterNumber = parseInt(semMatch[1]);
+        }
+      }
+      else if (cod_nel && cod_nel === 'MOD') {
         elementType = 'MODULE';
+      }
+
+      // If semester number is still null, try to infer from LIB_ELP or COD_ELP patterns for annual elements
+      if (semesterNumber === null) {
+          const libElpLower = (lib_elp || '').toLowerCase();
+          const codElpUpper = (cod_elp || '').toUpperCase();
+
+          if (libElpLower.includes('premiere année') || libElpLower.includes('1ère année') || codElpUpper.includes('0A1')) {
+              semesterNumber = 1; // Corresponds to S1
+              elementType = 'SEMESTRE'; // Mark as a grouping element for a semester/year
+          } else if (libElpLower.includes('deuxième année') || libElpLower.includes('2ème année') || codElpUpper.includes('0A2')) {
+              semesterNumber = 3; // Corresponds to S3
+              elementType = 'SEMESTRE';
+          } else if (libElpLower.includes('troisième année') || libElpLower.includes('3ème année') || codElpUpper.includes('0A3')) {
+              semesterNumber = 5; // Corresponds to S5
+              elementType = 'SEMESTRE';
+          }
+          // Add more cases if you have 4th, 5th, etc., years with similar patterns
+          else if (libElpLower.includes('quatrième année') || libElpLower.includes('4ème année') || codElpUpper.includes('0A4')) {
+              semesterNumber = 7; // Corresponds to S7
+              elementType = 'SEMESTRE';
+          } else if (libElpLower.includes('cinquième année') || libElpLower.includes('5ème année') || codElpUpper.includes('0A5')) {
+              semesterNumber = 9; // Corresponds to S9
+              elementType = 'SEMESTRE';
+          }
       }
       
       // Check if element exists

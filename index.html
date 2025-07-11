@@ -1,6 +1,3 @@
-<?php
-header('Content-Type: text/html; charset=UTF-8');
-?>
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
@@ -17,7 +14,6 @@ header('Content-Type: text/html; charset=UTF-8');
         </div>
 
         <div class="content">
-            <!-- Login Section -->
             <div id="loginSection" class="login-section">
                 <h2 style="margin-bottom: 30px; color: #2c3e50;">تسجيل الدخول - Login</h2>
                 
@@ -40,7 +36,6 @@ header('Content-Type: text/html; charset=UTF-8');
                 </form>
             </div>
 
-            <!-- Student Info Section -->
             <div id="studentInfo" class="student-info">
                 <div class="tab-header">
                     <h2 style="color: #2c3e50;">معلومات الطالب - Student Information</h2>
@@ -59,7 +54,6 @@ header('Content-Type: text/html; charset=UTF-8');
                     </div>
                 </div>
                 
-                <!-- Personal Information Tab -->
                 <div id="personalInfoTab">
                     <div class="info-card">
                         <h3 style="margin-bottom: 20px; color: #2c3e50; text-align: center;">المعلومات الشخصية - Personal Information</h3>
@@ -149,10 +143,8 @@ header('Content-Type: text/html; charset=UTF-8');
                     </div>
                 </div>
 
-                <!-- Grades Tab -->
-              <div id="gradesTab" style="display: none;">
+                <div id="gradesTab" style="display: none;">
     <div class="info-card">
-        <h3 style="margin-bottom: 20px; color: #2c3e50; text-align: center;">إحصائيات النقط - Grade Statistics</h3>
         <div id="gradeStatsContainer">
             <div class="no-data">
                 <i>📊</i>
@@ -172,40 +164,35 @@ header('Content-Type: text/html; charset=UTF-8');
                     <option value="">جميع السنوات - All Years</option>
                 </select>
             </div>
+            <div class="filter-group">
+                <label for="semesterTypeFilter">نوع الدورة - Session Type:</label>
+                <select id="semesterTypeFilter">
+                    <option value="">جميع الأنواع - All Types</option>
+                    <option value="automne">الدورة الخريفية - Autumn Session</option>
+                    <option value="printemps">الدورة الربيعية - Spring Session</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="sessionTypeFilter">الدورة - Session:</label>
+                <select id="sessionTypeFilter">
+                    <option value="">جميع الدورات - All Sessions</option>
+                    <option value="1">دورة عادية - Session Normale</option>
+                    <option value="2">دورة الاستدراكية - Session Rattrapage</option>
+                </select>
+            </div>
         </div>
         
-        <!-- Session 1 Table -->
-        <div style="margin-bottom: 30px;">
-            <div style="background: linear-gradient(135deg, #3498db 0%, #2980b9 100%); color: white; padding: 15px; border-radius: 10px 10px 0 0; text-align: center; font-weight: 600; font-size: 1.2em;">
-                📚 الدورة العادية - Session Normale (Session 1)
-            </div>
-            <div id="session1Container" style="border: 2px solid #3498db; border-top: none; border-radius: 0 0 10px 10px; min-height: 100px;">
-                <div class="no-data">
-                    <i>📋</i>
-                    جاري تحميل نقط الدورة العادية...<br>
-                    Loading Session 1 grades...
-                </div>
-            </div>
-        </div>
-
-        <!-- Session 2 Table -->
-        <div style="margin-bottom: 30px;">
-            <div style="background: linear-gradient(135deg, #e67e22 0%, #d35400 100%); color: white; padding: 15px; border-radius: 10px 10px 0 0; text-align: center; font-weight: 600; font-size: 1.2em;">
-                📚 دورة الاستدراك - Session Rattrapage (Session 2)
-            </div>
-            <div id="session2Container" style="border: 2px solid #e67e22; border-top: none; border-radius: 0 0 10px 10px; min-height: 100px;">
-                <div class="no-data">
-                    <i>📋</i>
-                    جاري تحميل نقط دورة الاستدراك...<br>
-                    Loading Session 2 grades...
-                </div>
+        <div id="filteredGradesContainer">
+             <div class="no-data">
+                <i>📋</i>
+                اختر الفلاتر لعرض النقط.<br>
+                Select filters to display grades.
             </div>
         </div>
     </div>
 </div>
             </div>
 
-            <!-- Loading Section -->
             <div id="loadingSection" class="loading" style="display: none;">
                 <div class="loading-spinner"></div>
                 <p>جاري التحميل... Loading...</p>
