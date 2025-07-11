@@ -26,7 +26,6 @@ import { useAuth } from '../../contexts/AuthContext';
 const LoginForm = () => {
   const [cin, setCin] = useState('');
   const [password, setPassword] = useState('');
-  const [showDemo, setShowDemo] = useState(false);
   const { login, isLoading, error, clearError } = useAuth();
   const navigate = useNavigate();
   const { t, i18n } = useTranslation();
@@ -52,11 +51,7 @@ const LoginForm = () => {
     // No need to set it manually here unless you want immediate DOM update before React re-render
   };
 
-  const fillDemoCredentials = () => {
-    setCin('BK640175');
-    setPassword('20230001');
-    setShowDemo(false);
-  };
+
 
   return (
     <Box
@@ -97,9 +92,7 @@ const LoginForm = () => {
           }}
         >
           <SchoolIcon sx={{ fontSize: 48, mb: 2 }} />
-          <Typography variant="h4" gutterBottom fontWeight="300">
-            {t('welcome')}
-          </Typography>
+
           <Typography variant="h6" opacity={0.9}>
             {t('studentSystem')}
           </Typography>
@@ -192,43 +185,7 @@ const LoginForm = () => {
           </form>
 
           {/* Demo Section */}
-          <Box sx={{ mt: 4 }}>
-            <Divider sx={{ mb: 3 }}>
-              <Typography variant="body2" color="text.secondary">
-                للاختبار - For Testing
-              </Typography>
-            </Divider>
-            
-            {!showDemo ? (
-              <Button
-                fullWidth
-                variant="outlined"
-                onClick={() => setShowDemo(true)}
-                sx={{ borderRadius: 2 }}
-              >
-                عرض بيانات تجريبية - Show Demo Credentials
-              </Button>
-            ) : (
-              <Box sx={{ textAlign: 'center' }}>
-                <Typography variant="body2" color="text.secondary" gutterBottom>
-                  بيانات تجريبية - Demo Credentials:
-                </Typography>
-                <Typography variant="body2" sx={{ fontFamily: 'monospace', mb: 2 }}>
-                  CIN: BK640175<br />
-                  Password: 20230001
-                </Typography>
-                <Button
-                  variant="contained"
-                  color="secondary"
-                  onClick={fillDemoCredentials}
-                  size="small"
-                  sx={{ borderRadius: 2 }}
-                >
-                  استخدام البيانات التجريبية - Use Demo Data
-                </Button>
-              </Box>
-            )}
-          </Box>
+       
 
           {/* Footer */}
           <Box sx={{ mt: 4, textAlign: 'center' }}>

@@ -19,7 +19,7 @@ const resources = {
       
       // Login
       'welcome': 'مرحباً بك',
-      'studentSystem': 'نظام معلومات الطلاب',
+      'studentSystem': '  منصة وضعيتي',
       'enterCin': 'أدخل رقم بطاقة التعريف الوطنية',
       'enterPassword': 'أدخل كلمة المرور',
       'cinLabel': 'رقم بطاقة التعريف الوطنية',

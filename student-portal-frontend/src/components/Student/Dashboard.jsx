@@ -242,59 +242,70 @@ const Dashboard = () => {
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh' }}>
       {/* Top AppBar */}
-      <AppBar 
-        position="fixed" 
-        sx={{ 
-          zIndex: theme.zIndex.drawer + 1,
-          background: 'linear-gradient(135deg, #2c3e50 0%, #3498db 100%)'
-        }}
-      >
-        <Toolbar>
-          <IconButton
-            color="inherit"
-            edge="start"
-            onClick={toggleDrawer}
-            sx={{ mr: 2, display: { md: 'none' } }}
-          >
-            <MenuIcon />
-          </IconButton>
-          
-          <SchoolIcon sx={{ mr: 2, display: { xs: 'none', md: 'block' } }} />
-          <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-            {t('studentSystem')}
-          </Typography>
-          
-          {/* Language Toggle */}
-          <IconButton
-            color="inherit"
-            onClick={handleLanguageMenuOpen}
-            sx={{ mr: 1 }}
-          >
-            <LanguageIcon />
-          </IconButton>
-          <Menu
-            anchorEl={languageMenu}
-            open={Boolean(languageMenu)}
-            onClose={handleLanguageMenuClose}
-          >
-            <MenuItem onClick={() => changeLanguage('ar')}>
-              العربية
-            </MenuItem>
-            <MenuItem onClick={() => changeLanguage('fr')}>
-              Français
-            </MenuItem>
-          </Menu>
+       <AppBar
+    position="fixed"
+    sx={{
+      zIndex: theme.zIndex.drawer + 1,
+      background: 'linear-gradient(135deg, #2c3e50 0%, #3498db 100%)'
+    }}
+  >
+    <Toolbar>
+      {/* Group for Leading Elements (Menu Icon, School Icon, Student System Title) */}
+      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+        <IconButton
+          color="inherit"
+          edge="start" // edge="start" handles margin based on direction
+          onClick={toggleDrawer}
+          sx={{ mr: 2, display: { md: 'none' } }}
+        >
+          <MenuIcon />
+        </IconButton>
 
-          {/* Mobile User Info */}
-          {user && (
-            <Box sx={{ display: { xs: 'flex', md: 'none' }, alignItems: 'center', ml: 2 }}>
-              <Avatar sx={{ bgcolor: 'rgba(255,255,255,0.2)', width: 32, height: 32 }}>
-                {user.nom_complet?.charAt(0) || 'S'}
-              </Avatar>
-            </Box>
-          )}
-        </Toolbar>
-      </AppBar>
+        {/* School Icon (visible on desktop) */}
+        <SchoolIcon sx={{ mr: 2, display: { xs: 'none', md: 'block' } }} />
+        {/* Student System Title */}
+        <Typography variant="h6" component="div">
+          {t('studentSystem')}
+        </Typography>
+      </Box>
+
+      {/* Flexible Spacer - This pushes the above group to the start and the following group to the end */}
+      <Box sx={{ flexGrow: 1 }} />
+
+      {/* Group for Trailing Elements (Language Toggle, Mobile User Info) */}
+      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+        {/* Language Toggle */}
+        <IconButton
+          color="inherit"
+          onClick={handleLanguageMenuOpen}
+          sx={{ mr: 1 }}
+        >
+          <LanguageIcon />
+        </IconButton>
+        <Menu
+          anchorEl={languageMenu}
+          open={Boolean(languageMenu)}
+          onClose={handleLanguageMenuClose}
+        >
+          <MenuItem onClick={() => changeLanguage('ar')}>
+            العربية
+          </MenuItem>
+          <MenuItem onClick={() => changeLanguage('fr')}>
+            Français
+          </MenuItem>
+        </Menu>
+
+        {/* Mobile User Info (visible on mobile) */}
+        {user && (
+          <Box sx={{ display: { xs: 'flex', md: 'none' }, alignItems: 'center', ml: 2 }}>
+            <Avatar sx={{ bgcolor: 'rgba(255,255,255,0.2)', width: 32, height: 32 }}>
+              {user.nom_complet?.charAt(0) || 'S'}
+            </Avatar>
+          </Box>
+        )}
+      </Box>
+    </Toolbar>
+  </AppBar>
 
       {/* Sidebar Drawer */}
       <Drawer
