@@ -237,6 +237,7 @@ async function loadStudentInfo() {
 let hasArabicNames = false;
 
 // Load student grades
+// Load student grades with proper semester structure
 async function loadStudentGrades() {
     if (!authToken) {
         showLogin();
@@ -285,17 +286,181 @@ async function loadStudentGrades() {
         
         populateGradeFilters();
         populateGradeStats();
-        displayGrades();
+        displaySimpleGrades();
         
     } catch (error) {
         console.error('Load grades error:', error);
         showAlert('خطأ في تحميل النقط - ' + error.message);
         
-        const container = document.getElementById('gradesContainer');
-        if (container) {
-            container.innerHTML = '<div class="no-data"><i>❌</i>خطأ في تحميل النقط<br>Error: ' + error.message + '</div>';
-        }
+        document.getElementById('session1Container').innerHTML = '<div class="no-data"><i>❌</i>خطأ في تحميل النقط<br>Error: ' + error.message + '</div>';
+        document.getElementById('session2Container').innerHTML = '<div class="no-data"><i>❌</i>خطأ في تحميل النقط<br>Error: ' + error.message + '</div>';
     }
+}
+
+function displaySimpleGrades() {
+    const session1Container = document.getElementById('session1Container');
+    const session2Container = document.getElementById('session2Container');
+    
+    if (!session1Container || !session2Container) return;
+    
+    if (!currentGrades || Object.keys(currentGrades).length === 0) {
+        session1Container.innerHTML = '<div class="no-data"><i>📋</i>لا توجد نقط متاحة<br>No grades available</div>';
+        session2Container.innerHTML = '<div class="no-data"><i>📋</i>لا توجد نقط متاحة<br>No grades available</div>';
+        return;
+    }
+    
+    const selectedYear = yearFilter ? yearFilter.value : '';
+    
+    // Collect all grades and organize by session
+    const session1Grades = [];
+    const session2Grades = [];
+    
+    Object.keys(currentGrades).forEach(function(studyYear) {
+        if (selectedYear && studyYear !== selectedYear) return;
+        
+        const yearData = currentGrades[studyYear];
+        
+        // Process Session 1
+        if (yearData['1']) {
+            Object.values(yearData['1']).forEach(sessionTypeData => {
+                Object.values(sessionTypeData).forEach(academicYearData => {
+                    Object.values(academicYearData).forEach(semesterData => {
+                        if (Array.isArray(semesterData)) {
+                            session1Grades.push(...semesterData.map(grade => ({
+                                ...grade,
+                                study_year: studyYear
+                            })));
+                        }
+                    });
+                });
+            });
+        }
+        
+        // Process Session 2
+        if (yearData['2']) {
+            Object.values(yearData['2']).forEach(sessionTypeData => {
+                Object.values(sessionTypeData).forEach(academicYearData => {
+                    Object.values(academicYearData).forEach(semesterData => {
+                        if (Array.isArray(semesterData)) {
+                            session2Grades.push(...semesterData.map(grade => ({
+                                ...grade,
+                                study_year: studyYear
+                            })));
+                        }
+                    });
+                });
+            });
+        }
+    });
+    
+    // Create table for Session 1
+    session1Container.innerHTML = createGradeTable(session1Grades, 'Session 1');
+    
+    // Create table for Session 2
+    session2Container.innerHTML = createGradeTable(session2Grades, 'Session 2');
+}
+
+// Helper function to create grade table
+function createGradeTable(grades, sessionName) {
+    if (!grades || grades.length === 0) {
+        return `<div class="no-data"><i>📋</i>لا توجد نقط لـ ${sessionName}<br>No grades for ${sessionName}</div>`;
+    }
+    
+    // Sort grades by semester number and subject name
+    grades.sort((a, b) => {
+        const semA = a.semester_number || 0;
+        const semB = b.semester_number || 0;
+        if (semA !== semB) return semA - semB;
+        return (a.lib_elp || '').localeCompare(b.lib_elp || '');
+    });
+    
+    let tableHTML = `
+        <table class="grade-table" style="margin: 0;">
+            <thead>
+                <tr>
+                    <th>السنة<br>Year</th>
+                    <th>الفصل<br>Semester</th>
+                    <th>رمز المادة<br>Code</th>
+                    <th>اسم المادة<br>Subject Name</th>
+    `;
+    
+    if (hasArabicNames) {
+        tableHTML += '<th>الاسم بالعربية<br>Arabic Name</th>';
+    }
+    
+    tableHTML += `
+                    <th>النقطة<br>Grade</th>
+                    <th>النتيجة<br>Result</th>
+                    <th>النوع<br>Type</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+    
+    grades.forEach(function(grade) {
+        const gradeValue = grade.not_elp !== null && grade.not_elp !== undefined ? 
+            parseFloat(grade.not_elp).toFixed(2) : 'ABS';
+        const gradeClass = getGradeClass(grade.not_elp);
+        const typeLabel = grade.is_module ? 'وحدة - Module' : 'مادة - Subject';
+        const typeColor = grade.is_module ? '#9b59b6' : '#3498db';
+        const semesterName = grade.semester_number ? `S${grade.semester_number}` : 'N/A';
+        
+        tableHTML += '<tr>';
+        tableHTML += `<td style="font-weight: 600;">${grade.study_year || 'N/A'}</td>`;
+        tableHTML += `<td style="font-weight: 600; color: #3498db;">${semesterName}</td>`;
+        tableHTML += `<td style="font-weight: 600;">${grade.cod_elp || 'N/A'}</td>`;
+        tableHTML += `<td style="text-align: right; font-weight: 500;">${grade.lib_elp || 'N/A'}</td>`;
+        
+        if (hasArabicNames) {
+            const arabicName = grade.lib_elp_arb && grade.lib_elp_arb.trim() !== '' 
+                ? grade.lib_elp_arb 
+                : grade.lib_elp || 'N/A';
+            tableHTML += `<td style="text-align: right; font-weight: 500; color: #27ae60;">${arabicName}</td>`;
+        }
+        
+        tableHTML += `<td><span class="grade-value ${gradeClass}">${gradeValue}</span></td>`;
+        tableHTML += `<td style="font-weight: 600; color: #2c3e50;">${grade.cod_tre || '-'}</td>`;
+        tableHTML += `<td><span style="background: ${typeColor}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">${typeLabel}</span></td>`;
+        tableHTML += '</tr>';
+    });
+    
+    tableHTML += '</tbody></table>';
+    
+    // Add summary info
+    const totalGrades = grades.length;
+    const passedGrades = grades.filter(g => g.not_elp && parseFloat(g.not_elp) >= 10).length;
+    const failedGrades = grades.filter(g => g.not_elp && parseFloat(g.not_elp) < 10).length;
+    const absentGrades = grades.filter(g => !g.not_elp).length;
+    
+    const summaryHTML = `
+        <div style="padding: 15px; background: #f8f9fa; border-top: 1px solid #e0e0e0;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; text-align: center;">
+                <div>
+                    <strong style="color: #3498db;">${totalGrades}</strong><br>
+                    <small>إجمالي المواد<br>Total</small>
+                </div>
+                <div>
+                    <strong style="color: #27ae60;">${passedGrades}</strong><br>
+                    <small>نجح<br>Passed</small>
+                </div>
+                <div>
+                    <strong style="color: #e74c3c;">${failedGrades}</strong><br>
+                    <small>رسب<br>Failed</small>
+                </div>
+                <div>
+                    <strong style="color: #95a5a6;">${absentGrades}</strong><br>
+                    <small>غائب<br>Absent</small>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    return tableHTML + summaryHTML;
+}
+
+// Update the filter function to use the new display
+function filterGrades() {
+    displaySimpleGrades();
 }
 
 // Populate grade filters
@@ -340,6 +505,7 @@ function getSessionName(sessionCode) {
     return sessionNames[sessionCode] || 'الدورة ' + sessionCode + ' - Session ' + sessionCode;
 }
 
+
 // Populate grade statistics
 function populateGradeStats() {
     const container = document.getElementById('gradeStatsContainer');
@@ -352,15 +518,105 @@ function populateGradeStats() {
         return;
     }
     
+    // Group statistics by study year and session
+    const statsByYearAndSession = {};
+    
     currentGradeStats.forEach(function(stat) {
-        const statCard = document.createElement('div');
-        statCard.className = 'year-section';
-        statCard.innerHTML = '<div class="year-header">السنة الدراسية ' + stat.academic_year + ' - ' + (parseInt(stat.academic_year) + 1) + ' | ' + getSessionName(stat.session) + '</div><div style="padding: 20px;"><div class="stats-summary"><div class="summary-card"><div class="summary-number" style="color: #3498db;">' + stat.total_subjects + '</div><div class="summary-label">إجمالي المواد<br>Total Subjects</div></div><div class="summary-card"><div class="summary-number" style="color: #27ae60;">' + stat.passed_subjects + '</div><div class="summary-label">مواد منجحة<br>Passed</div></div><div class="summary-card"><div class="summary-number" style="color: #e74c3c;">' + stat.failed_subjects + '</div><div class="summary-label">مواد راسبة<br>Failed</div></div><div class="summary-card"><div class="summary-number" style="color: #9b59b6;">' + (stat.average_grade || 'N/A') + '</div><div class="summary-label">المعدل العام<br>Average</div></div></div></div>';
-        container.appendChild(statCard);
+        const year = stat.academic_year;
+        const session = stat.session;
+        
+        if (!statsByYearAndSession[year]) {
+            statsByYearAndSession[year] = {};
+        }
+        
+        if (!statsByYearAndSession[year][session]) {
+            statsByYearAndSession[year][session] = {
+                total_subjects: 0,
+                passed_subjects: 0,
+                failed_subjects: 0,
+                absent_subjects: 0,
+                total_grades: 0,
+                semester_details: []
+            };
+        }
+        
+        const yearSessionStats = statsByYearAndSession[year][session];
+        yearSessionStats.total_subjects += stat.total_subjects;
+        yearSessionStats.passed_subjects += stat.passed_subjects;
+        yearSessionStats.failed_subjects += stat.failed_subjects;
+        yearSessionStats.absent_subjects += stat.absent_subjects;
+        
+        if (stat.average_grade) {
+            yearSessionStats.total_grades += parseFloat(stat.average_grade) * stat.total_subjects;
+        }
+        
+        yearSessionStats.semester_details.push({
+            semester_number: stat.semester_number,
+            session_type: stat.session_type,
+            average_grade: stat.average_grade,
+            total_subjects: stat.total_subjects,
+            passed_subjects: stat.passed_subjects,
+            failed_subjects: stat.failed_subjects
+        });
+    });
+    
+    // Display statistics
+    Object.keys(statsByYearAndSession).sort((a, b) => b - a).forEach(function(year) {
+        Object.keys(statsByYearAndSession[year]).sort().forEach(function(session) {
+            const stats = statsByYearAndSession[year][session];
+            const averageGrade = stats.total_subjects > 0 ? 
+                (stats.total_grades / stats.total_subjects).toFixed(2) : 'N/A';
+            
+            const statCard = document.createElement('div');
+            statCard.className = 'year-section';
+            
+            let semesterDetailsHtml = '';
+            stats.semester_details.forEach(function(detail) {
+                const sessionTypeLabel = detail.session_type === 'automne' ? 
+                    'خريف - Automne' : 'ربيع - Printemps';
+                
+                semesterDetailsHtml += `
+                    <div style="background: #f8f9fa; padding: 10px; margin: 5px 0; border-radius: 5px; border-left: 3px solid ${detail.session_type === 'automne' ? '#e67e22' : '#3498db'};">
+                        <strong>S${detail.semester_number} (${sessionTypeLabel})</strong><br>
+                        <small>المواد: ${detail.total_subjects} | نجح: ${detail.passed_subjects} | رسب: ${detail.failed_subjects} | معدل: ${detail.average_grade || 'N/A'}</small>
+                    </div>
+                `;
+            });
+            
+            statCard.innerHTML = `
+                <div class="year-header">
+                    السنة الدراسية ${year} - ${parseInt(year) + 1} | ${getSessionName(session)}
+                </div>
+                <div style="padding: 20px;">
+                    <div class="stats-summary">
+                        <div class="summary-card">
+                            <div class="summary-number" style="color: #3498db;">${stats.total_subjects}</div>
+                            <div class="summary-label">إجمالي المواد<br>Total Subjects</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="summary-number" style="color: #27ae60;">${stats.passed_subjects}</div>
+                            <div class="summary-label">مواد منجحة<br>Passed</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="summary-number" style="color: #e74c3c;">${stats.failed_subjects}</div>
+                            <div class="summary-label">مواد راسبة<br>Failed</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="summary-number" style="color: #9b59b6;">${averageGrade}</div>
+                            <div class="summary-label">المعدل العام<br>Average</div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 15px;">
+                        <h4 style="margin-bottom: 10px; color: #2c3e50;">تفاصيل الفصول - Semester Details</h4>
+                        ${semesterDetailsHtml}
+                    </div>
+                </div>
+            `;
+            container.appendChild(statCard);
+        });
     });
 }
 
-// Display grades with proper academic year and semester organization
 function displayGrades() {
     const container = document.getElementById('gradesContainer');
     if (!container) return;
@@ -396,7 +652,7 @@ function displayGrades() {
         return;
     }
     
-    // Display filtered grades organized by study year > session > academic year > semester
+    // Display filtered grades organized by study year > session > session type > academic year > semester
     Object.keys(filteredGrades).sort(function(a, b) {
         return b - a;
     }).forEach(function(studyYear) {
@@ -417,90 +673,132 @@ function displayGrades() {
             sessionHeader.textContent = getSessionName(session);
             sessionDiv.appendChild(sessionHeader);
             
-            const academicYearsData = filteredGrades[studyYear][session];
-            if (!academicYearsData || typeof academicYearsData !== 'object') {
-                console.warn('Invalid academic years data for study year', studyYear, 'session', session);
+            const sessionData = filteredGrades[studyYear][session];
+            if (!sessionData || typeof sessionData !== 'object') {
+                console.warn('Invalid session data for study year', studyYear, 'session', session);
                 return;
             }
             
-            // Display each academic year
-            Object.keys(academicYearsData).sort(function(a, b) {
-                return parseInt(a) - parseInt(b);
-            }).forEach(function(academicYear) {
-                const academicYearDiv = document.createElement('div');
-                academicYearDiv.style.cssText = 'margin-bottom: 20px; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;';
+            // Group by session type (automne/printemps)
+            Object.keys(sessionData).sort().forEach(function(sessionType) {
+                const sessionTypeDiv = document.createElement('div');
+                sessionTypeDiv.style.cssText = 'margin-bottom: 20px; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;';
                 
-                const academicYearHeader = document.createElement('div');
-                academicYearHeader.style.cssText = 'background: linear-gradient(135deg, #3498db 0%, #2980b9 100%); color: white; padding: 15px; font-weight: 600; text-align: center; font-size: 1.1em;';
-                academicYearHeader.textContent = getAcademicYearName(parseInt(academicYear));
-                academicYearDiv.appendChild(academicYearHeader);
+                const sessionTypeHeader = document.createElement('div');
+                sessionTypeHeader.style.cssText = `background: linear-gradient(135deg, ${sessionType === 'automne' ? '#e67e22' : '#3498db'} 0%, ${sessionType === 'automne' ? '#d35400' : '#2980b9'} 100%); color: white; padding: 15px; font-weight: 600; text-align: center; font-size: 1.1em;`;
+                sessionTypeHeader.textContent = sessionType === 'automne' ? 
+                    'دورة الخريف - Session Automne (S1, S3, S5)' : 
+                    'دورة الربيع - Session Printemps (S2, S4, S6)';
+                sessionTypeDiv.appendChild(sessionTypeHeader);
                 
-                const semestersDiv = document.createElement('div');
-                semestersDiv.className = 'semester-grid';
-                semestersDiv.style.cssText = 'display: grid; grid-template-columns: repeat(auto-fit, minmax(500px, 1fr)); gap: 20px; padding: 20px;';
+                const academicYearsData = sessionData[sessionType];
+                if (!academicYearsData || typeof academicYearsData !== 'object') {
+                    console.warn('Invalid academic years data for session type', sessionType);
+                    return;
+                }
                 
-                const semestersData = academicYearsData[academicYear];
-                
-                // Display each semester
-                Object.keys(semestersData).sort().forEach(function(semester) {
-                    const semesterGrades = semestersData[semester];
+                // Display each academic year within this session type
+                Object.keys(academicYearsData).sort(function(a, b) {
+                    return parseInt(a) - parseInt(b);
+                }).forEach(function(academicYear) {
+                    const academicYearDiv = document.createElement('div');
+                    academicYearDiv.style.cssText = 'margin-bottom: 15px; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; margin: 10px;';
                     
-                    if (!semesterGrades || !Array.isArray(semesterGrades)) {
-                        console.warn('Invalid semester grades data:', semesterGrades);
-                        return;
-                    }
+                    const academicYearHeader = document.createElement('div');
+                    academicYearHeader.style.cssText = 'background: linear-gradient(135deg, #34495e 0%, #2c3e50 100%); color: white; padding: 12px; font-weight: 600; text-align: center;';
+                    academicYearHeader.textContent = getAcademicYearName(parseInt(academicYear));
+                    academicYearDiv.appendChild(academicYearHeader);
                     
-                    const semesterDiv = document.createElement('div');
-                    semesterDiv.style.cssText = 'border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;';
+                    const semestersDiv = document.createElement('div');
+                    semestersDiv.className = 'semester-grid';
+                    semestersDiv.style.cssText = 'display: grid; grid-template-columns: repeat(auto-fit, minmax(500px, 1fr)); gap: 20px; padding: 15px;';
                     
-                    const semesterHeader = document.createElement('div');
-                    semesterHeader.style.cssText = 'background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%); color: white; padding: 12px; font-weight: 600; text-align: center;';
-                    semesterHeader.textContent = getSemesterName(semester);
-                    semesterDiv.appendChild(semesterHeader);
+                    const semestersData = academicYearsData[academicYear];
                     
-                    const table = document.createElement('table');
-                    table.className = 'grade-table';
-                    table.style.margin = '0';
-                    
-                    // Create table header - conditionally include Arabic column
-                    let tableHTML = '<thead><tr>';
-                    tableHTML += '<th>رمز المادة<br>Subject Code</th>';
-                    tableHTML += '<th>اسم المادة<br>Subject Name</th>';
-                    if (hasArabicNames) {
-                        tableHTML += '<th>الاسم بالعربية<br>Arabic Name</th>';
-                    }
-                    tableHTML += '<th>النقطة<br>Grade</th>';
-                    tableHTML += '<th>كود النتيجة<br>Result Code</th>';
-                    tableHTML += '</tr></thead><tbody>';
-                    
-                    semesterGrades.forEach(function(grade) {
-                        const gradeValue = grade.not_elp !== null && grade.not_elp !== undefined ? parseFloat(grade.not_elp).toFixed(2) : 'ABS';
-                        tableHTML += '<tr>';
-                        tableHTML += '<td style="font-weight: 600;">' + (grade.cod_elp || 'N/A') + '</td>';
-                        tableHTML += '<td style="text-align: right; font-weight: 500;">' + (grade.lib_elp || 'N/A') + '</td>';
+                    // Display each semester
+                    Object.keys(semestersData).sort().forEach(function(semester) {
+                        const semesterGrades = semestersData[semester];
                         
-                        // Only include Arabic name column if Arabic names are available
-                        if (hasArabicNames) {
-                            const arabicName = grade.lib_elp_arb && grade.lib_elp_arb.trim() !== '' 
-                                ? grade.lib_elp_arb 
-                                : grade.lib_elp || 'N/A';
-                            tableHTML += '<td style="text-align: right; font-weight: 500; color: #27ae60;">' + arabicName + '</td>';
+                        if (!semesterGrades || !Array.isArray(semesterGrades)) {
+                            console.warn('Invalid semester grades data:', semesterGrades);
+                            return;
                         }
                         
-                        tableHTML += '<td><span class="grade-value ' + getGradeClass(grade.not_elp) + '">' + gradeValue + '</span></td>';
-                        tableHTML += '<td style="font-weight: 600; color: #2c3e50;">' + (grade.cod_tre || '-') + '</td>';
-                        tableHTML += '</tr>';
+                        const semesterDiv = document.createElement('div');
+                        semesterDiv.style.cssText = 'border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; background: white;';
+                        
+                        const semesterHeader = document.createElement('div');
+                        semesterHeader.style.cssText = 'background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%); color: white; padding: 12px; font-weight: 600; text-align: center;';
+                        semesterHeader.textContent = getSemesterName(semester);
+                        semesterDiv.appendChild(semesterHeader);
+                        
+                        const table = document.createElement('table');
+                        table.className = 'grade-table';
+                        table.style.margin = '0';
+                        
+                        // Create table header - conditionally include Arabic column
+                        let tableHTML = '<thead><tr>';
+                        tableHTML += '<th>رمز المادة<br>Subject Code</th>';
+                        tableHTML += '<th>اسم المادة<br>Subject Name</th>';
+                        if (hasArabicNames) {
+                            tableHTML += '<th>الاسم بالعربية<br>Arabic Name</th>';
+                        }
+                        tableHTML += '<th>النقطة<br>Grade</th>';
+                        tableHTML += '<th>كود النتيجة<br>Result Code</th>';
+                        tableHTML += '<th>النوع<br>Type</th>';
+                        tableHTML += '</tr></thead><tbody>';
+                        
+                        // Group grades by modules and subjects
+                        const modules = [];
+                        const subjects = [];
+                        
+                        semesterGrades.forEach(function(grade) {
+                            if (grade.is_module) {
+                                modules.push(grade);
+                            } else {
+                                subjects.push(grade);
+                            }
+                        });
+                        
+                        // Display modules first, then subjects
+                        const allGrades = [...modules, ...subjects];
+                        
+                        allGrades.forEach(function(grade) {
+                            const gradeValue = grade.not_elp !== null && grade.not_elp !== undefined ? parseFloat(grade.not_elp).toFixed(2) : 'ABS';
+                            const gradeClass = getGradeClass(grade.not_elp);
+                            const typeLabel = grade.is_module ? 'وحدة - Module' : 'مادة - Subject';
+                            const typeColor = grade.is_module ? '#9b59b6' : '#3498db';
+                            
+                            tableHTML += '<tr>';
+                            tableHTML += '<td style="font-weight: 600;">' + (grade.cod_elp || 'N/A') + '</td>';
+                            tableHTML += '<td style="text-align: right; font-weight: 500;">' + (grade.lib_elp || 'N/A') + '</td>';
+                            
+                            // Only include Arabic name column if Arabic names are available
+                            if (hasArabicNames) {
+                                const arabicName = grade.lib_elp_arb && grade.lib_elp_arb.trim() !== '' 
+                                    ? grade.lib_elp_arb 
+                                    : grade.lib_elp || 'N/A';
+                                tableHTML += '<td style="text-align: right; font-weight: 500; color: #27ae60;">' + arabicName + '</td>';
+                            }
+                            
+                            tableHTML += '<td><span class="grade-value ' + gradeClass + '">' + gradeValue + '</span></td>';
+                            tableHTML += '<td style="font-weight: 600; color: #2c3e50;">' + (grade.cod_tre || '-') + '</td>';
+                            tableHTML += '<td><span style="background: ' + typeColor + '; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">' + typeLabel + '</span></td>';
+                            tableHTML += '</tr>';
+                        });
+                        
+                        tableHTML += '</tbody>';
+                        table.innerHTML = tableHTML;
+                        
+                        semesterDiv.appendChild(table);
+                        semestersDiv.appendChild(semesterDiv);
                     });
                     
-                    tableHTML += '</tbody>';
-                    table.innerHTML = tableHTML;
-                    
-                    semesterDiv.appendChild(table);
-                    semestersDiv.appendChild(semesterDiv);
+                    academicYearDiv.appendChild(semestersDiv);
+                    sessionTypeDiv.appendChild(academicYearDiv);
                 });
                 
-                academicYearDiv.appendChild(semestersDiv);
-                sessionDiv.appendChild(academicYearDiv);
+                sessionDiv.appendChild(sessionTypeDiv);
             });
             
             studyYearDiv.appendChild(sessionDiv);
@@ -532,13 +830,7 @@ function getSemesterName(semesterCode) {
         'S3': 'الفصل الثالث - Semestre 3', 
         'S4': 'الفصل الرابع - Semestre 4',
         'S5': 'الفصل الخامس - Semestre 5',
-        'S6': 'الفصل السادس - Semestre 6',
-        'S7': 'الفصل السابع - Semestre 7',
-        'S8': 'الفصل الثامن - Semestre 8',
-        'S9': 'الفصل التاسع - Semestre 9',
-        'S10': 'الفصل العاشر - Semestre 10',
-        'S11': 'الفصل الحادي عشر - Semestre 11',
-        'S12': 'الفصل الثاني عشر - Semestre 12'
+        'S6': 'الفصل السادس - Semestre 6'
     };
     
     return semesterNames[semesterCode] || semesterCode;

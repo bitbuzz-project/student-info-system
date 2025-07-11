@@ -147,46 +147,59 @@
                 </div>
 
                 <!-- Grades Tab -->
-                <div id="gradesTab" style="display: none;">
-                    <div class="info-card">
-                        <h3 style="margin-bottom: 20px; color: #2c3e50; text-align: center;">إحصائيات النقط - Grade Statistics</h3>
-                        <div id="gradeStatsContainer">
-                            <div class="no-data">
-                                <i>📊</i>
-                                جاري تحميل الإحصائيات...<br>
-                                Loading statistics...
-                            </div>
-                        </div>
-                    </div>
+              <div id="gradesTab" style="display: none;">
+    <div class="info-card">
+        <h3 style="margin-bottom: 20px; color: #2c3e50; text-align: center;">إحصائيات النقط - Grade Statistics</h3>
+        <div id="gradeStatsContainer">
+            <div class="no-data">
+                <i>📊</i>
+                جاري تحميل الإحصائيات...<br>
+                Loading statistics...
+            </div>
+        </div>
+    </div>
 
-                    <div class="info-card">
-                        <h3 style="margin-bottom: 20px; color: #2c3e50; text-align: center;">النقط التفصيلية - Detailed Grades</h3>
-                        
-                        <div class="grades-filters">
-                            <div class="filter-group">
-                                <label for="yearFilter">السنة الدراسية - Academic Year:</label>
-                                <select id="yearFilter">
-                                    <option value="">جميع السنوات - All Years</option>
-                                </select>
-                            </div>
-                            
-                            <div class="filter-group">
-                                <label for="sessionFilter">الدورة - Session:</label>
-                                <select id="sessionFilter">
-                                    <option value="">جميع الدورات - All Sessions</option>
-                                </select>
-                            </div>
-                        </div>
-                        
-                        <div id="gradesContainer">
-                            <div class="no-data">
-                                <i>📋</i>
-                                جاري تحميل النقط...<br>
-                                Loading grades...
-                            </div>
-                        </div>
-                    </div>
+    <div class="info-card">
+        <h3 style="margin-bottom: 20px; color: #2c3e50; text-align: center;">النقط التفصيلية - Detailed Grades</h3>
+        
+        <div class="grades-filters">
+            <div class="filter-group">
+                <label for="yearFilter">السنة الدراسية - Academic Year:</label>
+                <select id="yearFilter">
+                    <option value="">جميع السنوات - All Years</option>
+                </select>
+            </div>
+        </div>
+        
+        <!-- Session 1 Table -->
+        <div style="margin-bottom: 30px;">
+            <div style="background: linear-gradient(135deg, #3498db 0%, #2980b9 100%); color: white; padding: 15px; border-radius: 10px 10px 0 0; text-align: center; font-weight: 600; font-size: 1.2em;">
+                📚 الدورة العادية - Session Normale (Session 1)
+            </div>
+            <div id="session1Container" style="border: 2px solid #3498db; border-top: none; border-radius: 0 0 10px 10px; min-height: 100px;">
+                <div class="no-data">
+                    <i>📋</i>
+                    جاري تحميل نقط الدورة العادية...<br>
+                    Loading Session 1 grades...
                 </div>
+            </div>
+        </div>
+
+        <!-- Session 2 Table -->
+        <div style="margin-bottom: 30px;">
+            <div style="background: linear-gradient(135deg, #e67e22 0%, #d35400 100%); color: white; padding: 15px; border-radius: 10px 10px 0 0; text-align: center; font-weight: 600; font-size: 1.2em;">
+                📚 دورة الاستدراك - Session Rattrapage (Session 2)
+            </div>
+            <div id="session2Container" style="border: 2px solid #e67e22; border-top: none; border-radius: 0 0 10px 10px; min-height: 100px;">
+                <div class="no-data">
+                    <i>📋</i>
+                    جاري تحميل نقط دورة الاستدراك...<br>
+                    Loading Session 2 grades...
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
             </div>
 
             <!-- Loading Section -->

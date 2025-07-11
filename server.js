@@ -173,6 +173,7 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
   try {
     const { year, session } = req.query;
     
+    // Updated query with proper joins and semester logic
     let query = `
       SELECT 
         g.cod_anu,
@@ -184,9 +185,17 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
         ep.cod_pel,
         ep.lib_elp,
         ep.lic_elp,
-        ep.lib_elp_arb
+        ep.lib_elp_arb,
+        ep.element_type,
+        ep.semester_number,
+        eh.cod_elp_pere,
+        parent_ep.lib_elp as parent_lib_elp,
+        parent_ep.cod_pel as parent_cod_pel,
+        parent_ep.semester_number as parent_semester_number
       FROM grades g 
       LEFT JOIN element_pedagogi ep ON g.cod_elp = ep.cod_elp
+      LEFT JOIN element_hierarchy eh ON g.cod_elp = eh.cod_elp_fils
+      LEFT JOIN element_pedagogi parent_ep ON eh.cod_elp_pere = parent_ep.cod_elp
       WHERE g.cod_etu = (
         SELECT cod_etu FROM students WHERE id = $1
       )
@@ -207,54 +216,114 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
       paramIndex++;
     }
     
-    query += ` ORDER BY g.cod_anu DESC, g.cod_ses, ep.cod_pel, ep.lib_elp`;
+    query += ` ORDER BY g.cod_anu DESC, g.cod_ses, ep.semester_number, ep.lib_elp`;
     
     const result = await pool.query(query, params);
     
-    // Organize grades by academic year and semester
-    const gradesByAcademicYear = {};
+    // Helper function to determine session type based on semester
+    const getSessionType = (semesterNumber) => {
+      if (!semesterNumber) return 'unknown';
+      // S1, S3, S5 = Automne, S2, S4, S6 = Printemps
+      return (semesterNumber % 2 === 1) ? 'automne' : 'printemps';
+    };
+    
+    // Helper function to get academic year from semester
+    const getAcademicYear = (semesterNumber) => {
+      if (!semesterNumber) return 0;
+      return Math.ceil(semesterNumber / 2);
+    };
+    
+    // Organize grades by academic year, session type, and semester
+    const gradesByStructure = {};
+    let hasArabicNames = false;
     
     result.rows.forEach(grade => {
       const studyYear = grade.cod_anu;
-      const session = grade.cod_ses;
-      const semester = grade.cod_pel; // S1, S2, S3, etc.
-      const academicYear = getAcademicYearFromSemester(semester);
+      const sessionCode = grade.cod_ses;
       
-      // Skip if we can't determine academic year
-      if (academicYear === 0) return;
+      // Determine semester number - try multiple sources
+      let semesterNumber = grade.semester_number || grade.parent_semester_number;
+      
+      // If no semester number found, try to extract from codes
+      if (!semesterNumber) {
+        const semMatch = (grade.cod_pel || grade.parent_cod_pel || grade.cod_elp || '').match(/S(\d+)/);
+        if (semMatch) {
+          semesterNumber = parseInt(semMatch[1]);
+        }
+      }
+      
+      // Skip if we can't determine semester
+      if (!semesterNumber) {
+        console.warn(`Cannot determine semester for grade: ${grade.cod_elp} - ${grade.lib_elp}`);
+        return;
+      }
+      
+      const sessionType = getSessionType(semesterNumber);
+      const academicYear = getAcademicYear(semesterNumber);
+      const semesterCode = `S${semesterNumber}`;
+      
+      // Check for Arabic names
+      if (grade.lib_elp_arb && grade.lib_elp_arb.trim() !== '') {
+        hasArabicNames = true;
+      }
       
       // Initialize structure
-      if (!gradesByAcademicYear[studyYear]) {
-        gradesByAcademicYear[studyYear] = {};
+      if (!gradesByStructure[studyYear]) {
+        gradesByStructure[studyYear] = {};
       }
       
-      if (!gradesByAcademicYear[studyYear][session]) {
-        gradesByAcademicYear[studyYear][session] = {};
+      if (!gradesByStructure[studyYear][sessionCode]) {
+        gradesByStructure[studyYear][sessionCode] = {};
       }
       
-      if (!gradesByAcademicYear[studyYear][session][academicYear]) {
-        gradesByAcademicYear[studyYear][session][academicYear] = {};
+      if (!gradesByStructure[studyYear][sessionCode][sessionType]) {
+        gradesByStructure[studyYear][sessionCode][sessionType] = {};
       }
       
-      if (!gradesByAcademicYear[studyYear][session][academicYear][semester]) {
-        gradesByAcademicYear[studyYear][session][academicYear][semester] = [];
+      if (!gradesByStructure[studyYear][sessionCode][sessionType][academicYear]) {
+        gradesByStructure[studyYear][sessionCode][sessionType][academicYear] = {};
       }
       
-      gradesByAcademicYear[studyYear][session][academicYear][semester].push({
+      if (!gradesByStructure[studyYear][sessionCode][sessionType][academicYear][semesterCode]) {
+        gradesByStructure[studyYear][sessionCode][sessionType][academicYear][semesterCode] = [];
+      }
+      
+      // Determine if this is a module or a subject
+      const isModule = grade.element_type === 'MODULE' || grade.cod_nel === 'MOD';
+      const parentInfo = grade.parent_lib_elp ? {
+        cod_elp: grade.cod_elp_pere,
+        lib_elp: grade.parent_lib_elp,
+        cod_pel: grade.parent_cod_pel
+      } : null;
+      
+      gradesByStructure[studyYear][sessionCode][sessionType][academicYear][semesterCode].push({
         cod_elp: grade.cod_elp,
         lib_elp: grade.lib_elp || 'Module non trouvé',
-        lib_elp_arb: grade.lib_elp_arb || 'الوحدة غير موجودة',
+        lib_elp_arb: grade.lib_elp_arb || grade.lib_elp || 'الوحدة غير موجودة',
         lic_elp: grade.lic_elp,
         cod_nel: grade.cod_nel,
         cod_pel: grade.cod_pel,
         not_elp: grade.not_elp,
-        cod_tre: grade.cod_tre
+        cod_tre: grade.cod_tre,
+        element_type: grade.element_type,
+        is_module: isModule,
+        parent_info: parentInfo,
+        semester_number: semesterNumber,
+        session_type: sessionType,
+        academic_year: academicYear
       });
     });
     
     res.json({
-      grades: gradesByAcademicYear,
-      total_grades: result.rows.length
+      grades: gradesByStructure,
+      total_grades: result.rows.length,
+      has_arabic_names: hasArabicNames,
+      structure_info: {
+        sessions: {
+          'automne': 'Session d\'Automne (S1, S3, S5)',
+          'printemps': 'Session de Printemps (S2, S4, S6)'
+        }
+      }
     });
     
   } catch (error) {
@@ -270,26 +339,42 @@ app.get('/student/grade-stats', authenticateToken, async (req, res) => {
       SELECT 
         g.cod_anu,
         g.cod_ses,
+        ep.semester_number,
+        CASE 
+          WHEN ep.semester_number % 2 = 1 THEN 'automne'
+          WHEN ep.semester_number % 2 = 0 THEN 'printemps'
+          ELSE 'unknown'
+        END as session_type,
+        CEIL(ep.semester_number::float / 2) as academic_year,
         COUNT(*) as total_subjects,
         AVG(CASE WHEN g.not_elp IS NOT NULL THEN g.not_elp END) as average_grade,
         COUNT(CASE WHEN g.not_elp >= 10 THEN 1 END) as passed_subjects,
-        COUNT(CASE WHEN g.not_elp < 10 THEN 1 END) as failed_subjects
+        COUNT(CASE WHEN g.not_elp < 10 THEN 1 END) as failed_subjects,
+        COUNT(CASE WHEN g.not_elp IS NULL THEN 1 END) as absent_subjects
       FROM grades g 
+      LEFT JOIN element_pedagogi ep ON g.cod_elp = ep.cod_elp
+      LEFT JOIN element_hierarchy eh ON g.cod_elp = eh.cod_elp_fils
+      LEFT JOIN element_pedagogi parent_ep ON eh.cod_elp_pere = parent_ep.cod_elp
       WHERE g.cod_etu = (
         SELECT cod_etu FROM students WHERE id = $1
       )
-      GROUP BY g.cod_anu, g.cod_ses
-      ORDER BY g.cod_anu DESC, g.cod_ses
+      AND (ep.semester_number IS NOT NULL OR parent_ep.semester_number IS NOT NULL)
+      GROUP BY g.cod_anu, g.cod_ses, ep.semester_number
+      ORDER BY g.cod_anu DESC, g.cod_ses, ep.semester_number
     `, [req.user.studentId]);
     
     res.json({
       statistics: result.rows.map(stat => ({
         academic_year: stat.cod_anu,
         session: stat.cod_ses,
+        semester_number: stat.semester_number,
+        session_type: stat.session_type,
+        logical_academic_year: stat.academic_year,
         total_subjects: parseInt(stat.total_subjects),
         average_grade: stat.average_grade ? parseFloat(stat.average_grade).toFixed(2) : null,
         passed_subjects: parseInt(stat.passed_subjects),
-        failed_subjects: parseInt(stat.failed_subjects)
+        failed_subjects: parseInt(stat.failed_subjects),
+        absent_subjects: parseInt(stat.absent_subjects)
       }))
     });
     
@@ -298,6 +383,7 @@ app.get('/student/grade-stats', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+    
 
 // Search students (admin endpoint)
 app.get('/students/search', authenticateToken, async (req, res) => {
@@ -932,3 +1018,4 @@ app.get('/admin/sync-statistics', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+

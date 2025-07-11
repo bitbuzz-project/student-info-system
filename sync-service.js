@@ -42,7 +42,7 @@ const oracleConfig = {
   connectString: `${process.env.ORACLE_HOST}:${process.env.ORACLE_PORT}/${process.env.ORACLE_SID}`
 };
 
-// Oracle query to get element pedagogi data
+// Oracle query to get element pedagogi data with proper hierarchy
 const ELEMENT_PEDAGOGI_QUERY = `
 SELECT 
   e.COD_ELP, 
@@ -51,12 +51,23 @@ SELECT
   e.COD_PEL, 
   e.LIB_ELP, 
   e.LIC_ELP, 
-  fix_encoding(e.LIB_ELP_ARB) as LIB_ELP_ARB
+  e.LIB_ELP_ARB
 FROM ELEMENT_PEDAGOGI e 
-WHERE COD_CMP = 'FJP'
+WHERE e.COD_CMP = 'FJP'
+ORDER BY e.COD_PEL, e.COD_NEL, e.COD_ELP
 `;
 
-// Updated grades query to include both 2023 and 2024
+// Query to get element hierarchy
+const ELEMENT_HIERARCHY_QUERY = `
+SELECT 
+  COD_ELP_PERE,
+  COD_ELP_FILS
+FROM ELP_REGROUPE_ELP 
+WHERE COD_ELP_PERE LIKE 'JL%' OR COD_ELP_PERE LIKE 'JF%'
+ORDER BY COD_ELP_PERE, COD_ELP_FILS
+`;
+
+// Updated grades query to get all grade data
 const GRADES_QUERY = `
 SELECT 
   i.COD_ETU, 
@@ -150,6 +161,9 @@ async function syncStudents() {
     // Sync element pedagogi first
     await syncElementPedagogi(oracleConnection, pgClient);
     
+    // Sync element hierarchy
+    await syncElementHierarchy(oracleConnection, pgClient);
+    
     // Sync students
     await syncStudentsData(oracleConnection, pgClient);
     
@@ -200,6 +214,8 @@ async function syncElementPedagogi(oracleConnection, pgClient) {
       lib_elp VARCHAR(200),
       lic_elp VARCHAR(200),
       lib_elp_arb VARCHAR(200),
+      element_type VARCHAR(10), -- 'SEMESTRE', 'MODULE', 'MATIERE'
+      semester_number INTEGER, -- 1,2,3,4,5,6
       last_sync TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -232,6 +248,21 @@ async function syncElementPedagogi(oracleConnection, pgClient) {
     for (const element of batch) {
       const [cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb] = element;
       
+      // Determine element type and semester number
+      let elementType = 'MATIERE'; // default
+      let semesterNumber = null;
+      
+      if (cod_nel && (cod_nel.startsWith('S') || cod_nel.includes('SM'))) {
+        elementType = 'SEMESTRE';
+        // Extract semester number from cod_nel or cod_pel
+        const semMatch = (cod_nel || cod_pel || '').match(/S?(\d+)/);
+        if (semMatch) {
+          semesterNumber = parseInt(semMatch[1]);
+        }
+      } else if (cod_nel && cod_nel === 'MOD') {
+        elementType = 'MODULE';
+      }
+      
       // Check if element exists
       const existingElement = await pgClient.query(
         'SELECT id FROM element_pedagogi WHERE cod_elp = $1', 
@@ -243,9 +274,10 @@ async function syncElementPedagogi(oracleConnection, pgClient) {
       // Upsert element
       await pgClient.query(`
         INSERT INTO element_pedagogi (
-          cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb, last_sync
+          cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb, 
+          element_type, semester_number, last_sync
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP
         )
         ON CONFLICT (cod_elp) DO UPDATE SET
           cod_cmp = EXCLUDED.cod_cmp,
@@ -254,9 +286,11 @@ async function syncElementPedagogi(oracleConnection, pgClient) {
           lib_elp = EXCLUDED.lib_elp,
           lic_elp = EXCLUDED.lic_elp,
           lib_elp_arb = EXCLUDED.lib_elp_arb,
+          element_type = EXCLUDED.element_type,
+          semester_number = EXCLUDED.semester_number,
           last_sync = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
-      `, [cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb]);
+      `, [cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb, elementType, semesterNumber]);
       
       if (isUpdate) {
         updatedCount++;
@@ -280,6 +314,56 @@ async function syncElementPedagogi(oracleConnection, pgClient) {
   `, [processedCount]);
   
   logger.info(`✓ Element pedagogi sync completed: ${processedCount} total, ${insertedCount} new, ${updatedCount} updated`);
+}
+
+async function syncElementHierarchy(oracleConnection, pgClient) {
+  logger.info('Syncing element hierarchy...');
+  
+  // Create hierarchy table
+  await pgClient.query(`
+    CREATE TABLE IF NOT EXISTS element_hierarchy (
+      id SERIAL PRIMARY KEY,
+      cod_elp_pere VARCHAR(20) NOT NULL,
+      cod_elp_fils VARCHAR(20) NOT NULL,
+      last_sync TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(cod_elp_pere, cod_elp_fils)
+    )
+  `);
+  
+  // Fetch hierarchy from Oracle
+  const result = await oracleConnection.execute(ELEMENT_HIERARCHY_QUERY);
+  const hierarchies = result.rows;
+  
+  logger.info(`✓ Fetched ${hierarchies.length} hierarchy relationships from Oracle`);
+  
+  if (hierarchies.length === 0) {
+    logger.warn('No hierarchy found in Oracle database');
+    return;
+  }
+  
+  // Begin transaction
+  await pgClient.query('BEGIN');
+  
+  let processedCount = 0;
+  
+  for (const hierarchy of hierarchies) {
+    const [cod_elp_pere, cod_elp_fils] = hierarchy;
+    
+    // Upsert hierarchy
+    await pgClient.query(`
+      INSERT INTO element_hierarchy (cod_elp_pere, cod_elp_fils, last_sync)
+      VALUES ($1, $2, CURRENT_TIMESTAMP)
+      ON CONFLICT (cod_elp_pere, cod_elp_fils) DO UPDATE SET
+        last_sync = CURRENT_TIMESTAMP
+    `, [cod_elp_pere, cod_elp_fils]);
+    
+    processedCount++;
+  }
+  
+  await pgClient.query('COMMIT');
+  
+  logger.info(`✓ Element hierarchy sync completed: ${processedCount} relationships`);
 }
 
 async function syncStudentsData(oracleConnection, pgClient) {
