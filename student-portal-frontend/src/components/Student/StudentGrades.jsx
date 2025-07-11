@@ -57,6 +57,7 @@ const StudentGrades = () => {
     }
   };
 
+  // Simplified filtering - only basic year/session filtering, NO grade manipulation
   const applyFilters = (grades, currentFilters) => {
     if (!grades) {
       setFilteredGrades(null);
@@ -65,25 +66,25 @@ const StudentGrades = () => {
 
     let filtered = { ...grades };
 
-    // Filter by year
+    // Only apply basic year filtering
     if (currentFilters.year) {
       filtered = {
         [currentFilters.year]: filtered[currentFilters.year] || {}
       };
     }
 
-    // Filter by session type and session number
+    // Filter by session type and session number if specified
     const processedFiltered = {};
     
     Object.entries(filtered).forEach(([year, yearData]) => {
       Object.entries(yearData).forEach(([sessionNum, sessionData]) => {
-        // Filter by session number (1 or 2)
+        // Filter by session number (1 or 2) if specified
         if (currentFilters.session && sessionNum !== currentFilters.session) {
           return;
         }
 
         Object.entries(sessionData).forEach(([sessionType, sessionTypeData]) => {
-          // Filter by session type (automne/printemps)
+          // Filter by session type (automne/printemps) if specified
           if (currentFilters.sessionType && sessionType !== currentFilters.sessionType) {
             return;
           }
@@ -150,7 +151,19 @@ const StudentGrades = () => {
       />
 
       {/* Instructions */}
-   
+      {!hasActiveFilters && (
+        <Paper sx={{ p: 3, mb: 3, borderRadius: 3, bgcolor: '#f8f9fa' }}>
+          <Typography variant="h6" gutterBottom color="primary">
+            📋 تعليمات الاستخدام - Usage Instructions
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            🔹 استخدم الفلاتر أعلاه لعرض النقط حسب السنة الدراسية ونوع الدورة والدورة<br/>
+            🔹 Use the filters above to display grades by academic year, session type, and session<br/>
+            🔹 النقط معروضة كما هي مسجلة في قاعدة البيانات بدون تعديل<br/>
+            🔹 Grades are displayed exactly as recorded in the database without modification
+          </Typography>
+        </Paper>
+      )}
 
       {/* No Results Message */}
       {hasActiveFilters && !hasFilteredResults && (
@@ -168,7 +181,14 @@ const StudentGrades = () => {
       {hasFilteredResults && (
         <Box>
           {/* Results Summary */}
-      
+          <Paper sx={{ p: 2, mb: 3, borderRadius: 3, bgcolor: '#e8f5e8' }}>
+            <Typography variant="body1" color="success.main" fontWeight="600">
+              ✅ عرض النقط المفلترة - Displaying filtered grades
+              {filters.year && ` | السنة: ${filters.year}`}
+              {filters.sessionType && ` | النوع: ${filters.sessionType === 'automne' ? 'خريف' : 'ربيع'}`}
+              {filters.session && ` | الدورة: ${filters.session === '1' ? 'عادية' : 'استدراكية'}`}
+            </Typography>
+          </Paper>
 
           {/* Grades Table */}
           <GradeTable 
@@ -179,7 +199,12 @@ const StudentGrades = () => {
       )}
 
       {/* Footer Info */}
- 
+      <Paper sx={{ p: 3, mt: 3, borderRadius: 3, bgcolor: '#f8f9fa' }}>
+        <Typography variant="body2" color="text.secondary" textAlign="center">
+          💡 ملاحظة: جميع النقط والحالات معروضة كما هي مسجلة في قاعدة البيانات الأصلية بدون أي تعديل أو إضافة من الواجهة.<br/>
+          Note: All grades and statuses are displayed exactly as recorded in the original database without any modification or addition from the interface.
+        </Typography>
+      </Paper>
     </Box>
   );
 };
