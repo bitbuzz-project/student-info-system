@@ -645,4 +645,199 @@ if (require.main === module) {
     });
 }
 
+
+// Oracle query for pedagogical situation
+const PEDAGOGICAL_SITUATION_QUERY = `
+SELECT DISTINCT 
+    COD_ETU AS APOGEE,
+    LIB_NOM_PAT_IND AS NOM,
+    LIB_PR1_IND AS PRENOM,
+    DAA_UNI_CON AS DATE_UNI_CON,
+    COD_ELP,
+    fix_encoding(LIB_ELP) AS MODULE,
+    MAX(ETA_IAE) OVER (
+        PARTITION BY COD_IND, COD_ANU, COD_ETP, COD_VRS_VET
+    ) AS IA
+FROM IND_CONTRAT_ELP
+    JOIN INDIVIDU USING (COD_IND)
+    JOIN ELEMENT_PEDAGOGI USING (COD_ELP)
+    LEFT JOIN INS_ADM_ETP USING (COD_IND, COD_ANU, COD_ETP, COD_VRS_VET)
+WHERE TEM_PRC_ICE = 'N'
+  AND COD_CIP = 'FJP'
+ORDER BY COD_ETU, COD_ELP
+`;
+
+async function syncPedagogicalSituation(oracleConnection, pgClient) {
+  logger.info('Syncing pedagogical situation data...');
+  
+  // Create table if not exists (you can also run the migration separately)
+  await pgClient.query(`
+    CREATE TABLE IF NOT EXISTS pedagogical_situation (
+      id SERIAL PRIMARY KEY,
+      cod_etu VARCHAR(20) NOT NULL,
+      lib_nom_pat_ind VARCHAR(100),
+      lib_pr1_ind VARCHAR(100),
+      daa_uni_con INTEGER,
+      cod_elp VARCHAR(20) NOT NULL,
+      lib_elp VARCHAR(200),
+      eta_iae VARCHAR(10),
+      last_sync TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(cod_etu, cod_elp, daa_uni_con)
+    )
+  `);
+  
+  // Fetch data from Oracle
+  const result = await oracleConnection.execute(PEDAGOGICAL_SITUATION_QUERY);
+  const pedSituations = result.rows;
+  
+  logger.info(`✓ Fetched ${pedSituations.length} pedagogical situation records from Oracle`);
+  
+  if (pedSituations.length === 0) {
+    logger.warn('No pedagogical situation data found in Oracle database');
+    return;
+  }
+  
+  // Begin transaction
+  await pgClient.query('BEGIN');
+  
+  let processedCount = 0;
+  let updatedCount = 0;
+  let insertedCount = 0;
+  let skippedCount = 0;
+  
+  // Process in batches
+  const batchSize = 100;
+  for (let i = 0; i < pedSituations.length; i += batchSize) {
+    const batch = pedSituations.slice(i, i + batchSize);
+    
+    for (const situation of batch) {
+      const [apogee, nom, prenom, date_uni_con, cod_elp, module, ia] = situation;
+      
+      try {
+        // Check if record exists
+        const existingRecord = await pgClient.query(
+          'SELECT id FROM pedagogical_situation WHERE cod_etu = $1 AND cod_elp = $2 AND daa_uni_con = $3', 
+          [apogee, cod_elp, date_uni_con]
+        );
+        
+        const isUpdate = existingRecord.rows.length > 0;
+        
+        // Upsert pedagogical situation
+        await pgClient.query(`
+          INSERT INTO pedagogical_situation (
+            cod_etu, lib_nom_pat_ind, lib_pr1_ind, daa_uni_con, 
+            cod_elp, lib_elp, eta_iae, last_sync
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP
+          )
+          ON CONFLICT (cod_etu, cod_elp, daa_uni_con) DO UPDATE SET
+            lib_nom_pat_ind = EXCLUDED.lib_nom_pat_ind,
+            lib_pr1_ind = EXCLUDED.lib_pr1_ind,
+            lib_elp = EXCLUDED.lib_elp,
+            eta_iae = EXCLUDED.eta_iae,
+            last_sync = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        `, [apogee, nom, prenom, date_uni_con, cod_elp, module, ia]);
+        
+        if (isUpdate) {
+          updatedCount++;
+        } else {
+          insertedCount++;
+        }
+        
+        processedCount++;
+      } catch (error) {
+        logger.warn(`Skipping record for ${apogee}/${cod_elp}: ${error.message}`);
+        skippedCount++;
+      }
+    }
+    
+    // Progress indicator
+    const progress = Math.round((i + batch.length) / pedSituations.length * 100);
+    logger.info(`Pedagogical Situation Progress: ${progress}% (${processedCount}/${pedSituations.length})`);
+  }
+  
+  await pgClient.query('COMMIT');
+  
+  // Log sync success
+  await pgClient.query(`
+    INSERT INTO sync_log (sync_type, records_processed, sync_status)
+    VALUES ('pedagogical_situation', $1, 'success')
+  `, [processedCount]);
+  
+  logger.info(`✓ Pedagogical situation sync completed: ${processedCount} total, ${insertedCount} new, ${updatedCount} updated, ${skippedCount} skipped`);
+}
+
+// Update the main syncStudents function to include pedagogical situation
+async function syncStudents() {
+  let oracleConnection;
+  let pgClient;
+  const startTime = Date.now();
+  
+  try {
+    logger.info('=====================================');
+    logger.info('Starting manual sync process...');
+    logger.info('🔄 Syncing data for years 2023 and 2024');
+    logger.info('=====================================');
+    
+    // Test PostgreSQL connection first
+    logger.info('Testing PostgreSQL connection...');
+    pgClient = await pgPool.connect();
+    await pgClient.query('SELECT 1');
+    logger.info('✓ PostgreSQL connection successful');
+    
+    // Test Oracle connection
+    logger.info('Testing Oracle connection...');
+    oracleConnection = await oracledb.getConnection(oracleConfig);
+    logger.info('✓ Oracle connection successful');
+    
+    // Sync element pedagogi first
+    await syncElementPedagogi(oracleConnection, pgClient);
+    
+    // Sync element hierarchy
+    await syncElementHierarchy(oracleConnection, pgClient);
+    
+    // Sync students
+    await syncStudentsData(oracleConnection, pgClient);
+    
+    // Sync grades
+    await syncGradesData(oracleConnection, pgClient);
+    
+    // NEW: Sync pedagogical situation
+    await syncPedagogicalSituation(oracleConnection, pgClient);
+    
+    const endTime = Date.now();
+    const duration = Math.round((endTime - startTime) / 1000);
+    
+    logger.info('=====================================');
+    logger.info('✓ COMPLETE SYNC FINISHED!');
+    logger.info(`✓ Duration: ${duration} seconds`);
+    logger.info('✓ Data available for 2023 and 2024');
+    logger.info('✓ Pedagogical situation data synced');
+    logger.info('=====================================');
+    
+  } catch (error) {
+    logger.error('=====================================');
+    logger.error('✗ SYNC FAILED!');
+    logger.error(`✗ Error: ${error.message}`);
+    logger.error('=====================================');
+    
+    if (pgClient) {
+      await pgClient.query('ROLLBACK');
+    }
+    
+    throw error;
+  } finally {
+    if (oracleConnection) {
+      await oracleConnection.close();
+    }
+    if (pgClient) {
+      pgClient.release();
+    }
+  }
+}
+
+
 module.exports = { syncStudents };

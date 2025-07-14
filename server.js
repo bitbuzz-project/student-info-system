@@ -1023,3 +1023,124 @@ app.get('/admin/sync-statistics', authenticateAdmin, async (req, res) => {
   }
 });
 
+// Get student pedagogical situation
+app.get('/student/pedagogical-situation', authenticateToken, async (req, res) => {
+  try {
+    const { year } = req.query;
+    
+    let query = `
+      SELECT 
+        ps.cod_etu,
+        ps.lib_nom_pat_ind,
+        ps.lib_pr1_ind,
+        ps.daa_uni_con,
+        ps.cod_elp,
+        ps.lib_elp,
+        ps.eta_iae,
+        ep.element_type,
+        ep.semester_number,
+        ep.cod_pel,
+        ep.cod_nel,
+        ps.last_sync
+      FROM pedagogical_situation ps
+      LEFT JOIN element_pedagogi ep ON ps.cod_elp = ep.cod_elp
+      WHERE ps.cod_etu = (
+        SELECT cod_etu FROM students WHERE id = $1
+      )
+    `;
+    
+    let params = [req.user.studentId];
+    let paramIndex = 2;
+    
+    if (year) {
+      query += ` AND ps.daa_uni_con = $${paramIndex}`;
+      params.push(year);
+      paramIndex++;
+    }
+    
+    query += ` ORDER BY ps.daa_uni_con DESC, ep.semester_number, ps.lib_elp`;
+    
+    const result = await pool.query(query, params);
+    
+    // Organize data by year and semester
+    const organizedData = {};
+    let availableYears = new Set();
+    
+    result.rows.forEach(row => {
+      const year = row.daa_uni_con;
+      const semester = row.semester_number ? `S${row.semester_number}` : 'Unknown';
+      
+      availableYears.add(year);
+      
+      if (!organizedData[year]) {
+        organizedData[year] = {};
+      }
+      
+      if (!organizedData[year][semester]) {
+        organizedData[year][semester] = [];
+      }
+      
+      organizedData[year][semester].push({
+        cod_elp: row.cod_elp,
+        lib_elp: row.lib_elp,
+        eta_iae: row.eta_iae,
+        element_type: row.element_type,
+        semester_number: row.semester_number,
+        cod_pel: row.cod_pel,
+        cod_nel: row.cod_nel,
+        last_sync: row.last_sync
+      });
+    });
+    
+    res.json({
+      pedagogical_situation: organizedData,
+      total_modules: result.rows.length,
+      available_years: Array.from(availableYears).sort((a, b) => b - a),
+      student_info: result.rows.length > 0 ? {
+        cod_etu: result.rows[0].cod_etu,
+        nom_complet: `${result.rows[0].lib_nom_pat_ind} ${result.rows[0].lib_pr1_ind}`
+      } : null
+    });
+    
+  } catch (error) {
+    console.error('Get pedagogical situation error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get pedagogical situation statistics
+app.get('/student/pedagogical-stats', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        ps.daa_uni_con,
+        COUNT(*) as total_modules,
+        COUNT(CASE WHEN ps.eta_iae = 'E' THEN 1 END) as enrolled_modules,
+        COUNT(CASE WHEN ep.element_type = 'MODULE' THEN 1 END) as modules,
+        COUNT(CASE WHEN ep.element_type = 'MATIERE' THEN 1 END) as subjects,
+        COUNT(DISTINCT ep.semester_number) as semesters
+      FROM pedagogical_situation ps
+      LEFT JOIN element_pedagogi ep ON ps.cod_elp = ep.cod_elp
+      WHERE ps.cod_etu = (
+        SELECT cod_etu FROM students WHERE id = $1
+      )
+      GROUP BY ps.daa_uni_con
+      ORDER BY ps.daa_uni_con DESC
+    `, [req.user.studentId]);
+    
+    res.json({
+      statistics: result.rows.map(stat => ({
+        year: stat.daa_uni_con,
+        total_modules: parseInt(stat.total_modules),
+        enrolled_modules: parseInt(stat.enrolled_modules),
+        modules: parseInt(stat.modules),
+        subjects: parseInt(stat.subjects),
+        semesters: parseInt(stat.semesters)
+      }))
+    });
+    
+  } catch (error) {
+    console.error('Get pedagogical stats error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});

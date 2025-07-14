@@ -76,6 +76,19 @@ export const studentAPI = {
     const response = await api.get('/student/me');
     return response.data;
   },
+
+  getPedagogicalSituation: async (filters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.year) params.append('year', filters.year);
+    
+    const response = await api.get(`/student/pedagogical-situation?${params}`);
+    return response.data;
+  },
+  
+  getPedagogicalStats: async () => {
+    const response = await api.get('/student/pedagogical-stats');
+    return response.data;
+  },
   
   getGrades: async (filters = {}) => {
     const params = new URLSearchParams();

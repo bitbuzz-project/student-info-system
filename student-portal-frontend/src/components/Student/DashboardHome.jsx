@@ -29,6 +29,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useTranslation } from 'react-i18next';
 import { studentAPI } from '../../services/api';
 
+
+
 const DashboardHome = ({ onNavigate }) => {
   const { user } = useAuth();
   const { t, i18n } = useTranslation();
@@ -263,6 +265,15 @@ const DashboardHome = ({ onNavigate }) => {
               onClick={() => onNavigate('profile')}
             />
           </Grid>
+                <Grid item xs={12} sm={6} md={3}>
+          <QuickActionCard
+            title="الوضعية البيداغوجية"
+            description="عرض الوحدات والمواد المسجل بها حسب السنة"
+            icon={<AssignmentIcon sx={{ fontSize: 30 }} />}
+            color="#f39c12"
+            onClick={() => onNavigate('pedagogical')}
+          />
+        </Grid>
           <Grid item xs={12} sm={6} md={3}>
             <QuickActionCard
               title="نقطي"

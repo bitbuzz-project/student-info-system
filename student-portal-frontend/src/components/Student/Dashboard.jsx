@@ -29,7 +29,8 @@ import {
   Grade as GradeIcon,
   BarChart as StatsIcon,
   Dashboard as DashboardIcon,
-  Menu as MenuIcon
+  Menu as MenuIcon,
+  Assignment as AssignmentIcon  // Ajoutez cette ligne
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTranslation } from 'react-i18next';
@@ -39,6 +40,7 @@ import DashboardHome from './DashboardHome';
 import StudentProfile from './StudentProfile';
 import StudentGrades from './StudentGrades';
 import StudentStats from './StudentStats';
+import PedagogicalSituation from './PedagogicalSituation';
 
 const DRAWER_WIDTH = 280;
 
@@ -94,6 +96,12 @@ const Dashboard = () => {
       icon: <PersonIcon />,
       color: '#2ecc71'
     },
+      {
+    id: 'pedagogical',
+    label: 'الوضعية البيداغوجية',
+    icon: <AssignmentIcon />, // Make sure to import AssignmentIcon from @mui/icons-material
+    color: '#f39c12'
+  },
     {
       id: 'grades',
       label: 'النقط والنتائج',
@@ -114,6 +122,8 @@ const Dashboard = () => {
         return <DashboardHome onNavigate={handlePageChange} />;
       case 'profile':
         return <StudentProfile />;
+      case 'pedagogical':
+      return <PedagogicalSituation />;
       case 'grades':
         return <StudentGrades />;
       case 'stats':
