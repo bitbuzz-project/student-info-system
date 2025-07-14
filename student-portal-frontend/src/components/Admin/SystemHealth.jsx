@@ -26,7 +26,7 @@ import {
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon,
   Warning as WarningIcon,
-  Health as HealthIcon,
+  MonitorHeart as HealthIcon, // Changed from Health to MonitorHeart
   Storage as StorageIcon,
   Timeline as TimelineIcon,
   Refresh as RefreshIcon,
