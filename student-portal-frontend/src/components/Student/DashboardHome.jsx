@@ -285,15 +285,6 @@ const DashboardHome = ({ onNavigate }) => {
           </Grid>
           <Grid item xs={12} sm={6} md={3}>
             <QuickActionCard
-              title="الإحصائيات"
-              description="تحليل أدائك الأكاديمي والإحصائيات المفصلة"
-              icon={<StatsIcon sx={{ fontSize: 30 }} />}
-              color="#9b59b6"
-              onClick={() => onNavigate('stats')}
-            />
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <QuickActionCard
               title="تحديث البيانات"
               description="تحديث معلوماتك من قاعدة البيانات"
               icon={<TimeIcon sx={{ fontSize: 30 }} />}
