@@ -891,6 +891,10 @@ app.get('/admin/student/:codEtu', authenticateAdmin, async (req, res) => {
   }
 });
 
+// Import and use admin routes
+const adminRoutes = require('./admin-routes');
+app.use('/admin', adminRoutes);
+
 // Admin - Get database health check (with auth)
 app.get('/admin/health-check', authenticateAdmin, async (req, res) => {
   try {

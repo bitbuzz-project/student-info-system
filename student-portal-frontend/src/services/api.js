@@ -13,9 +13,15 @@ const api = axios.create({
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('authToken');
-    if (token) {
+    const adminToken = localStorage.getItem('adminToken');
+    
+    // Use admin token for admin routes, student token for student routes
+    if (config.url?.includes('/admin/') && adminToken) {
+      config.headers.Authorization = `Bearer ${adminToken}`;
+    } else if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    
     return config;
   },
   (error) => {
@@ -29,8 +35,13 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       // Token expired or invalid
-      localStorage.removeItem('authToken');
-      window.location.href = '/login';
+      if (error.config.url?.includes('/admin/')) {
+        localStorage.removeItem('adminToken');
+        window.location.href = '/admin/login';
+      } else {
+        localStorage.removeItem('authToken');
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }
@@ -81,7 +92,7 @@ export const studentAPI = {
   }
 };
 
-// Admin API (for future use)
+// Admin API
 export const adminAPI = {
   login: async (username, password) => {
     const response = await api.post('/admin/login', { username, password });
@@ -91,12 +102,69 @@ export const adminAPI = {
     return response.data;
   },
   
-  getStats: async () => {
-    const response = await api.get('/admin/stats', {
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem('adminToken')}`
-      }
+  logout: () => {
+    localStorage.removeItem('adminToken');
+  },
+  
+  verify: async () => {
+    const response = await api.get('/admin/verify');
+    return response.data;
+  },
+  
+  getToken: () => {
+    return localStorage.getItem('adminToken');
+  },
+  
+  isAuthenticated: () => {
+    return !!localStorage.getItem('adminToken');
+  },
+  
+  // Dashboard APIs
+  getDashboardStats: async () => {
+    const response = await api.get('/admin/dashboard/stats');
+    return response.data;
+  },
+  
+  getDataOverview: async () => {
+    const response = await api.get('/admin/dashboard/overview');
+    return response.data;
+  },
+  
+  // Student Management APIs
+  searchStudents: async (params = {}) => {
+    const searchParams = new URLSearchParams();
+    Object.keys(params).forEach(key => {
+      if (params[key]) searchParams.append(key, params[key]);
     });
+    
+    const response = await api.get(`/admin/students/search?${searchParams}`);
+    return response.data;
+  },
+  
+  getStudent: async (id) => {
+    const response = await api.get(`/admin/students/${id}`);
+    return response.data;
+  },
+  
+  // Sync Management APIs
+  getSyncStatus: async (limit = 10) => {
+    const response = await api.get(`/admin/sync/status?limit=${limit}`);
+    return response.data;
+  },
+  
+  triggerManualSync: async () => {
+    const response = await api.post('/admin/sync/manual');
+    return response.data;
+  },
+  
+  // System Health APIs
+  getSystemHealth: async () => {
+    const response = await api.get('/admin/system/health');
+    return response.data;
+  },
+  
+  getSystemStats: async (period = 30) => {
+    const response = await api.get(`/admin/system/stats?period=${period}`);
     return response.data;
   }
 };

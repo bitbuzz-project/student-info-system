@@ -10,8 +10,9 @@ import createCache from '@emotion/cache'
 
 import App from './App.jsx'
 import { AuthProvider } from './contexts/AuthContext.jsx'
+import { AdminProvider } from './contexts/AdminContext.jsx' // Add this import
 import './utils/i18n.js' // Initialize i18n
-import './index.css' // <--- ADD THIS LINE to import your global CSS
+import './index.css'
 
 // Create RTL cache for Arabic support
 const cacheRtl = createCache({
@@ -42,7 +43,6 @@ const theme = createTheme({
     fontFamily: [
       'Almarai',
       'sans-serif'
-    
     ].join(','),
     h4: {
       fontWeight: 600,
@@ -90,9 +90,11 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <CssBaseline />
         <BrowserRouter>
           <AuthProvider>
-            <Box sx={{ direction: 'rtl' }}>
-              <App />
-            </Box>
+            <AdminProvider>
+              <Box sx={{ direction: 'rtl' }}>
+                <App />
+              </Box>
+            </AdminProvider>
           </AuthProvider>
         </BrowserRouter>
       </ThemeProvider>
