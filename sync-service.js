@@ -667,10 +667,12 @@ WHERE TEM_PRC_ICE = 'N'
 ORDER BY COD_ETU, COD_ELP
 `;
 
+// Replace the existing syncPedagogicalSituation function in sync-service.js with this:
+
 async function syncPedagogicalSituation(oracleConnection, pgClient) {
   logger.info('Syncing pedagogical situation data...');
   
-  // Create table if not exists (you can also run the migration separately)
+  // Create table if not exists with additional fields for better classification
   await pgClient.query(`
     CREATE TABLE IF NOT EXISTS pedagogical_situation (
       id SERIAL PRIMARY KEY,
@@ -681,6 +683,8 @@ async function syncPedagogicalSituation(oracleConnection, pgClient) {
       cod_elp VARCHAR(20) NOT NULL,
       lib_elp VARCHAR(200),
       eta_iae VARCHAR(10),
+      academic_level VARCHAR(20), -- NEW: '1A', '2A', '3A', etc. for yearly elements
+      is_yearly_element BOOLEAN DEFAULT FALSE, -- NEW: indicates if this is a yearly vs semester element
       last_sync TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -706,6 +710,8 @@ async function syncPedagogicalSituation(oracleConnection, pgClient) {
   let updatedCount = 0;
   let insertedCount = 0;
   let skippedCount = 0;
+  let yearlyElementsCount = 0;
+  let semesterElementsCount = 0;
   
   // Process in batches
   const batchSize = 100;
@@ -716,6 +722,15 @@ async function syncPedagogicalSituation(oracleConnection, pgClient) {
       const [apogee, nom, prenom, date_uni_con, cod_elp, module, ia] = situation;
       
       try {
+        // Determine if this is a yearly or semester element
+        const { academicLevel, isYearlyElement } = classifyPedagogicalElement(cod_elp, module);
+        
+        if (isYearlyElement) {
+          yearlyElementsCount++;
+        } else {
+          semesterElementsCount++;
+        }
+        
         // Check if record exists
         const existingRecord = await pgClient.query(
           'SELECT id FROM pedagogical_situation WHERE cod_etu = $1 AND cod_elp = $2 AND daa_uni_con = $3', 
@@ -728,18 +743,20 @@ async function syncPedagogicalSituation(oracleConnection, pgClient) {
         await pgClient.query(`
           INSERT INTO pedagogical_situation (
             cod_etu, lib_nom_pat_ind, lib_pr1_ind, daa_uni_con, 
-            cod_elp, lib_elp, eta_iae, last_sync
+            cod_elp, lib_elp, eta_iae, academic_level, is_yearly_element, last_sync
           ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP
           )
           ON CONFLICT (cod_etu, cod_elp, daa_uni_con) DO UPDATE SET
             lib_nom_pat_ind = EXCLUDED.lib_nom_pat_ind,
             lib_pr1_ind = EXCLUDED.lib_pr1_ind,
             lib_elp = EXCLUDED.lib_elp,
             eta_iae = EXCLUDED.eta_iae,
+            academic_level = EXCLUDED.academic_level,
+            is_yearly_element = EXCLUDED.is_yearly_element,
             last_sync = CURRENT_TIMESTAMP,
             updated_at = CURRENT_TIMESTAMP
-        `, [apogee, nom, prenom, date_uni_con, cod_elp, module, ia]);
+        `, [apogee, nom, prenom, date_uni_con, cod_elp, module, ia, academicLevel, isYearlyElement]);
         
         if (isUpdate) {
           updatedCount++;
@@ -763,11 +780,115 @@ async function syncPedagogicalSituation(oracleConnection, pgClient) {
   
   // Log sync success
   await pgClient.query(`
-    INSERT INTO sync_log (sync_type, records_processed, sync_status)
-    VALUES ('pedagogical_situation', $1, 'success')
-  `, [processedCount]);
+    INSERT INTO sync_log (sync_type, records_processed, sync_status, error_message)
+    VALUES ('pedagogical_situation', $1, 'success', $2)
+  `, [processedCount, `Yearly elements: ${yearlyElementsCount}, Semester elements: ${semesterElementsCount}`]);
   
   logger.info(`✓ Pedagogical situation sync completed: ${processedCount} total, ${insertedCount} new, ${updatedCount} updated, ${skippedCount} skipped`);
+  logger.info(`📊 Classification: ${yearlyElementsCount} yearly elements, ${semesterElementsCount} semester elements`);
+}
+
+// Helper function to classify pedagogical elements
+function classifyPedagogicalElement(cod_elp, lib_elp) {
+  const codElpUpper = (cod_elp || '').toUpperCase();
+  const libElpLower = (lib_elp || '').toLowerCase();
+  
+  let academicLevel = null;
+  let isYearlyElement = false;
+  
+  // Check for yearly patterns in code
+  if (codElpUpper.includes('1A') || codElpUpper.includes('0A1')) {
+    academicLevel = '1A';
+    isYearlyElement = true;
+  } else if (codElpUpper.includes('2A') || codElpUpper.includes('0A2')) {
+    academicLevel = '2A';
+    isYearlyElement = true;
+  } else if (codElpUpper.includes('3A') || codElpUpper.includes('0A3')) {
+    academicLevel = '3A';
+    isYearlyElement = true;
+  } else if (codElpUpper.includes('4A') || codElpUpper.includes('0A4')) {
+    academicLevel = '4A';
+    isYearlyElement = true;
+  } else if (codElpUpper.includes('5A') || codElpUpper.includes('0A5')) {
+    academicLevel = '5A';
+    isYearlyElement = true;
+  }
+  
+  // Check for yearly patterns in description
+  if (!isYearlyElement) {
+    if (libElpLower.includes('premiere année') || libElpLower.includes('1ère année') || libElpLower.includes('first year')) {
+      academicLevel = '1A';
+      isYearlyElement = true;
+    } else if (libElpLower.includes('deuxième année') || libElpLower.includes('2ème année') || libElpLower.includes('second year')) {
+      academicLevel = '2A';
+      isYearlyElement = true;
+    } else if (libElpLower.includes('troisième année') || libElpLower.includes('3ème année') || libElpLower.includes('third year')) {
+      academicLevel = '3A';
+      isYearlyElement = true;
+    } else if (libElpLower.includes('quatrième année') || libElpLower.includes('4ème année') || libElpLower.includes('fourth year')) {
+      academicLevel = '4A';
+      isYearlyElement = true;
+    } else if (libElpLower.includes('cinquième année') || libElpLower.includes('5ème année') || libElpLower.includes('fifth year')) {
+      academicLevel = '5A';
+      isYearlyElement = true;
+    }
+  }
+  
+  // Check for VET patterns (common in many universities)
+  if (!isYearlyElement && codElpUpper.includes('VET')) {
+    if (codElpUpper.includes('1A') || libElpLower.includes('1') || libElpLower.includes('première')) {
+      academicLevel = '1A';
+      isYearlyElement = true;
+    } else if (codElpUpper.includes('2A') || libElpLower.includes('2') || libElpLower.includes('deuxième')) {
+      academicLevel = '2A';
+      isYearlyElement = true;
+    } else if (codElpUpper.includes('3A') || libElpLower.includes('3') || libElpLower.includes('troisième')) {
+      academicLevel = '3A';
+      isYearlyElement = true;
+    }
+  }
+  
+  // Check for semester patterns (only if not already classified as yearly)
+  if (!isYearlyElement) {
+    const semesterMatch = codElpUpper.match(/S(\d+)/);
+    if (semesterMatch) {
+      const semesterNum = parseInt(semesterMatch[1]);
+      if (semesterNum >= 1 && semesterNum <= 12) {
+        academicLevel = `S${semesterNum}`;
+        isYearlyElement = false;
+      }
+    }
+  }
+  
+  // If still no classification, check for other patterns
+  if (!academicLevel) {
+    // Check for license patterns
+    if (libElpLower.includes('licence') || libElpLower.includes('l1') || libElpLower.includes('l2') || libElpLower.includes('l3')) {
+      if (libElpLower.includes('l1') || libElpLower.includes('1')) {
+        academicLevel = '1A';
+      } else if (libElpLower.includes('l2') || libElpLower.includes('2')) {
+        academicLevel = '2A';
+      } else if (libElpLower.includes('l3') || libElpLower.includes('3')) {
+        academicLevel = '3A';
+      }
+      isYearlyElement = true;
+    }
+    
+    // Check for master patterns
+    if (libElpLower.includes('master') || libElpLower.includes('m1') || libElpLower.includes('m2')) {
+      if (libElpLower.includes('m1') || libElpLower.includes('1')) {
+        academicLevel = '4A';
+      } else if (libElpLower.includes('m2') || libElpLower.includes('2')) {
+        academicLevel = '5A';
+      }
+      isYearlyElement = true;
+    }
+  }
+  
+  return {
+    academicLevel: academicLevel || 'Unknown',
+    isYearlyElement
+  };
 }
 
 // Update the main syncStudents function to include pedagogical situation

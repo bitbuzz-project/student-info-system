@@ -1037,6 +1037,8 @@ app.get('/student/pedagogical-situation', authenticateToken, async (req, res) =>
         ps.cod_elp,
         ps.lib_elp,
         ps.eta_iae,
+        ps.academic_level,
+        ps.is_yearly_element,
         ep.element_type,
         ep.semester_number,
         ep.cod_pel,
@@ -1058,38 +1060,59 @@ app.get('/student/pedagogical-situation', authenticateToken, async (req, res) =>
       paramIndex++;
     }
 
-    query += ` ORDER BY ps.daa_uni_con DESC, ep.semester_number, ps.lib_elp`;
+    query += ` ORDER BY ps.daa_uni_con DESC, ps.academic_level, ps.lib_elp`;
 
     const result = await pool.query(query, params);
 
-    // Organize data by year and semester
+    // Organize data by year and then by academic level or semester
     const organizedData = {};
     let availableYears = new Set();
 
     result.rows.forEach(row => {
       const year = row.daa_uni_con;
-      const semester = row.semester_number ? `S${row.semester_number}` : 'Unknown';
-
       availableYears.add(year);
 
       if (!organizedData[year]) {
-        organizedData[year] = {};
+        organizedData[year] = {
+          yearly_elements: {}, // For 1A, 2A, 3A, etc.
+          semester_elements: {} // For S1, S2, S3, etc.
+        };
       }
 
-      if (!organizedData[year][semester]) {
-        organizedData[year][semester] = [];
+      if (row.is_yearly_element) {
+        const academicLevel = row.academic_level || 'Unknown';
+        if (!organizedData[year].yearly_elements[academicLevel]) {
+          organizedData[year].yearly_elements[academicLevel] = [];
+        }
+        organizedData[year].yearly_elements[academicLevel].push({
+          cod_elp: row.cod_elp,
+          lib_elp: row.lib_elp,
+          eta_iae: row.eta_iae,
+          academic_level: row.academic_level,
+          is_yearly_element: row.is_yearly_element,
+          element_type: row.element_type,
+          cod_pel: row.cod_pel,
+          cod_nel: row.cod_nel,
+          last_sync: row.last_sync
+        });
+      } else {
+        const semester = row.semester_number ? `S${row.semester_number}` : 'Unknown';
+        if (!organizedData[year].semester_elements[semester]) {
+          organizedData[year].semester_elements[semester] = [];
+        }
+        organizedData[year].semester_elements[semester].push({
+          cod_elp: row.cod_elp,
+          lib_elp: row.lib_elp,
+          eta_iae: row.eta_iae,
+          academic_level: row.academic_level,
+          is_yearly_element: row.is_yearly_element,
+          element_type: row.element_type,
+          semester_number: row.semester_number,
+          cod_pel: row.cod_pel,
+          cod_nel: row.cod_nel,
+          last_sync: row.last_sync
+        });
       }
-
-      organizedData[year][semester].push({
-        cod_elp: row.cod_elp,
-        lib_elp: row.lib_elp,
-        eta_iae: row.eta_iae,
-        element_type: row.element_type,
-        semester_number: row.semester_number,
-        cod_pel: row.cod_pel,
-        cod_nel: row.cod_nel,
-        last_sync: row.last_sync
-      });
     });
 
     res.json({
