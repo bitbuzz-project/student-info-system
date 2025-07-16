@@ -1,4 +1,4 @@
-// Enhanced OfficialDocuments.jsx with both client-side and server-side PDF generation
+// Fixed OfficialDocuments.jsx
 import React, { useState, useEffect } from 'react';
 import {
   Box,
@@ -41,9 +41,7 @@ import {
   Assignment as AssignmentIcon,
   PictureAsPdf as PdfIcon,
   CloudDownload as CloudDownloadIcon,
-  Computer as ComputerIcon,
-  Speed as SpeedIcon,
-  Security as SecurityIcon
+  Computer as ComputerIcon
 } from '@mui/icons-material';
 import { useTranslation } from 'react-i18next';
 import { studentAPI } from '../../services/api';
@@ -59,7 +57,7 @@ const OfficialDocuments = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [previewDialog, setPreviewDialog] = useState(false);
   const [previewSemester, setPreviewSemester] = useState(null);
-  const [pdfMethod, setPdfMethod] = useState('server'); // 'client' or 'server'
+  const [pdfMethod, setPdfMethod] = useState('server');
   const { t } = useTranslation();
   const { user } = useAuth();
 
@@ -96,8 +94,11 @@ const OfficialDocuments = () => {
 
   // Client-side PDF generation using jsPDF
   const generateClientPDF = async (semesterData, semesterCode) => {
-    const { jsPDF } = await import('jspdf');
-    require('jspdf-autotable');
+    // Dynamically import jsPDF
+    const jsPDF = (await import('jspdf')).default;
+    
+    // Import autotable plugin
+    const autoTable = (await import('jspdf-autotable')).default;
     
     const doc = new jsPDF('p', 'mm', 'a4');
     const pageWidth = doc.internal.pageSize.getWidth();
@@ -162,8 +163,8 @@ const OfficialDocuments = () => {
     doc.text('معلومات الطالب / Informations Étudiant', 20, 105);
     
     doc.setFont('helvetica', 'normal');
-    doc.text(`الاسم الكامل / Nom complet: ${user?.nom_complet}`, 20, 115);
-    doc.text(`رقم الطالب / Code étudiant: ${user?.cod_etu}`, 20, 122);
+    doc.text(`الاسم الكامل / Nom complet: ${user?.nom_complet || 'N/A'}`, 20, 115);
+    doc.text(`رقم الطالب / Code étudiant: ${user?.cod_etu || 'N/A'}`, 20, 122);
     
     const rightColumnX = pageWidth - 85;
     doc.text(`التخصص / Spécialité: ${user?.etape || 'N/A'}`, rightColumnX, 115);
@@ -237,7 +238,7 @@ const OfficialDocuments = () => {
     doc.text(`مواد منجحة / Admis: ${stats.passed_subjects}`, col2X, finalY + 18);
     doc.text(`مواد راسبة / Ajourné: ${stats.failed_subjects}`, col3X, finalY + 18);
     
-    doc.text(`المعدل العام / Moyenne: ${stats.average_grade}`, col1X, finalY + 28);
+    doc.text(`المعدل العام / Moyenne: ${stats.average_grade || 'N/A'}`, col1X, finalY + 28);
     doc.text(`معدل النجاح / Taux: ${((stats.passed_subjects / stats.total_subjects) * 100).toFixed(1)}%`, col2X, finalY + 28);
     
     // Footer
@@ -533,7 +534,7 @@ const OfficialDocuments = () => {
           <Grid item xs={6} sm={3}>
             <Box sx={{ textAlign: 'center' }}>
               <Typography variant="h4" fontWeight="bold" color="secondary.main">
-                {semesterData.statistics.average_grade}
+                {semesterData.statistics.average_grade || 'N/A'}
               </Typography>
               <Typography variant="body2" color="text.secondary">
                 المعدل العام<br/>Moyenne

@@ -40,6 +40,685 @@ const authenticateToken = (req, res, next) => {
     next();
   });
 };
+// Add these endpoints to your server.js file
+
+// Official Documents endpoint - Returns final grades from RESULTAT_ELP
+// Add this to your server.js file to fix the official documents endpoint
+// This is a temporary solution that uses the existing grades table
+
+// Official Documents endpoint - Returns grades organized for official documents
+app.get('/student/official-documents', authenticateToken, async (req, res) => {
+  try {
+    const { semester } = req.query;
+    
+    // Base query to get grades (using existing grades table)
+    let query = `
+      SELECT 
+        g.cod_anu,
+        g.cod_ses,
+        g.cod_elp,
+        COALESCE(g.not_epr, g.not_elp) as not_elp,
+        g.cod_tre,
+        ep.lib_elp,
+        ep.lib_elp_arb,
+        ep.element_type,
+        ep.semester_number,
+        ep.cod_pel,
+        ep.cod_nel
+      FROM grades g 
+      LEFT JOIN element_pedagogi ep ON g.cod_elp = ep.cod_elp
+      WHERE g.cod_etu = (
+        SELECT cod_etu FROM students WHERE id = $1
+      )
+    `;
+    
+    let params = [req.user.studentId];
+    let paramIndex = 2;
+    
+    if (semester) {
+      query += ` AND ep.semester_number = $${paramIndex}`;
+      params.push(semester);
+      paramIndex++;
+    }
+    
+    query += ` ORDER BY g.cod_anu DESC, g.cod_ses, ep.semester_number, ep.lib_elp`;
+    
+    const result = await pool.query(query, params);
+    
+    if (result.rows.length === 0) {
+      return res.json({
+        documents: {},
+        available_semesters: [],
+        total_semesters: 0
+      });
+    }
+    
+    // Organize grades by semester for official documents
+    const documentsBySemester = {};
+    const availableSemesters = new Set();
+    
+    result.rows.forEach(grade => {
+      const semesterNumber = grade.semester_number;
+      if (!semesterNumber) return;
+      
+      const semesterKey = `S${semesterNumber}`;
+      availableSemesters.add(semesterKey);
+      
+      if (!documentsBySemester[semesterKey]) {
+        documentsBySemester[semesterKey] = {
+          subjects: [],
+          statistics: {
+            total_subjects: 0,
+            passed_subjects: 0,
+            failed_subjects: 0,
+            absent_subjects: 0,
+            average_grade: null
+          }
+        };
+      }
+      
+      // Calculate if passed
+      const gradeValue = grade.not_elp;
+      const isPassed = gradeValue !== null && parseFloat(gradeValue) >= 10;
+      
+      documentsBySemester[semesterKey].subjects.push({
+        cod_elp: grade.cod_elp,
+        lib_elp: grade.lib_elp || 'Module non trouvé',
+        lib_elp_arb: grade.lib_elp_arb || grade.lib_elp || 'الوحدة غير موجودة',
+        not_elp: grade.not_elp,
+        cod_tre: grade.cod_tre,
+        final_session: grade.cod_ses === '1' ? 1 : 2,
+        is_passed: isPassed,
+        element_type: grade.element_type
+      });
+      
+      // Update statistics
+      const stats = documentsBySemester[semesterKey].statistics;
+      stats.total_subjects++;
+      
+      if (gradeValue !== null) {
+        if (parseFloat(gradeValue) >= 10) {
+          stats.passed_subjects++;
+        } else {
+          stats.failed_subjects++;
+        }
+      } else {
+        stats.absent_subjects++;
+      }
+    });
+    
+    // Calculate averages
+    Object.keys(documentsBySemester).forEach(semesterKey => {
+      const semester = documentsBySemester[semesterKey];
+      const validGrades = semester.subjects.filter(s => s.not_elp !== null);
+      
+      if (validGrades.length > 0) {
+        const sum = validGrades.reduce((acc, s) => acc + parseFloat(s.not_elp), 0);
+        semester.statistics.average_grade = (sum / validGrades.length).toFixed(2);
+      }
+    });
+    
+    res.json({
+      documents: documentsBySemester,
+      available_semesters: Array.from(availableSemesters).sort(),
+      total_semesters: availableSemesters.size
+    });
+    
+  } catch (error) {
+    console.error('Get official documents error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PDF Generation endpoint for transcripts
+app.get('/student/transcript/:semester/pdf', authenticateToken, async (req, res) => {
+  try {
+    const { semester } = req.params;
+    
+    // Get student info
+    const studentResult = await pool.query(
+      'SELECT * FROM students WHERE id = $1',
+      [req.user.studentId]
+    );
+    
+    if (studentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+    
+    const student = studentResult.rows[0];
+    
+    // Get semester grades
+    const gradesResult = await pool.query(`
+      SELECT 
+        g.cod_anu,
+        g.cod_ses,
+        g.cod_elp,
+        COALESCE(g.not_epr, g.not_elp) as not_elp,
+        g.cod_tre,
+        ep.lib_elp,
+        ep.lib_elp_arb,
+        ep.element_type,
+        ep.semester_number
+      FROM grades g 
+      LEFT JOIN element_pedagogi ep ON g.cod_elp = ep.cod_elp
+      WHERE g.cod_etu = $1 AND ep.semester_number = $2
+      ORDER BY g.cod_anu DESC, g.cod_ses, ep.lib_elp
+    `, [student.cod_etu, semester]);
+    
+    if (gradesResult.rows.length === 0) {
+      return res.status(404).json({ error: 'No grades found for this semester' });
+    }
+    
+    // Simple PDF generation without external libraries
+    // Generate HTML that can be converted to PDF by browser
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>Relevé de Notes - S${semester}</title>
+        <style>
+          body { 
+            font-family: Arial, sans-serif; 
+            margin: 20px; 
+            direction: ltr;
+          }
+          .header { 
+            text-align: center; 
+            margin-bottom: 30px;
+            padding: 20px;
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            color: white;
+            border-radius: 10px;
+          }
+          .student-info { 
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #3498db;
+          }
+          .grades-table { 
+            width: 100%; 
+            border-collapse: collapse;
+            margin-bottom: 20px;
+          }
+          .grades-table th, .grades-table td { 
+            border: 1px solid #ddd; 
+            padding: 12px 8px; 
+            text-align: left; 
+          }
+          .grades-table th { 
+            background-color: #3498db; 
+            color: white;
+            font-weight: bold;
+          }
+          .grades-table tr:nth-child(even) {
+            background-color: #f8f9fa;
+          }
+          .footer {
+            margin-top: 30px;
+            text-align: center;
+            padding: 20px;
+            border-top: 2px solid #3498db;
+            color: #666;
+          }
+          .stamp {
+            float: right;
+            width: 100px;
+            height: 100px;
+            border: 2px solid #3498db;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            color: #3498db;
+          }
+          @media print { 
+            .no-print { display: none; }
+            body { margin: 0; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>RELEVÉ DE NOTES OFFICIEL</h1>
+          <h2>كشف النقط الرسمي</h2>
+          <p>Faculté des Sciences Juridiques et Politiques - Université Hassan 1er - Settat</p>
+          <p>كلية العلوم القانونية والسياسية - جامعة الحسن الأول - سطات</p>
+        </div>
+        
+        <div class="student-info">
+          <h3>معلومات الطالب / Informations Étudiant</h3>
+          <p><strong>الاسم الكامل / Nom complet:</strong> ${student.lib_nom_pat_ind} ${student.lib_pr1_ind}</p>
+          <p><strong>رقم الطالب / Code Étudiant:</strong> ${student.cod_etu}</p>
+          <p><strong>التخصص / Spécialité:</strong> ${student.lib_etp || 'N/A'}</p>
+          <p><strong>السداسي / Semestre:</strong> S${semester}</p>
+          <p><strong>تاريخ الإصدار / Date:</strong> ${new Date().toLocaleDateString('fr-FR')}</p>
+        </div>
+        
+        <table class="grades-table">
+          <thead>
+            <tr>
+              <th>رمز المادة<br>Code</th>
+              <th>اسم المادة<br>Module</th>
+              <th>النقطة<br>Note</th>
+              <th>النتيجة<br>Résultat</th>
+              <th>الدورة<br>Session</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${gradesResult.rows.map(grade => `
+              <tr>
+                <td>${grade.cod_elp || ''}</td>
+                <td>${grade.lib_elp || 'Module non trouvé'}</td>
+                <td style="text-align: center; font-weight: bold; color: ${grade.not_elp !== null ? (parseFloat(grade.not_elp) >= 10 ? '#27ae60' : '#e74c3c') : '#95a5a6'};">
+                  ${grade.not_elp !== null ? parseFloat(grade.not_elp).toFixed(2) : 'ABS'}
+                </td>
+                <td>${grade.cod_tre || '-'}</td>
+                <td>${grade.cod_ses === '1' ? 'Normale' : 'Rattrapage'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        
+        <div class="footer">
+          <div class="stamp">
+            CACHET<br>
+            UNIVERSITÉ<br>
+            HASSAN 1ER
+          </div>
+          <p>هذا الكشف رسمي ومُصدق من النظام الأكاديمي للجامعة</p>
+          <p>Ce relevé est officiel et certifié par le système académique de l'université</p>
+          <p style="font-size: 12px; color: #999;">
+            Généré le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}
+          </p>
+        </div>
+        
+        <div class="no-print" style="margin-top: 20px; text-align: center;">
+          <button onclick="window.print()" style="padding: 10px 20px; background: #3498db; color: white; border: none; border-radius: 5px; cursor: pointer;">Imprimer</button>
+          <button onclick="window.close()" style="padding: 10px 20px; background: #95a5a6; color: white; border: none; border-radius: 5px; cursor: pointer; margin-left: 10px;">Fermer</button>
+        </div>
+      </body>
+      </html>
+    `;
+    
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(htmlContent);
+    
+  } catch (error) {
+    console.error('PDF generation error:', error);
+    res.status(500).json({ error: 'Failed to generate PDF' });
+  }
+});
+
+// Print transcript endpoint
+app.get('/student/transcript/:semester/print', authenticateToken, async (req, res) => {
+  try {
+    const { semester } = req.params;
+    
+    // Get the same data as PDF endpoint
+    const studentResult = await pool.query(
+      'SELECT * FROM students WHERE id = $1',
+      [req.user.studentId]
+    );
+    
+    if (studentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+    
+    const student = studentResult.rows[0];
+    
+    const gradesResult = await pool.query(`
+      SELECT 
+        g.cod_anu,
+        g.cod_ses,
+        g.cod_elp,
+        COALESCE(g.not_epr, g.not_elp) as not_elp,
+        g.cod_tre,
+        ep.lib_elp,
+        ep.lib_elp_arb,
+        ep.element_type,
+        ep.semester_number
+      FROM grades g 
+      LEFT JOIN element_pedagogi ep ON g.cod_elp = ep.cod_elp
+      WHERE g.cod_etu = $1 AND ep.semester_number = $2
+      ORDER BY g.cod_anu DESC, g.cod_ses, ep.lib_elp
+    `, [student.cod_etu, semester]);
+    
+    // Generate print-friendly HTML
+    const printHTML = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>Relevé de Notes - S${semester}</title>
+        <style>
+          body { 
+            font-family: Arial, sans-serif; 
+            margin: 20px; 
+            direction: ltr;
+          }
+          .header { 
+            text-align: center; 
+            margin-bottom: 30px;
+            padding: 20px;
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            color: white;
+            border-radius: 10px;
+          }
+          .student-info { 
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #3498db;
+          }
+          .grades-table { 
+            width: 100%; 
+            border-collapse: collapse;
+            margin-bottom: 20px;
+          }
+          .grades-table th, .grades-table td { 
+            border: 1px solid #ddd; 
+            padding: 12px 8px; 
+            text-align: left; 
+          }
+          .grades-table th { 
+            background-color: #3498db; 
+            color: white;
+            font-weight: bold;
+          }
+          .grades-table tr:nth-child(even) {
+            background-color: #f8f9fa;
+          }
+          .footer {
+            margin-top: 30px;
+            text-align: center;
+            padding: 20px;
+            border-top: 2px solid #3498db;
+            color: #666;
+          }
+          @media print { 
+            .no-print { display: none; } 
+            body { margin: 0; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>RELEVÉ DE NOTES OFFICIEL</h1>
+          <h2>كشف النقط الرسمي</h2>
+          <p>Faculté des Sciences Juridiques et Politiques - Université Hassan 1er - Settat</p>
+        </div>
+        
+        <div class="student-info">
+          <p><strong>Nom:</strong> ${student.lib_nom_pat_ind} ${student.lib_pr1_ind}</p>
+          <p><strong>Code Étudiant:</strong> ${student.cod_etu}</p>
+          <p><strong>Semestre:</strong> S${semester}</p>
+          <p><strong>Date:</strong> ${new Date().toLocaleDateString('fr-FR')}</p>
+        </div>
+        
+        <table class="grades-table">
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Module</th>
+              <th>Note</th>
+              <th>Résultat</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${gradesResult.rows.map(grade => `
+              <tr>
+                <td>${grade.cod_elp || ''}</td>
+                <td>${grade.lib_elp || ''}</td>
+                <td style="text-align: center; font-weight: bold;">
+                  ${grade.not_elp !== null ? parseFloat(grade.not_elp).toFixed(2) : 'ABS'}
+                </td>
+                <td>${grade.cod_tre || ''}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        
+        <div class="footer">
+          <p>Ce relevé est officiel et certifié par le système académique</p>
+          <p>Généré le ${new Date().toLocaleDateString('fr-FR')}</p>
+        </div>
+        
+        <div class="no-print" style="margin-top: 20px; text-align: center;">
+          <button onclick="window.print()">Imprimer</button>
+          <button onclick="window.close()">Fermer</button>
+        </div>
+        
+        <script>
+          // Auto-print when page loads
+          window.onload = function() {
+            setTimeout(function() {
+              window.print();
+            }, 500);
+          }
+        </script>
+      </body>
+      </html>
+    `;
+    
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(printHTML);
+    
+  } catch (error) {
+    console.error('Print transcript error:', error);
+    res.status(500).json({ error: 'Failed to generate print view' });
+  }
+});
+
+// PDF Generation endpoint for transcripts
+app.get('/student/transcript/:semester/pdf', authenticateToken, async (req, res) => {
+  try {
+    const { semester } = req.params;
+    
+    // Get student info
+    const studentResult = await pool.query(
+      'SELECT * FROM students WHERE id = $1',
+      [req.user.studentId]
+    );
+    
+    if (studentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+    
+    const student = studentResult.rows[0];
+    
+    // Get semester grades
+    const gradesResult = await pool.query(`
+      SELECT 
+        g.cod_anu,
+        g.cod_ses,
+        g.cod_elp,
+        g.not_elp,
+        g.cod_tre,
+        ep.lib_elp,
+        ep.lib_elp_arb,
+        ep.element_type,
+        ep.semester_number
+      FROM grades g 
+      LEFT JOIN element_pedagogi ep ON g.cod_elp = ep.cod_elp
+      WHERE g.cod_etu = $1 AND ep.semester_number = $2
+      ORDER BY g.cod_anu DESC, g.cod_ses, ep.lib_elp
+    `, [student.cod_etu, semester]);
+    
+    if (gradesResult.rows.length === 0) {
+      return res.status(404).json({ error: 'No grades found for this semester' });
+    }
+    
+    // Create PDF using jsPDF (server-side)
+    const PDFDocument = require('jspdf');
+    const doc = new PDFDocument();
+    
+    // Set up PDF content
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    
+    // Header
+    doc.setFontSize(20);
+    doc.text('RELEVÉ DE NOTES OFFICIEL', pageWidth/2, 30, { align: 'center' });
+    doc.setFontSize(16);
+    doc.text('كشف النقط الرسمي', pageWidth/2, 45, { align: 'center' });
+    
+    // Student info
+    doc.setFontSize(12);
+    doc.text(`Nom: ${student.lib_nom_pat_ind} ${student.lib_pr1_ind}`, 20, 70);
+    doc.text(`Code Étudiant: ${student.cod_etu}`, 20, 85);
+    doc.text(`Semestre: S${semester}`, 20, 100);
+    doc.text(`Date: ${new Date().toLocaleDateString()}`, 20, 115);
+    
+    // Grades table
+    let y = 140;
+    doc.setFontSize(10);
+    doc.text('Code', 20, y);
+    doc.text('Module', 50, y);
+    doc.text('Note', 140, y);
+    doc.text('Résultat', 170, y);
+    
+    y += 10;
+    doc.line(20, y, pageWidth - 20, y);
+    y += 5;
+    
+    gradesResult.rows.forEach(grade => {
+      doc.text(grade.cod_elp || '', 20, y);
+      doc.text((grade.lib_elp || '').substring(0, 30), 50, y);
+      doc.text(grade.not_elp !== null ? grade.not_elp.toString() : 'ABS', 140, y);
+      doc.text(grade.cod_tre || '', 170, y);
+      y += 15;
+    });
+    
+    // Generate PDF buffer
+    const pdfBuffer = doc.output();
+    
+    // Set response headers
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="transcript_S${semester}_${student.cod_etu}.pdf"`);
+    
+    // Send PDF
+    res.send(pdfBuffer);
+    
+  } catch (error) {
+    console.error('PDF generation error:', error);
+    res.status(500).json({ error: 'Failed to generate PDF' });
+  }
+});
+
+// Print transcript endpoint
+app.get('/student/transcript/:semester/print', authenticateToken, async (req, res) => {
+  try {
+    const { semester } = req.params;
+    
+    // Get the same data as PDF endpoint
+    const studentResult = await pool.query(
+      'SELECT * FROM students WHERE id = $1',
+      [req.user.studentId]
+    );
+    
+    if (studentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+    
+    const student = studentResult.rows[0];
+    
+    const gradesResult = await pool.query(`
+      SELECT 
+        g.cod_anu,
+        g.cod_ses,
+        g.cod_elp,
+        g.not_elp,
+        g.cod_tre,
+        ep.lib_elp,
+        ep.lib_elp_arb,
+        ep.element_type,
+        ep.semester_number
+      FROM grades g 
+      LEFT JOIN element_pedagogi ep ON g.cod_elp = ep.cod_elp
+      WHERE g.cod_etu = $1 AND ep.semester_number = $2
+      ORDER BY g.cod_anu DESC, g.cod_ses, ep.lib_elp
+    `, [student.cod_etu, semester]);
+    
+    // Generate print-friendly HTML
+    const printHTML = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>Relevé de Notes - S${semester}</title>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 20px; }
+          .header { text-align: center; margin-bottom: 30px; }
+          .student-info { margin-bottom: 20px; }
+          .grades-table { width: 100%; border-collapse: collapse; }
+          .grades-table th, .grades-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+          .grades-table th { background-color: #f2f2f2; }
+          @media print { .no-print { display: none; } }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>RELEVÉ DE NOTES OFFICIEL</h1>
+          <h2>كشف النقط الرسمي</h2>
+          <p>Faculté des Sciences Juridiques et Politiques - Settat</p>
+        </div>
+        
+        <div class="student-info">
+          <p><strong>Nom:</strong> ${student.lib_nom_pat_ind} ${student.lib_pr1_ind}</p>
+          <p><strong>Code Étudiant:</strong> ${student.cod_etu}</p>
+          <p><strong>Semestre:</strong> S${semester}</p>
+          <p><strong>Date:</strong> ${new Date().toLocaleDateString()}</p>
+        </div>
+        
+        <table class="grades-table">
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Module</th>
+              <th>Note</th>
+              <th>Résultat</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${gradesResult.rows.map(grade => `
+              <tr>
+                <td>${grade.cod_elp || ''}</td>
+                <td>${grade.lib_elp || ''}</td>
+                <td>${grade.not_elp !== null ? grade.not_elp : 'ABS'}</td>
+                <td>${grade.cod_tre || ''}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        
+        <div class="no-print" style="margin-top: 20px;">
+          <button onclick="window.print()">Imprimer</button>
+          <button onclick="window.close()">Fermer</button>
+        </div>
+        
+        <script>
+          // Auto-print when page loads
+          window.onload = function() {
+            window.print();
+          }
+        </script>
+      </body>
+      </html>
+    `;
+    
+    res.setHeader('Content-Type', 'text/html');
+    res.send(printHTML);
+    
+  } catch (error) {
+    console.error('Print transcript error:', error);
+    res.status(500).json({ error: 'Failed to generate print view' });
+  }
+});
 
 // Helper function to get academic year from semester code
 function getAcademicYearFromSemester(semesterCode) {

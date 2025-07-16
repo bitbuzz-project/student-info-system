@@ -72,24 +72,14 @@ export const authAPI = {
 
 
 // Student API
+// Updated studentAPI section in src/services/api.js
+
 export const studentAPI = {
   getProfile: async () => {
     const response = await api.get('/student/me');
     return response.data;
   },
-
-  // Add these methods to studentAPI
-generateTranscriptPDF: async (semester) => {
-  // ... (copy from api_pdf_service artifact)
-},
-
-downloadTranscriptPDF: async (semester, studentCode) => {
-  // ... (copy from api_pdf_service artifact)
-},
-
-printTranscriptPDF: async (semester) => {
-  // ... (copy from api_pdf_service artifact)
-},
+  
   getPedagogicalSituation: async (filters = {}) => {
     const params = new URLSearchParams();
     if (filters.year) params.append('year', filters.year);
@@ -103,7 +93,7 @@ printTranscriptPDF: async (semester) => {
     return response.data;
   },
   
-  // Updated: Current year grades from RESULTAT_EPR
+  // Current year grades from RESULTAT_EPR
   getGrades: async (filters = {}) => {
     const params = new URLSearchParams();
     if (filters.year) params.append('year', filters.year);
@@ -113,13 +103,51 @@ printTranscriptPDF: async (semester) => {
     return response.data;
   },
   
-  // New: Official documents/transcripts from RESULTAT_ELP
+  // NEW: Official documents/transcripts 
   getOfficialDocuments: async (filters = {}) => {
     const params = new URLSearchParams();
     if (filters.semester) params.append('semester', filters.semester);
     
     const response = await api.get(`/student/official-documents?${params}`);
     return response.data;
+  },
+  
+  // NEW: Generate transcript PDF (server-side)
+  downloadTranscriptPDF: async (semester, studentCode) => {
+    try {
+      const response = await api.get(`/student/transcript/${semester}/pdf`, {
+        responseType: 'blob'
+      });
+      
+      // Create blob and download
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `Releve_Notes_S${semester}_${studentCode}_${new Date().getFullYear()}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+    } catch (error) {
+      console.error('Download PDF error:', error);
+      throw error;
+    }
+  },
+  
+  // NEW: Print transcript
+  printTranscriptPDF: async (semester) => {
+    try {
+      const response = await api.get(`/student/transcript/${semester}/print`);
+      const printWindow = window.open('', '_blank');
+      printWindow.document.write(response.data);
+      printWindow.document.close();
+      
+    } catch (error) {
+      console.error('Print transcript error:', error);
+      throw error;
+    }
   },
   
   getGradeStats: async () => {
