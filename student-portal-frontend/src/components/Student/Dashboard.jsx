@@ -108,7 +108,7 @@ const Dashboard = () => {
    // Add this new item
   {
     id: 'documents',
-    label: 'الوثائق الرسمية',
+    label: 'كشوفات النقط',
     icon: <DescriptionIcon />, // You'll need to import this
     color: '#9b59b6'
   },

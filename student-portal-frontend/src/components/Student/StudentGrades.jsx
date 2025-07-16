@@ -3,7 +3,6 @@ import {
   Box,
   Typography,
   Alert,
-  CircularProgress,
   Paper,
   Button
 } from '@mui/material';
@@ -25,30 +24,34 @@ const StudentGrades = () => {
   const [filters, setFilters] = useState({
     year: '',
     sessionType: '',
-    session: ''
+    session: '1',   // 👈 Default to Session 1
+    moduleCode: ''
   });
   const [availableYears, setAvailableYears] = useState([]);
   const [hasArabicNames, setHasArabicNames] = useState(false);
   const { t } = useTranslation();
 
-  const fetchGrades = async () => {
+  const fetchGrades = async (activeFilters = filters) => {
     try {
       setIsLoading(true);
       setError(null);
-      
-      const response = await studentAPI.getGrades();
+
+      const response = await studentAPI.getGrades({
+        year: activeFilters.year,
+        session: activeFilters.session,
+        module_code: activeFilters.moduleCode
+      });
+
       setGradesData(response.grades);
       setHasArabicNames(response.has_arabic_names);
-      
-      // Extract available years
+
       const years = Object.keys(response.grades || {})
         .map(year => parseInt(year))
         .sort((a, b) => b - a);
       setAvailableYears(years);
-      
-      // Apply initial filters
-      applyFilters(response.grades, filters);
-      
+
+      applyFilters(response.grades, activeFilters);
+
     } catch (err) {
       setError(err.response?.data?.error || 'فشل في تحميل النقط');
       console.error('Error fetching grades:', err);
@@ -57,7 +60,6 @@ const StudentGrades = () => {
     }
   };
 
-  // Helper function to flatten the nested grades structure
   const flattenGrades = (grades) => {
     const flatList = [];
     if (!grades) return flatList;
@@ -71,10 +73,10 @@ const StudentGrades = () => {
                 flatList.push({
                   ...grade,
                   study_year: studyYear,
-                  session_number: sessionNum,      // '1' or '2' (Normal/Catch-up)
-                  session_type: sessionType,       // 'automne' or 'printemps'
-                  academic_year_logical: academicYearLogical, // Logical year (e.g., '1' for S1/S2)
-                  semester_code: semesterCode      // 'S1', 'S2', etc.
+                  session_number: sessionNum,
+                  session_type: sessionType,
+                  academic_year_logical: academicYearLogical,
+                  semester_code: semesterCode
                 });
               });
             });
@@ -85,7 +87,6 @@ const StudentGrades = () => {
     return flatList;
   };
 
-  // Helper function to re-nest grades for the GradeTable component
   const reNestGrades = (flatGrades) => {
     const nested = {};
     flatGrades.forEach(grade => {
@@ -95,12 +96,11 @@ const StudentGrades = () => {
       if (!nested[study_year][session_number][session_type]) nested[study_year][session_number][session_type] = {};
       if (!nested[study_year][session_number][session_type][academic_year_logical]) nested[study_year][session_number][session_type][academic_year_logical] = {};
       if (!nested[study_year][session_number][session_type][academic_year_logical][semester_code]) nested[study_year][session_number][session_type][academic_year_logical][semester_code] = [];
-      
+
       nested[study_year][session_number][session_type][academic_year_logical][semester_code].push(grade);
     });
     return nested;
   };
-
 
   const applyFilters = (grades, currentFilters) => {
     if (!grades) {
@@ -111,51 +111,49 @@ const StudentGrades = () => {
     const allFlatGrades = flattenGrades(grades);
     let workingGrades = [...allFlatGrades];
 
-    // Apply main filters
     if (currentFilters.year) {
-        workingGrades = workingGrades.filter(grade => grade.study_year === String(currentFilters.year));
+      workingGrades = workingGrades.filter(grade => grade.study_year === String(currentFilters.year));
     }
     if (currentFilters.sessionType) {
-        workingGrades = workingGrades.filter(grade => grade.session_type === currentFilters.sessionType);
+      workingGrades = workingGrades.filter(grade => grade.session_type === currentFilters.sessionType);
     }
     if (currentFilters.session) {
-        workingGrades = workingGrades.filter(grade => grade.session_number === String(currentFilters.session));
+      workingGrades = workingGrades.filter(grade => grade.session_number === String(currentFilters.session));
     }
 
-    // Implement Rattrapage logic: if Session 2 is selected, remove modules already passed in Session 1
+    // Remove empty grades from session 2
     if (currentFilters.session === '2') {
-        const session1GradesForComparison = allFlatGrades.filter(g =>
-            g.study_year === String(currentFilters.year) &&
-            g.session_type === currentFilters.sessionType &&
-            g.session_number === '1'
-        );
-
-        const passedModulesInSession1 = new Set(); // Stores unique module identifiers for passed grades
-        session1GradesForComparison.forEach(grade => {
-            // Check for passing grade (>=10) or validated status ('V')
-            if ((grade.not_elp !== null && parseFloat(grade.not_elp) >= 10) || grade.cod_tre === 'V') {
-                // Use a unique key for the module: academic year + semester code + module code
-                const moduleIdentifier = `${grade.study_year}-${grade.semester_code}-${grade.cod_elp}`;
-                passedModulesInSession1.add(moduleIdentifier);
-            }
-        });
-
-        // Filter out grades from Session 2 that correspond to modules passed in Session 1
-        workingGrades = workingGrades.filter(grade => {
-            const moduleIdentifier = `${grade.study_year}-${grade.semester_code}-${grade.cod_elp}`;
-            return !passedModulesInSession1.has(moduleIdentifier);
-        });
+      workingGrades = workingGrades.filter(grade => grade.not_elp !== null);
     }
 
-    // Reorganize filtered grades back into the nested structure for GradeTable
-    const reorganizedFilteredGrades = reNestGrades(workingGrades);
+    if (currentFilters.session === '2') {
+      const session1GradesForComparison = allFlatGrades.filter(g =>
+        g.study_year === String(currentFilters.year) &&
+        g.session_type === currentFilters.sessionType &&
+        g.session_number === '1'
+      );
 
+      const passedModulesInSession1 = new Set();
+      session1GradesForComparison.forEach(grade => {
+        if ((grade.not_elp !== null && parseFloat(grade.not_elp) >= 10) || grade.cod_tre === 'V') {
+          const moduleIdentifier = `${grade.study_year}-${grade.semester_code}-${grade.cod_elp}`;
+          passedModulesInSession1.add(moduleIdentifier);
+        }
+      });
+
+      workingGrades = workingGrades.filter(grade => {
+        const moduleIdentifier = `${grade.study_year}-${grade.semester_code}-${grade.cod_elp}`;
+        return !passedModulesInSession1.has(moduleIdentifier);
+      });
+    }
+
+    const reorganizedFilteredGrades = reNestGrades(workingGrades);
     setFilteredGrades(reorganizedFilteredGrades);
   };
 
   const handleFiltersChange = (newFilters) => {
     setFilters(newFilters);
-    applyFilters(gradesData, newFilters);
+    fetchGrades(newFilters);
   };
 
   useEffect(() => {
@@ -171,7 +169,6 @@ const StudentGrades = () => {
 
   return (
     <Box sx={{ p: 3 }}>
-      {/* Header */}
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
         <SchoolIcon sx={{ mr: 2, color: 'primary.main', fontSize: 32 }} />
         <Typography variant="h4" fontWeight="600" color="primary">
@@ -179,7 +176,7 @@ const StudentGrades = () => {
         </Typography>
         <Button
           startIcon={<RefreshIcon />}
-          onClick={fetchGrades}
+          onClick={() => fetchGrades()}
           sx={{ ml: 'auto' }}
           variant="outlined"
         >
@@ -187,24 +184,18 @@ const StudentGrades = () => {
         </Button>
       </Box>
 
-      {/* Error Display */}
       {error && (
         <Alert severity="error" sx={{ mb: 3, borderRadius: 2 }}>
           {error}
         </Alert>
       )}
 
-      {/* Filters */}
       <GradeFilters
         filters={filters}
         onFiltersChange={handleFiltersChange}
         availableYears={availableYears}
       />
 
-      {/* Instructions */}
- 
-
-      {/* No Results Message */}
       {hasActiveFilters && !hasFilteredResults && (
         <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 3 }}>
           <Typography variant="h6" color="text.secondary" gutterBottom>
@@ -216,24 +207,15 @@ const StudentGrades = () => {
         </Paper>
       )}
 
-      {/* Grades Display */}
       {hasFilteredResults && (
         <Box>
-          {/* Results Summary */}
-      
-
-          {/* Grades Table */}
-          <GradeTable 
-            gradesData={filteredGrades} 
-            hasArabicNames={hasArabicNames}
-          />
+          <GradeTable gradesData={filteredGrades} hasArabicNames={hasArabicNames} />
         </Box>
       )}
 
-      {/* Footer Info */}
       <Paper sx={{ p: 3, mt: 3, borderRadius: 3, bgcolor: '#f8f9fa' }}>
         <Typography variant="body2" color="text.secondary" textAlign="center">
-          💡 ملاحظة: جميع النقط والحالات معروضة كما هي مسجلة في قاعدة البيانات الأصلية بدون أي تعديل أو إضافة من الواجهة.<br/>
+          💡 ملاحظة: جميع النقط والحالات معروضة كما هي مسجلة في قاعدة البيانات الأصلية بدون أي تعديل أو إضافة من الواجهة.<br />
           Note: All grades and statuses are displayed exactly as recorded in the original database without any modification or addition from the interface.
         </Typography>
       </Paper>

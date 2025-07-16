@@ -50,41 +50,39 @@ const authenticateToken = (req, res, next) => {
 app.get('/student/official-documents', authenticateToken, async (req, res) => {
   try {
     const { semester } = req.query;
-    
-    // Base query to get grades (using existing grades table)
+
     let query = `
       SELECT 
-        g.cod_anu,
-        g.cod_ses,
-        g.cod_elp,
-        COALESCE(g.not_epr, g.not_elp) as not_elp,
-        g.cod_tre,
+        od.cod_anu,
+        od.cod_ses,
+        od.cod_elp,
+        od.not_elp,
+        od.cod_tre,
         ep.lib_elp,
         ep.lib_elp_arb,
         ep.element_type,
         ep.semester_number,
         ep.cod_pel,
         ep.cod_nel
-      FROM grades g 
-      LEFT JOIN element_pedagogi ep ON g.cod_elp = ep.cod_elp
-      WHERE g.cod_etu = (
+      FROM official_documents od
+      LEFT JOIN element_pedagogi ep ON od.cod_elp = ep.cod_elp
+      WHERE od.cod_etu = (
         SELECT cod_etu FROM students WHERE id = $1
       )
     `;
-    
+
     let params = [req.user.studentId];
     let paramIndex = 2;
-    
+
     if (semester) {
       query += ` AND ep.semester_number = $${paramIndex}`;
       params.push(semester);
-      paramIndex++;
     }
-    
-    query += ` ORDER BY g.cod_anu DESC, g.cod_ses, ep.semester_number, ep.lib_elp`;
-    
+
+    query += ` ORDER BY od.cod_anu DESC, od.cod_ses, ep.semester_number, ep.lib_elp`;
+
     const result = await pool.query(query, params);
-    
+
     if (result.rows.length === 0) {
       return res.json({
         documents: {},
@@ -92,18 +90,17 @@ app.get('/student/official-documents', authenticateToken, async (req, res) => {
         total_semesters: 0
       });
     }
-    
-    // Organize grades by semester for official documents
+
     const documentsBySemester = {};
     const availableSemesters = new Set();
-    
+
     result.rows.forEach(grade => {
       const semesterNumber = grade.semester_number;
       if (!semesterNumber) return;
-      
+
       const semesterKey = `S${semesterNumber}`;
       availableSemesters.add(semesterKey);
-      
+
       if (!documentsBySemester[semesterKey]) {
         documentsBySemester[semesterKey] = {
           subjects: [],
@@ -116,11 +113,10 @@ app.get('/student/official-documents', authenticateToken, async (req, res) => {
           }
         };
       }
-      
-      // Calculate if passed
+
       const gradeValue = grade.not_elp;
       const isPassed = gradeValue !== null && parseFloat(gradeValue) >= 10;
-      
+
       documentsBySemester[semesterKey].subjects.push({
         cod_elp: grade.cod_elp,
         lib_elp: grade.lib_elp || 'Module non trouvé',
@@ -131,11 +127,10 @@ app.get('/student/official-documents', authenticateToken, async (req, res) => {
         is_passed: isPassed,
         element_type: grade.element_type
       });
-      
-      // Update statistics
+
       const stats = documentsBySemester[semesterKey].statistics;
       stats.total_subjects++;
-      
+
       if (gradeValue !== null) {
         if (parseFloat(gradeValue) >= 10) {
           stats.passed_subjects++;
@@ -146,24 +141,23 @@ app.get('/student/official-documents', authenticateToken, async (req, res) => {
         stats.absent_subjects++;
       }
     });
-    
-    // Calculate averages
+
     Object.keys(documentsBySemester).forEach(semesterKey => {
       const semester = documentsBySemester[semesterKey];
       const validGrades = semester.subjects.filter(s => s.not_elp !== null);
-      
+
       if (validGrades.length > 0) {
         const sum = validGrades.reduce((acc, s) => acc + parseFloat(s.not_elp), 0);
         semester.statistics.average_grade = (sum / validGrades.length).toFixed(2);
       }
     });
-    
+
     res.json({
       documents: documentsBySemester,
       available_semesters: Array.from(availableSemesters).sort(),
       total_semesters: availableSemesters.size
     });
-    
+
   } catch (error) {
     console.error('Get official documents error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -852,15 +846,18 @@ app.get('/student/me', authenticateToken, async (req, res) => {
 app.get('/student/grades', authenticateToken, async (req, res) => {
   try {
     const { year, session } = req.query;
-    
-    // Updated query to use the new column names and prioritize not_epr
+
+    // Decide which table to query
+    const table = session === '1' ? 'official_documents' : 'grades';
+    const alias = session === '1' ? 'od' : 'g';
+
     let query = `
       SELECT 
-        g.cod_anu,
-        g.cod_ses,
-        g.cod_elp,
-        COALESCE(g.not_epr, g.not_elp) as not_elp,
-        g.cod_tre,
+        ${alias}.cod_anu,
+        ${alias}.cod_ses,
+        ${alias}.cod_elp,
+        ${alias}.not_elp,
+        ${alias}.cod_tre,
         ep.cod_nel,
         ep.cod_pel,
         ep.lib_elp,
@@ -872,113 +869,88 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
         parent_ep.lib_elp as parent_lib_elp,
         parent_ep.cod_pel as parent_cod_pel,
         parent_ep.semester_number as parent_semester_number
-      FROM grades g 
-      LEFT JOIN element_pedagogi ep ON g.cod_elp = ep.cod_elp
-      LEFT JOIN element_hierarchy eh ON g.cod_elp = eh.cod_elp_fils
+      FROM ${table} ${alias}
+      LEFT JOIN element_pedagogi ep ON ${alias}.cod_elp = ep.cod_elp
+      LEFT JOIN element_hierarchy eh ON ${alias}.cod_elp = eh.cod_elp_fils
       LEFT JOIN element_pedagogi parent_ep ON eh.cod_elp_pere = parent_ep.cod_elp
-      WHERE g.cod_etu = (
+      WHERE ${alias}.cod_etu = (
         SELECT cod_etu FROM students WHERE id = $1
       )
     `;
-    
+
     let params = [req.user.studentId];
     let paramIndex = 2;
-    
+
     if (year) {
-      query += ` AND g.cod_anu = $${paramIndex}`;
+      query += ` AND ${alias}.cod_anu = $${paramIndex}`;
       params.push(year);
       paramIndex++;
     }
-    
-    if (session) {
-      query += ` AND g.cod_ses = $${paramIndex}`;
-      params.push(session);
-      paramIndex++;
-    }
-    
-    query += ` ORDER BY g.cod_anu DESC, g.cod_ses, ep.semester_number, ep.lib_elp`;
-    
+
+    if (session === '2' && req.query.module_code) {
+    query += ` AND ${alias}.cod_elp ILIKE '%' || $${paramIndex} || '%' `;
+    params.push(req.query.module_code);
+    paramIndex++;
+}
+
+    query += ` ORDER BY ${alias}.cod_anu DESC, ${alias}.cod_ses, ep.semester_number, ep.lib_elp`;
+
     const result = await pool.query(query, params);
-    
-    // Rest of the function stays the same...
-    // [Keep all the existing logic for organizing grades by structure]
-    
-    // Helper function to determine session type based on semester
+
+    // --------------------
+    // Existing Logic (unchanged)
+    // --------------------
     const getSessionType = (semesterNumber) => {
       if (!semesterNumber) return 'unknown';
-      // S1, S3, S5 = Automne, S2, S4, S6 = Printemps
       return (semesterNumber % 2 === 1) ? 'automne' : 'printemps';
     };
-    
-    // Helper function to get academic year from semester
+
     const getAcademicYear = (semesterNumber) => {
       if (!semesterNumber) return 0;
       return Math.ceil(semesterNumber / 2);
     };
-    
-    // Organize grades by academic year, session type, and semester
+
     const gradesByStructure = {};
     let hasArabicNames = false;
-    
+
     result.rows.forEach(grade => {
       const studyYear = grade.cod_anu;
       const sessionCode = grade.cod_ses;
-      
-      // Determine semester number - try multiple sources
       let semesterNumber = grade.semester_number || grade.parent_semester_number;
-      
-      // If no semester number found, try to extract from codes
+
       if (!semesterNumber) {
         const semMatch = (grade.cod_pel || grade.parent_cod_pel || grade.cod_elp || '').match(/S(\d+)/);
         if (semMatch) {
           semesterNumber = parseInt(semMatch[1]);
         }
       }
-      
-      // Skip if we can't determine semester
+
       if (!semesterNumber) {
         console.warn(`Cannot determine semester for grade: ${grade.cod_elp} - ${grade.lib_elp}`);
         return;
       }
-      
+
       const sessionType = getSessionType(semesterNumber);
       const academicYear = getAcademicYear(semesterNumber);
       const semesterCode = `S${semesterNumber}`;
-      
-      // Check for Arabic names
+
       if (grade.lib_elp_arb && grade.lib_elp_arb.trim() !== '') {
         hasArabicNames = true;
       }
-      
-      // Initialize structure
-      if (!gradesByStructure[studyYear]) {
-        gradesByStructure[studyYear] = {};
-      }
-      
-      if (!gradesByStructure[studyYear][sessionCode]) {
-        gradesByStructure[studyYear][sessionCode] = {};
-      }
-      
-      if (!gradesByStructure[studyYear][sessionCode][sessionType]) {
-        gradesByStructure[studyYear][sessionCode][sessionType] = {};
-      }
-      
-      if (!gradesByStructure[studyYear][sessionCode][sessionType][academicYear]) {
-        gradesByStructure[studyYear][sessionCode][sessionType][academicYear] = {};
-      }
-      
-      if (!gradesByStructure[studyYear][sessionCode][sessionType][academicYear][semesterCode]) {
-        gradesByStructure[studyYear][sessionCode][sessionType][academicYear][semesterCode] = [];
-      }
-      
-      // Determine if this is a module or a subject
+
+      if (!gradesByStructure[studyYear]) gradesByStructure[studyYear] = {};
+      if (!gradesByStructure[studyYear][sessionCode]) gradesByStructure[studyYear][sessionCode] = {};
+      if (!gradesByStructure[studyYear][sessionCode][sessionType]) gradesByStructure[studyYear][sessionCode][sessionType] = {};
+      if (!gradesByStructure[studyYear][sessionCode][sessionType][academicYear]) gradesByStructure[studyYear][sessionCode][sessionType][academicYear] = {};
+      if (!gradesByStructure[studyYear][sessionCode][sessionType][academicYear][semesterCode]) gradesByStructure[studyYear][sessionCode][sessionType][academicYear][semesterCode] = [];
+
       const isModule = grade.element_type === 'MODULE' || grade.cod_nel === 'MOD';
       const parentInfo = grade.parent_lib_elp ? {
         cod_elp: grade.cod_elp_pere,
         lib_elp: grade.parent_lib_elp,
         cod_pel: grade.parent_cod_pel
       } : null;
-      
+
       gradesByStructure[studyYear][sessionCode][sessionType][academicYear][semesterCode].push({
         cod_elp: grade.cod_elp,
         lib_elp: grade.lib_elp || 'Module non trouvé',
@@ -996,7 +968,7 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
         academic_year: academicYear
       });
     });
-    
+
     res.json({
       grades: gradesByStructure,
       total_grades: result.rows.length,
@@ -1008,12 +980,13 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
         }
       }
     });
-    
+
   } catch (error) {
     console.error('Get grades error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
 
 // Get official documents/transcripts from RESULTAT_ELP (final consolidated grades)
 

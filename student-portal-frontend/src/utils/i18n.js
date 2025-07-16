@@ -17,7 +17,7 @@ const resources = {
       'save': 'حفظ',
       'close': 'إغلاق',
       
-      'officialDocuments': 'الوثائق الرسمية',
+      'officialDocuments': 'كشوفات النقط',
 'transcripts': 'كشوف النقط',
 'generateTranscript': 'إنشاء كشف النقط',
 'selectSemester': 'اختر السداسي',

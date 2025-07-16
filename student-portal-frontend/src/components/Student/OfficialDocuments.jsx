@@ -61,17 +61,93 @@ const OfficialDocuments = () => {
   const { t } = useTranslation();
   const { user } = useAuth();
 
+  const processDocumentsData = (rawData) => {
+    const processedData = {};
+    const availableSemestersSet = new Set();
+
+    for (const semesterCode in rawData) {
+      if (rawData.hasOwnProperty(semesterCode)) {
+        const semesterData = rawData[semesterCode];
+        const modulesMap = new Map(); // Map to store the highest grade for each module
+
+        semesterData.subjects.forEach(subject => {
+          // Filter out grades where cod_tre is null
+          if (subject.cod_tre === null) {
+            return; 
+          }
+
+          const currentGrade = parseFloat(subject.not_elp);
+          const existingModule = modulesMap.get(subject.cod_elp);
+
+          // If no existing module or current grade is higher, update the map
+          // And also ensure it takes the latest session if grades are equal (e.g., Session 2 over Session 1)
+          if (!existingModule || 
+              currentGrade > parseFloat(existingModule.not_elp) || 
+              (currentGrade === parseFloat(existingModule.not_elp) && subject.final_session > existingModule.final_session)) {
+            modulesMap.set(subject.cod_elp, subject);
+          }
+        });
+
+        // Convert map values back to an array and sort by cod_elp
+        const filteredSubjects = Array.from(modulesMap.values()).sort((a, b) => a.cod_elp.localeCompare(b.cod_elp));
+
+        // Recalculate statistics for the filtered subjects (though they will be removed from display, still useful for PDF data if needed elsewhere)
+        const total_subjects = filteredSubjects.length;
+        let passed_subjects = 0;
+        let failed_subjects = 0;
+        let absent_subjects = 0;
+        let sum_grades = 0;
+        let count_valid_grades = 0;
+
+        filteredSubjects.forEach(subject => {
+          if (subject.not_elp !== null) {
+            const gradeValue = parseFloat(subject.not_elp);
+            if (gradeValue >= 10) {
+              passed_subjects++;
+            } else {
+              failed_subjects++;
+            }
+            sum_grades += gradeValue;
+            count_valid_grades++;
+          } else {
+            absent_subjects++;
+          }
+        });
+
+        const average_grade = count_valid_grades > 0 ? (sum_grades / count_valid_grades).toFixed(2) : null;
+
+        processedData[semesterCode] = {
+          subjects: filteredSubjects,
+          statistics: {
+            total_subjects,
+            passed_subjects,
+            failed_subjects,
+            absent_subjects,
+            average_grade
+          }
+        };
+        availableSemestersSet.add(semesterCode);
+      }
+    }
+    return {
+      documents: processedData,
+      available_semesters: Array.from(availableSemestersSet).sort()
+    };
+  };
+
   const fetchOfficialDocuments = async (semester = '') => {
     try {
       setIsLoading(true);
       setError(null);
       
       const response = await studentAPI.getOfficialDocuments({ semester });
-      setDocumentsData(response.documents);
-      setAvailableSemesters(response.available_semesters);
+      const { documents, available_semesters } = processDocumentsData(response.documents);
+
+      setDocumentsData(documents);
+      setAvailableSemesters(available_semesters);
       
     } catch (err) {
-      setError(err.response?.data?.error || 'فشل في تحميل الوثائق الرسمية');
+      setError(err.response?.data?.error || 'فشل في تحميل كشوفات النقط');
       console.error('Error fetching official documents:', err);
     } finally {
       setIsLoading(false);
@@ -212,54 +288,32 @@ const OfficialDocuments = () => {
       }
     });
     
-    // Statistics section
-    const finalY = doc.lastAutoTable.finalY + 15;
-    
-    // Statistics box
-    doc.setFillColor(...lightGray);
-    doc.rect(15, finalY, pageWidth - 30, 35, 'F');
-    doc.setDrawColor(200, 200, 200);
-    doc.rect(15, finalY, pageWidth - 30, 35, 'S');
-    
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'bold');
-    doc.text('الإحصائيات / Statistiques', 20, finalY + 8);
-    
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    
-    // Statistics in columns
-    const stats = semesterData.statistics;
-    const col1X = 20;
-    const col2X = 70;
-    const col3X = 120;
-    
-    doc.text(`إجمالي المواد / Total: ${stats.total_subjects}`, col1X, finalY + 18);
-    doc.text(`مواد منجحة / Admis: ${stats.passed_subjects}`, col2X, finalY + 18);
-    doc.text(`مواد راسبة / Ajourné: ${stats.failed_subjects}`, col3X, finalY + 18);
-    
-    doc.text(`المعدل العام / Moyenne: ${stats.average_grade || 'N/A'}`, col1X, finalY + 28);
-    doc.text(`معدل النجاح / Taux: ${((stats.passed_subjects / stats.total_subjects) * 100).toFixed(1)}%`, col2X, finalY + 28);
-    
+    // Statistics section is removed from here
+
     // Footer
-    const footerY = pageHeight - 25;
+    // Adjust footerY to account for removed statistics section
+    const finalY = doc.lastAutoTable.finalY + 15; // Position after table
+    const footerY = pageHeight - 25; // Keep fixed at bottom if space allows
+    // If table and student info pushes content too far, use finalY + margin
+    const dynamicFooterY = Math.max(finalY, pageHeight - 25); 
+
     doc.setDrawColor(200, 200, 200);
-    doc.line(15, footerY, pageWidth - 15, footerY);
+    doc.line(15, dynamicFooterY, pageWidth - 15, dynamicFooterY);
     
     doc.setFontSize(8);
     doc.setTextColor(100, 100, 100);
-    doc.text('هذا الكشف رسمي ومُصدق من النظام الأكاديمي', 20, footerY + 8);
-    doc.text('Ce relevé est officiel et certifié par le système académique', 20, footerY + 15);
+    doc.text('هذا الكشف رسمي ومُصدق من النظام الأكاديمي', 20, dynamicFooterY + 8);
+    doc.text('Ce relevé est officiel et certifié par le système académique', 20, dynamicFooterY + 15);
     doc.text(`Généré le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}`, 
-             pageWidth - 15, footerY + 8, { align: 'right' });
+             pageWidth - 15, dynamicFooterY + 8, { align: 'right' });
     
     // University stamp placeholder
     doc.setDrawColor(100, 100, 100);
     doc.setFillColor(255, 255, 255);
-    doc.circle(pageWidth - 35, footerY - 15, 12, 'S');
+    doc.circle(pageWidth - 35, dynamicFooterY - 15, 12, 'S');
     doc.setFontSize(6);
-    doc.text('CACHET', pageWidth - 35, footerY - 18, { align: 'center' });
-    doc.text('UNIVERSITÉ', pageWidth - 35, footerY - 12, { align: 'center' });
+    doc.text('CACHET', pageWidth - 35, dynamicFooterY - 18, { align: 'center' });
+    doc.text('UNIVERSITÉ', pageWidth - 35, dynamicFooterY - 12, { align: 'center' });
     
     return doc;
   };
@@ -271,9 +325,11 @@ const OfficialDocuments = () => {
       
       if (pdfMethod === 'server') {
         // Server-side PDF generation
+        // Note: The server-side needs to implement the "highest grade per module" logic
+        // and removal of statistics if that's desired for server-generated PDFs.
         await studentAPI.downloadTranscriptPDF(semesterCode.replace('S', ''), user.cod_etu);
       } else {
-        // Client-side PDF generation
+        // Client-side PDF generation with processed data
         const doc = await generateClientPDF(semesterData, semesterCode);
         const filename = `Releve_Notes_${semesterCode}_${user.cod_etu}_${new Date().getFullYear()}.pdf`;
         doc.save(filename);
@@ -294,9 +350,10 @@ const OfficialDocuments = () => {
       
       if (pdfMethod === 'server') {
         // Server-side PDF generation
+        // Same note as above regarding server-side logic for highest grade and statistics.
         await studentAPI.printTranscriptPDF(semesterCode.replace('S', ''));
       } else {
-        // Client-side PDF generation
+        // Client-side PDF generation with processed data
         const doc = await generateClientPDF(semesterData, semesterCode);
         const pdfOutput = doc.output('bloburl');
         const printWindow = window.open(pdfOutput);
@@ -339,253 +396,198 @@ const OfficialDocuments = () => {
 
   const getSemesterDisplayName = (semesterCode) => {
     const semesterNames = {
-      'S1': 'السداسي الأول - Semester 1',
-      'S2': 'السداسي الثاني - Semester 2',
-      'S3': 'السداسي الثالث - Semester 3',
-      'S4': 'السداسي الرابع - Semester 4',
-      'S5': 'السداسي الخامس - Semester 5',
-      'S6': 'السداسي السادس - Semester 6'
+      'S1': 'السداسي الأول - Semestre 1',
+      'S2': 'السداسي الثاني - Semestre 2',
+      'S3': 'السداسي الثالث - Semestre 3',
+      'S4': 'السداسي الرابع - Semestre 4',
+      'S5': 'السداسي الخامس - Semestre 5',
+      'S6': 'السداسي السادس - Semestre 6'
     };
     return semesterNames[semesterCode] || semesterCode;
   };
 
-  const TranscriptPreview = ({ semesterCode, semesterData }) => (
-    <Paper 
-      sx={{ 
-        p: 4, 
-        mb: 3, 
-        borderRadius: 3,
-        minHeight: '600px',
-        position: 'relative'
-      }}
-    >
-      {/* Official Header */}
-      <Box sx={{ 
-        textAlign: 'center', 
-        mb: 4,
-        pb: 2,
-        borderBottom: '3px solid #3498db'
-      }}>
-        <Typography variant="h4" fontWeight="600" color="primary" gutterBottom>
-          🎓 كشف النقط الرسمي
-        </Typography>
-        <Typography variant="h5" color="text.secondary" gutterBottom>
-          RELEVÉ DE NOTES OFFICIEL
-        </Typography>
-        <Typography variant="body1" color="text.secondary">
-          كلية العلوم القانونية والسياسية - جامعة الحسن الأول - سطات
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          Faculté des Sciences Juridiques et Politiques - Université Hassan 1er - Settat
-        </Typography>
-      </Box>
+  const TranscriptPreview = ({ semesterCode, semesterData }) => {
+    // semesterData here is already processed to contain only the highest grade for each module with cod_tre not null
+    const displaySubjects = semesterData.subjects;
 
-      {/* Semester and Year Info */}
-      <Box sx={{ textAlign: 'center', mb: 3 }}>
-        <Typography variant="h6" fontWeight="600" color="primary">
-          {getSemesterDisplayName(semesterCode)}
-        </Typography>
-        <Typography variant="body1" color="text.secondary">
-          السنة الجامعية 2024-2025 / Année Universitaire 2024-2025
-        </Typography>
-      </Box>
-
-      {/* Student Information */}
-      <Box sx={{ 
-        mb: 4, 
-        p: 3, 
-        bgcolor: '#f8f9fa', 
-        borderRadius: 2,
-        border: '1px solid #e0e0e0'
-      }}>
-        <Typography variant="h6" fontWeight="600" gutterBottom color="primary">
-          👤 معلومات الطالب - Informations Étudiant
-        </Typography>
-        <Grid container spacing={2}>
-          <Grid item xs={12} sm={6}>
-            <Typography variant="body2" color="text.secondary">الاسم الكامل / Nom complet</Typography>
-            <Typography variant="body1" fontWeight="500">
-              {user?.nom_complet || 'N/A'}
-            </Typography>
-          </Grid>
-          <Grid item xs={12} sm={6}>
-            <Typography variant="body2" color="text.secondary">رقم الطالب / Code étudiant</Typography>
-            <Typography variant="body1" fontWeight="500">
-              {user?.cod_etu || 'N/A'}
-            </Typography>
-          </Grid>
-          <Grid item xs={12} sm={6}>
-            <Typography variant="body2" color="text.secondary">التخصص / Spécialité</Typography>
-            <Typography variant="body1" fontWeight="500">
-              {user?.etape || 'N/A'}
-            </Typography>
-          </Grid>
-          <Grid item xs={12} sm={6}>
-            <Typography variant="body2" color="text.secondary">تاريخ الإصدار / Date d'émission</Typography>
-            <Typography variant="body1" fontWeight="500">
-              {new Date().toLocaleDateString('fr-FR')}
-            </Typography>
-          </Grid>
-        </Grid>
-      </Box>
-
-      {/* Grades Table */}
-      <TableContainer component={Paper} sx={{ mb: 4, border: '1px solid #e0e0e0' }}>
-        <Table>
-          <TableHead>
-            <TableRow sx={{ bgcolor: '#3498db' }}>
-              <TableCell sx={{ fontWeight: 600, color: 'white' }}>رمز المادة<br/>Code</TableCell>
-              <TableCell sx={{ fontWeight: 600, color: 'white' }}>اسم المادة<br/>Module</TableCell>
-              <TableCell sx={{ fontWeight: 600, color: 'white', textAlign: 'center' }}>النقطة<br/>Note</TableCell>
-              <TableCell sx={{ fontWeight: 600, color: 'white', textAlign: 'center' }}>النتيجة<br/>Résultat</TableCell>
-              <TableCell sx={{ fontWeight: 600, color: 'white', textAlign: 'center' }}>الدورة<br/>Session</TableCell>
-              <TableCell sx={{ fontWeight: 600, color: 'white', textAlign: 'center' }}>الحالة<br/>Statut</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {semesterData.subjects.map((subject, index) => (
-              <TableRow key={index} sx={{ '&:nth-of-type(even)': { bgcolor: '#f8f9fa' } }}>
-                <TableCell sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
-                  {subject.cod_elp}
-                </TableCell>
-                <TableCell sx={{ maxWidth: 300 }}>
-                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                    {subject.lib_elp}
-                  </Typography>
-                </TableCell>
-                <TableCell sx={{ textAlign: 'center' }}>
-                  <Chip
-                    label={subject.not_elp !== null ? parseFloat(subject.not_elp).toFixed(2) : 'ABS'}
-                    sx={{
-                      bgcolor: getGradeColor(subject.not_elp),
-                      color: 'white',
-                      fontWeight: 'bold',
-                      minWidth: 60
-                    }}
-                  />
-                </TableCell>
-                <TableCell sx={{ textAlign: 'center' }}>
-                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                    {subject.cod_tre || '-'}
-                  </Typography>
-                </TableCell>
-                <TableCell sx={{ textAlign: 'center' }}>
-                  <Chip
-                    label={subject.final_session === 1 ? 'عادية' : 'استدراكية'}
-                    color={subject.final_session === 1 ? 'primary' : 'secondary'}
-                    size="small"
-                  />
-                </TableCell>
-                <TableCell sx={{ textAlign: 'center' }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {getResultIcon(subject.is_passed)}
-                    <Typography variant="body2" sx={{ ml: 1 }}>
-                      {subject.is_passed ? 'مقبول' : 'مرفوض'}
-                    </Typography>
-                  </Box>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
-
-      {/* Statistics */}
-      <Box sx={{ 
-        p: 3, 
-        bgcolor: '#f8f9fa', 
-        borderRadius: 2,
-        border: '1px solid #e0e0e0'
-      }}>
-        <Typography variant="h6" fontWeight="600" gutterBottom color="primary">
-          📊 الإحصائيات - Statistiques
-        </Typography>
-        <Grid container spacing={3}>
-          <Grid item xs={6} sm={3}>
-            <Box sx={{ textAlign: 'center' }}>
-              <Typography variant="h4" fontWeight="bold" color="primary">
-                {semesterData.statistics.total_subjects}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                إجمالي المواد<br/>Total
-              </Typography>
-            </Box>
-          </Grid>
-          <Grid item xs={6} sm={3}>
-            <Box sx={{ textAlign: 'center' }}>
-              <Typography variant="h4" fontWeight="bold" color="success.main">
-                {semesterData.statistics.passed_subjects}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                مواد منجحة<br/>Admis
-              </Typography>
-            </Box>
-          </Grid>
-          <Grid item xs={6} sm={3}>
-            <Box sx={{ textAlign: 'center' }}>
-              <Typography variant="h4" fontWeight="bold" color="error.main">
-                {semesterData.statistics.failed_subjects}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                مواد راسبة<br/>Ajourné
-              </Typography>
-            </Box>
-          </Grid>
-          <Grid item xs={6} sm={3}>
-            <Box sx={{ textAlign: 'center' }}>
-              <Typography variant="h4" fontWeight="bold" color="secondary.main">
-                {semesterData.statistics.average_grade || 'N/A'}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                المعدل العام<br/>Moyenne
-              </Typography>
-            </Box>
-          </Grid>
-        </Grid>
-      </Box>
-
-      {/* Official Footer */}
-      <Box sx={{ 
-        mt: 4, 
-        pt: 3, 
-        borderTop: '1px solid #e0e0e0',
-        textAlign: 'center',
-        position: 'relative'
-      }}>
-        <Typography variant="body2" color="text.secondary">
-          هذا الكشف رسمي ومُصدق من النظام الأكاديمي للجامعة
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          Ce relevé est officiel et certifié par le système académique de l'université
-        </Typography>
-        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-          Généré le {new Date().toLocaleDateString('fr-FR')} à {new Date().toLocaleTimeString('fr-FR')}
-        </Typography>
-        
-        {/* University Seal Placeholder */}
+    return (
+      <Paper 
+        sx={{ 
+          p: 4, 
+          mb: 3, 
+          borderRadius: 3,
+          minHeight: '600px',
+          position: 'relative'
+        }}
+      >
+        {/* Official Header */}
         <Box sx={{ 
-          position: 'absolute',
-          right: 20,
-          top: 10,
-          width: 80,
-          height: 80,
-          border: '2px solid #3498db',
-          borderRadius: '50%',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          bgcolor: 'rgba(52, 152, 219, 0.1)'
+          textAlign: 'center', 
+          mb: 4,
+          pb: 2,
+          borderBottom: '3px solid #3498db'
         }}>
-          <Typography variant="caption" color="primary" textAlign="center">
-            CACHET<br/>UNIVERSITÉ<br/>HASSAN 1ER
+          <Typography variant="h4" fontWeight="600" color="primary" gutterBottom>
+            🎓 كشف النقط الرسمي
+          </Typography>
+          <Typography variant="h5" color="text.secondary" gutterBottom>
+            RELEVÉ DE NOTES OFFICIEL
+          </Typography>
+          <Typography variant="body1" color="text.secondary">
+            كلية العلوم القانونية والسياسية - جامعة الحسن الأول - سطات
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Faculté des Sciences Juridiques et Politiques - Université Hassan 1er - Settat
           </Typography>
         </Box>
-      </Box>
-    </Paper>
-  );
+
+        {/* Semester and Year Info */}
+        <Box sx={{ textAlign: 'center', mb: 3 }}>
+          <Typography variant="h6" fontWeight="600" color="primary">
+            📚 {getSemesterDisplayName(semesterCode)}
+          </Typography>
+          <Typography variant="body1" color="text.secondary">
+            السنة الجامعية 2024-2025 / Année Universitaire 2024-2025
+          </Typography>
+        </Box>
+
+        {/* Student Information */}
+        <Box sx={{ 
+          mb: 4, 
+          p: 3, 
+          bgcolor: '#f8f9fa', 
+          borderRadius: 2,
+          border: '1px solid #e0e0e0'
+        }}>
+          <Typography variant="h6" fontWeight="600" gutterBottom color="primary">
+            👤 معلومات الطالب - Informations Étudiant
+          </Typography>
+          <Grid container spacing={2}>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="body2" color="text.secondary">الاسم الكامل / Nom complet</Typography>
+              <Typography variant="body1" fontWeight="500">
+                {user?.nom_complet || 'N/A'}
+              </Typography>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="body2" color="text.secondary">رقم الطالب / Code étudiant</Typography>
+              <Typography variant="body1" fontWeight="500">
+                {user?.cod_etu || 'N/A'}
+              </Typography>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="body2" color="text.secondary">التخصص / Spécialité</Typography>
+              <Typography variant="body1" fontWeight="500">
+                {user?.etape || 'N/A'}
+              </Typography>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="body2" color="text.secondary">تاريخ الإصدار / Date d'émission</Typography>
+              <Typography variant="body1" fontWeight="500">
+                {new Date().toLocaleDateString('fr-FR')}
+              </Typography>
+            </Grid>
+          </Grid>
+        </Box>
+
+        {/* Grades Table */}
+        <TableContainer component={Paper} sx={{ mb: 4, border: '1px solid #e0e0e0' }}>
+          <Table>
+            <TableHead>
+              <TableRow sx={{ bgcolor: '#3498db' }}>
+                <TableCell sx={{ fontWeight: 600, color: 'white' }}>رمز المادة<br/>Code</TableCell>
+                <TableCell sx={{ fontWeight: 600, color: 'white' }}>اسم المادة<br/>Module</TableCell>
+                <TableCell sx={{ fontWeight: 600, color: 'white', textAlign: 'center' }}>النقطة<br/>Note</TableCell>
+                <TableCell sx={{ fontWeight: 600, color: 'white', textAlign: 'center' }}>النتيجة<br/>Résultat</TableCell>
+                <TableCell sx={{ fontWeight: 600, color: 'white', textAlign: 'center' }}>الدورة<br/>Session</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {displaySubjects.map((subject, index) => (
+                <TableRow key={index} sx={{ '&:nth-of-type(even)': { bgcolor: '#f8f9fa' } }}>
+                  <TableCell sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
+                    {subject.cod_elp}
+                  </TableCell>
+                  <TableCell sx={{ maxWidth: 300 }}>
+                    <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                      {subject.lib_elp}
+                    </Typography>
+                  </TableCell>
+                  <TableCell sx={{ textAlign: 'center' }}>
+                    <Chip
+                      label={subject.not_elp !== null ? parseFloat(subject.not_elp).toFixed(2) : 'ABS'}
+                      sx={{
+                        bgcolor: getGradeColor(subject.not_elp),
+                        color: 'white',
+                        fontWeight: 'bold',
+                        minWidth: 60
+                      }}
+                    />
+                  </TableCell>
+                  <TableCell sx={{ textAlign: 'center' }}>
+                    <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                      {subject.cod_tre || '-'}
+                    </Typography>
+                  </TableCell>
+                  <TableCell sx={{ textAlign: 'center' }}>
+                    <Chip
+                      label={subject.final_session === 1 ? 'عادية' : 'استدراكية'}
+                      color={subject.final_session === 1 ? 'primary' : 'secondary'}
+                      size="small"
+                    />
+                  </TableCell>
+             
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+
+        {/* Statistics section removed from here */}
+
+        {/* Official Footer */}
+        <Box sx={{ 
+          mt: 4, 
+          pt: 3, 
+          borderTop: '1px solid #e0e0e0',
+          textAlign: 'center',
+          position: 'relative'
+        }}>
+          <Typography variant="body2" color="text.secondary">
+            هذا الكشف رسمي ومُصدق من النظام الأكاديمي للجامعة
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Ce relevé est officiel et certifié par le système académique de l'université
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+            Généré le {new Date().toLocaleDateString('fr-FR')} à {new Date().toLocaleTimeString('fr-FR')}
+          </Typography>
+          
+          {/* University Seal Placeholder */}
+          <Box sx={{ 
+            position: 'absolute',
+            right: 20,
+            top: 10,
+            width: 80,
+            height: 80,
+            border: '2px solid #3498db',
+            borderRadius: '50%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            bgcolor: 'rgba(52, 152, 219, 0.1)'
+          }}>
+            <Typography variant="caption" color="primary" textAlign="center">
+              CACHET<br/>UNIVERSITÉ<br/>HASSAN 1ER
+            </Typography>
+          </Box>
+        </Box>
+      </Paper>
+    );
+  };
 
   if (isLoading) {
-    return <Loading message="جاري تحميل الوثائق الرسمية... Loading official documents..." />;
+    return <Loading message="جاري تحميل كشوفات النقط... Loading official documents..." />;
   }
 
   return (
@@ -594,7 +596,7 @@ const OfficialDocuments = () => {
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
         <DescriptionIcon sx={{ mr: 2, color: 'primary.main', fontSize: 32 }} />
         <Typography variant="h4" fontWeight="600" color="primary">
-          📄 الوثائق الرسمية - Documents Officiels
+          📄كشوفات النقط
         </Typography>
         <Button
           startIcon={<RefreshIcon />}
@@ -637,69 +639,16 @@ const OfficialDocuments = () => {
             </Grid>
 
             {/* PDF Generation Method */}
-            <Grid item xs={12} md={4}>
-              <Typography variant="body2" color="text.secondary" gutterBottom>
-                طريقة إنشاء PDF / PDF Generation Method
-              </Typography>
-              <ToggleButtonGroup
-                value={pdfMethod}
-                exclusive
-                onChange={(event, newMethod) => {
-                  if (newMethod !== null) {
-                    setPdfMethod(newMethod);
-                  }
-                }}
-                size="small"
-                fullWidth
-              >
-                <ToggleButton value="server">
-                  <Tooltip title="Higher quality, faster processing, requires server">
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <CloudDownloadIcon fontSize="small" />
-                      <Typography variant="caption">Server</Typography>
-                    </Box>
-                  </Tooltip>
-                </ToggleButton>
-                <ToggleButton value="client">
-                  <Tooltip title="Works offline, processed in browser">
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <ComputerIcon fontSize="small" />
-                      <Typography variant="caption">Client</Typography>
-                    </Box>
-                  </Tooltip>
-                </ToggleButton>
-              </ToggleButtonGroup>
-            </Grid>
+          
 
             {/* Method Info */}
-            <Grid item xs={12} md={4}>
-              <Box sx={{ p: 2, bgcolor: '#f8f9fa', borderRadius: 2 }}>
-                <Typography variant="body2" fontWeight="600" gutterBottom>
-                  {pdfMethod === 'server' ? '🖥️ Server-side PDF' : '💻 Client-side PDF'}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {pdfMethod === 'server' ? 
-                    'جودة عالية، معالجة سريعة، يتطلب اتصال بالخادم' : 
-                    'يعمل بدون إنترنت، معالجة في المتصفح'
-                  }
-                </Typography>
-              </Box>
-            </Grid>
+            
           </Grid>
         </CardContent>
       </Card>
 
       {/* Instructions */}
-      <Alert severity="info" sx={{ mb: 3, borderRadius: 2 }}>
-        <Typography variant="body2">
-          💡 <strong>الوثائق الرسمية:</strong> يمكنك إنشاء كشف نقط رسمي بتنسيق PDF بطريقتين:
-          <br/>
-          <strong>Server-side:</strong> جودة عالية، معالجة سريعة، يتطلب اتصال بالخادم
-          <br/>
-          <strong>Client-side:</strong> يعمل بدون إنترنت، معالجة في المتصفح، مرونة أكبر
-        </Typography>
-      </Alert>
-
+   
       {/* Documents Display */}
       {documentsData && Object.keys(documentsData).length > 0 ? (
         <Box>
