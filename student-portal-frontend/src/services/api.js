@@ -70,7 +70,7 @@ export const authAPI = {
   }
 };
 
-// Student API
+
 // Student API
 export const studentAPI = {
   getProfile: async () => {

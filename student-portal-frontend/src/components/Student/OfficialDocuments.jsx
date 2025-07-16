@@ -198,36 +198,45 @@ const OfficialDocuments = () => {
             </TableRow>
           </TableHead>
           <TableBody>
-            {semesterData.subjects.map((subject, index) => (
-              <TableRow key={index}>
-                <TableCell sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
-                  {subject.cod_elp}
-                </TableCell>
-                <TableCell sx={{ maxWidth: 300 }}>
-                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                    {subject.lib_elp}
-                  </Typography>
-                </TableCell>
-                <TableCell sx={{ textAlign: 'center' }}>
-                  <Chip
-                    label={subject.not_elp !== null ? parseFloat(subject.not_elp).toFixed(2) : 'ABS'}
-                    sx={{
-                      bgcolor: getGradeColor(subject.not_elp),
-                      color: 'white',
-                      fontWeight: 'bold'
-                    }}
-                  />
-                </TableCell>
-                <TableCell sx={{ textAlign: 'center' }}>
-                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                    {subject.cod_tre || '-'}
-                  </Typography>
-                </TableCell>
-                <TableCell sx={{ textAlign: 'center' }}>
-                  {getResultIcon(subject.is_passed)}
-                </TableCell>
-              </TableRow>
-            ))}
+        {/* Update the TableRow in TranscriptView */}
+{semesterData.subjects.map((subject, index) => (
+    
+  <TableRow key={index}>
+    
+    <TableCell sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
+      {subject.cod_elp}
+    </TableCell>
+    <TableCell sx={{ maxWidth: 300 }}>
+      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+        {subject.lib_elp}
+      </Typography>
+    </TableCell>
+    <TableCell sx={{ textAlign: 'center' }}>
+      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <Chip
+          label={subject.not_elp !== null ? parseFloat(subject.not_elp).toFixed(2) : 'ABS'}
+          sx={{
+            bgcolor: getGradeColor(subject.not_elp),
+            color: 'white',
+            fontWeight: 'bold',
+            mb: 0.5
+          }}
+        />
+        <Typography variant="caption" color="text.secondary">
+          Session {subject.final_session}
+        </Typography>
+      </Box>
+    </TableCell>
+    <TableCell sx={{ textAlign: 'center' }}>
+      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+        {subject.cod_tre || '-'}
+      </Typography>
+    </TableCell>
+    <TableCell sx={{ textAlign: 'center' }}>
+      {getResultIcon(subject.is_passed)}
+    </TableCell>
+  </TableRow>
+))}
           </TableBody>
         </Table>
       </TableContainer>

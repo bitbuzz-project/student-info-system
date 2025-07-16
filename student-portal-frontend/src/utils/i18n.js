@@ -36,6 +36,8 @@ const resources = {
 'finalGrades': 'Notes Finales',
 'currentGrades': 'Notes Actuelles',
 'academicTranscript': 'Relevé Académique',
+
+
       // Login
       'welcome': 'مرحباً بك',
       'studentSystem': '  منصة وضعيتي',

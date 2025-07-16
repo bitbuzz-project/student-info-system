@@ -339,7 +339,7 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
 // Get official documents/transcripts from RESULTAT_ELP (final consolidated grades)
 app.get('/student/official-documents', authenticateToken, async (req, res) => {
   try {
-    const { semester } = req.query; // Filter by specific semester for transcript generation
+    const { semester } = req.query;
     
     let query = `
       SELECT 
@@ -366,41 +366,71 @@ app.get('/student/official-documents', authenticateToken, async (req, res) => {
       WHERE od.cod_etu = (
         SELECT cod_etu FROM students WHERE id = $1
       )
+      AND od.cod_anu = 2024
+      AND (
+        -- Exclude yearly elements (codes ending with A13, A23, etc.)
+        od.cod_elp NOT LIKE '%A13' 
+        AND od.cod_elp NOT LIKE '%A23' 
+        AND od.cod_elp NOT LIKE '%A33'
+        AND od.cod_elp NOT LIKE '%A43'
+        AND od.cod_elp NOT LIKE '%A53'
+        AND od.cod_elp NOT LIKE '%0A1%'
+        AND od.cod_elp NOT LIKE '%0A2%'
+        AND od.cod_elp NOT LIKE '%0A3%'
+        AND od.cod_elp NOT LIKE '%0A4%'
+        AND od.cod_elp NOT LIKE '%0A5%'
+        -- Only include elements with valid semester numbers
+        AND ep.semester_number IS NOT NULL
+        AND ep.semester_number BETWEEN 1 AND 6
+      )
     `;
     
     let params = [req.user.studentId];
     let paramIndex = 2;
     
-    // Filter by semester if specified (for transcript generation)
     if (semester) {
       query += ` AND ep.semester_number = $${paramIndex}`;
       params.push(semester);
       paramIndex++;
     }
     
-    query += ` ORDER BY od.cod_anu DESC, od.cod_ses, ep.semester_number, ep.lib_elp`;
+    query += ` ORDER BY ep.semester_number, od.cod_elp, od.cod_ses`;
     
     const result = await pool.query(query, params);
     
-    // Organize by semester for transcript generation
-    const documentsBySemester = {};
+    // Rest of the function remains the same...
+    // [Keep all the existing consolidation logic]
+    
+    // Group by semester and apply consolidation logic
+    const semesterGroups = {};
     let hasArabicNames = false;
     
+    // First, group all grades by semester and subject
     result.rows.forEach(doc => {
-      const semesterNumber = doc.semester_number || 1; // Default to S1 if not found
-      const semesterCode = `S${semesterNumber}`;
+      const semesterNumber = doc.semester_number;
       
-      if (!documentsBySemester[semesterCode]) {
-        documentsBySemester[semesterCode] = {
-          semester_number: semesterNumber,
-          semester_name: `السداسي ${semesterNumber} - Semestre ${semesterNumber}`,
-          subjects: [],
-          statistics: {
-            total_subjects: 0,
-            passed_subjects: 0,
-            failed_subjects: 0,
-            average_grade: 0
-          }
+      // Skip if semester number is invalid
+      if (!semesterNumber || semesterNumber < 1 || semesterNumber > 6) {
+        return;
+      }
+      
+      const semesterCode = `S${semesterNumber}`;
+      const subjectCode = doc.cod_elp;
+      
+      if (!semesterGroups[semesterCode]) {
+        semesterGroups[semesterCode] = {};
+      }
+      
+      if (!semesterGroups[semesterCode][subjectCode]) {
+        semesterGroups[semesterCode][subjectCode] = {
+          subject_info: {
+            cod_elp: doc.cod_elp,
+            lib_elp: doc.lib_elp || 'Module non trouvé',
+            lib_elp_arb: doc.lib_elp_arb || doc.lib_elp || 'الوحدة غير موجودة',
+            element_type: doc.element_type
+          },
+          session1: null,
+          session2: null
         };
       }
       
@@ -409,41 +439,108 @@ app.get('/student/official-documents', authenticateToken, async (req, res) => {
         hasArabicNames = true;
       }
       
-      const subject = {
-        cod_elp: doc.cod_elp,
-        lib_elp: doc.lib_elp || 'Module non trouvé',
-        lib_elp_arb: doc.lib_elp_arb || doc.lib_elp || 'الوحدة غير موجودة',
-        not_elp: doc.not_elp,
-        cod_tre: doc.cod_tre,
-        element_type: doc.element_type,
-        is_passed: doc.not_elp >= 10 || doc.cod_tre === 'V'
-      };
-      
-      documentsBySemester[semesterCode].subjects.push(subject);
+      // Store grades by session
+      if (doc.cod_ses === '1') {
+        semesterGroups[semesterCode][subjectCode].session1 = {
+          not_elp: doc.not_elp,
+          cod_tre: doc.cod_tre,
+          is_validated: doc.cod_tre === 'V' || (doc.not_elp !== null && doc.not_elp >= 10)
+        };
+      } else if (doc.cod_ses === '2') {
+        semesterGroups[semesterCode][subjectCode].session2 = {
+          not_elp: doc.not_elp,
+          cod_tre: doc.cod_tre,
+          is_validated: doc.cod_tre === 'V' || (doc.not_elp !== null && doc.not_elp >= 10)
+        };
+      }
     });
     
-    // Calculate statistics for each semester
-    Object.keys(documentsBySemester).forEach(semesterCode => {
-      const semester = documentsBySemester[semesterCode];
-      const subjects = semester.subjects;
+    // Now consolidate the results for each semester
+    const consolidatedSemesters = {};
+    
+    Object.keys(semesterGroups).forEach(semesterCode => {
+      const semesterNumber = parseInt(semesterCode.replace('S', ''));
+      const subjects = semesterGroups[semesterCode];
       
-      semester.statistics.total_subjects = subjects.length;
-      semester.statistics.passed_subjects = subjects.filter(s => s.is_passed).length;
-      semester.statistics.failed_subjects = subjects.filter(s => !s.is_passed).length;
+      const consolidatedSubjects = [];
+      let allValidatedInSession1 = true;
+      let hasAnySession2 = false;
       
-      const validGrades = subjects.filter(s => s.not_elp !== null);
-      if (validGrades.length > 0) {
-        const totalGrades = validGrades.reduce((sum, s) => sum + s.not_elp, 0);
-        semester.statistics.average_grade = (totalGrades / validGrades.length).toFixed(2);
+      Object.keys(subjects).forEach(subjectCode => {
+        const subjectData = subjects[subjectCode];
+        const { subject_info, session1, session2 } = subjectData;
+        
+        let finalGrade = null;
+        let finalResult = null;
+        let finalSession = null;
+        
+        // Apply consolidation logic
+        if (session1 && session1.is_validated) {
+          // Use Session 1 if validated
+          finalGrade = session1.not_elp;
+          finalResult = session1.cod_tre;
+          finalSession = 1;
+        } else if (session2) {
+          // Use Session 2 if Session 1 not validated and Session 2 exists
+          finalGrade = session2.not_elp;
+          finalResult = session2.cod_tre;
+          finalSession = 2;
+          allValidatedInSession1 = false;
+          hasAnySession2 = true;
+        } else if (session1) {
+          // Use Session 1 if no Session 2 exists
+          finalGrade = session1.not_elp;
+          finalResult = session1.cod_tre;
+          finalSession = 1;
+          allValidatedInSession1 = false;
+        }
+        
+        if (finalGrade !== null || finalResult !== null) {
+          consolidatedSubjects.push({
+            ...subject_info,
+            not_elp: finalGrade,
+            cod_tre: finalResult,
+            final_session: finalSession,
+            is_passed: finalResult === 'V' || (finalGrade !== null && finalGrade >= 10)
+          });
+        }
+      });
+      
+      // Only include semesters that have subjects
+      if (consolidatedSubjects.length > 0) {
+        // Calculate statistics
+        const totalSubjects = consolidatedSubjects.length;
+        const passedSubjects = consolidatedSubjects.filter(s => s.is_passed).length;
+        const failedSubjects = totalSubjects - passedSubjects;
+        
+        const validGrades = consolidatedSubjects.filter(s => s.not_elp !== null);
+        let averageGrade = 0;
+        if (validGrades.length > 0) {
+          const totalGrades = validGrades.reduce((sum, s) => sum + s.not_elp, 0);
+          averageGrade = (totalGrades / validGrades.length).toFixed(2);
+        }
+        
+        consolidatedSemesters[semesterCode] = {
+          semester_number: semesterNumber,
+          semester_name: `السداسي ${semesterNumber} - Semestre ${semesterNumber}`,
+          subjects: consolidatedSubjects,
+          statistics: {
+            total_subjects: totalSubjects,
+            passed_subjects: passedSubjects,
+            failed_subjects: failedSubjects,
+            average_grade: averageGrade
+          },
+          session_type: allValidatedInSession1 ? 'session1_only' : (hasAnySession2 ? 'consolidated' : 'session1_only')
+        };
       }
     });
     
     res.json({
-      documents: documentsBySemester,
+      documents: consolidatedSemesters,
       total_documents: result.rows.length,
       has_arabic_names: hasArabicNames,
       academic_year: '2024-2025',
-      available_semesters: Object.keys(documentsBySemester).sort()
+      available_semesters: Object.keys(consolidatedSemesters).sort()
     });
     
   } catch (error) {
