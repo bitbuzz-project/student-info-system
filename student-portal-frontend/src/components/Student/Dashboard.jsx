@@ -30,10 +30,12 @@ import {
   BarChart as StatsIcon,
   Dashboard as DashboardIcon,
   Menu as MenuIcon,
+  Description as DescriptionIcon,
   Assignment as AssignmentIcon  // Ajoutez cette ligne
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTranslation } from 'react-i18next';
+import OfficialDocuments from './OfficialDocuments';
 
 // Import page components
 import DashboardHome from './DashboardHome';
@@ -102,6 +104,14 @@ const Dashboard = () => {
     icon: <AssignmentIcon />, // Make sure to import AssignmentIcon from @mui/icons-material
     color: '#f39c12'
   },
+
+   // Add this new item
+  {
+    id: 'documents',
+    label: 'الوثائق الرسمية',
+    icon: <DescriptionIcon />, // You'll need to import this
+    color: '#9b59b6'
+  },
     {
       id: 'grades',
       label: 'النقط والنتائج',
@@ -124,6 +134,8 @@ const Dashboard = () => {
         return <StudentProfile />;
       case 'pedagogical':
       return <PedagogicalSituation />;
+       case 'documents':
+      return <OfficialDocuments />; // We'll create this component next
       case 'grades':
         return <StudentGrades />;
       case 'stats':

@@ -71,6 +71,7 @@ export const authAPI = {
 };
 
 // Student API
+// Student API
 export const studentAPI = {
   getProfile: async () => {
     const response = await api.get('/student/me');
@@ -90,12 +91,22 @@ export const studentAPI = {
     return response.data;
   },
   
+  // Updated: Current year grades from RESULTAT_EPR
   getGrades: async (filters = {}) => {
     const params = new URLSearchParams();
     if (filters.year) params.append('year', filters.year);
     if (filters.session) params.append('session', filters.session);
     
     const response = await api.get(`/student/grades?${params}`);
+    return response.data;
+  },
+  
+  // New: Official documents/transcripts from RESULTAT_ELP
+  getOfficialDocuments: async (filters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.semester) params.append('semester', filters.semester);
+    
+    const response = await api.get(`/student/official-documents?${params}`);
     return response.data;
   },
   

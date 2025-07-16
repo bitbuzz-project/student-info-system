@@ -169,17 +169,18 @@ app.get('/student/me', authenticateToken, async (req, res) => {
 });
 
 // Get current student grades with ELEMENT_PEDAGOGI integration
+// Get current student grades from RESULTAT_EPR (current year grades)
 app.get('/student/grades', authenticateToken, async (req, res) => {
   try {
     const { year, session } = req.query;
     
-    // Updated query with proper joins and semester logic
+    // Updated query to use the new column names and prioritize not_epr
     let query = `
       SELECT 
         g.cod_anu,
         g.cod_ses,
         g.cod_elp,
-        g.not_elp,
+        COALESCE(g.not_epr, g.not_elp) as not_elp,
         g.cod_tre,
         ep.cod_nel,
         ep.cod_pel,
@@ -205,13 +206,13 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
     let paramIndex = 2;
     
     if (year) {
-      query += ` AND g.cod_anu = ${paramIndex}`;
+      query += ` AND g.cod_anu = $${paramIndex}`;
       params.push(year);
       paramIndex++;
     }
     
     if (session) {
-      query += ` AND g.cod_ses = ${paramIndex}`;
+      query += ` AND g.cod_ses = $${paramIndex}`;
       params.push(session);
       paramIndex++;
     }
@@ -219,6 +220,9 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
     query += ` ORDER BY g.cod_anu DESC, g.cod_ses, ep.semester_number, ep.lib_elp`;
     
     const result = await pool.query(query, params);
+    
+    // Rest of the function stays the same...
+    // [Keep all the existing logic for organizing grades by structure]
     
     // Helper function to determine session type based on semester
     const getSessionType = (semesterNumber) => {
@@ -328,6 +332,122 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
     
   } catch (error) {
     console.error('Get grades error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get official documents/transcripts from RESULTAT_ELP (final consolidated grades)
+app.get('/student/official-documents', authenticateToken, async (req, res) => {
+  try {
+    const { semester } = req.query; // Filter by specific semester for transcript generation
+    
+    let query = `
+      SELECT 
+        od.cod_anu,
+        od.cod_ses,
+        od.cod_elp,
+        od.not_elp,
+        od.cod_tre,
+        ep.cod_nel,
+        ep.cod_pel,
+        ep.lib_elp,
+        ep.lic_elp,
+        ep.lib_elp_arb,
+        ep.element_type,
+        ep.semester_number,
+        eh.cod_elp_pere,
+        parent_ep.lib_elp as parent_lib_elp,
+        parent_ep.cod_pel as parent_cod_pel,
+        parent_ep.semester_number as parent_semester_number
+      FROM official_documents od 
+      LEFT JOIN element_pedagogi ep ON od.cod_elp = ep.cod_elp
+      LEFT JOIN element_hierarchy eh ON od.cod_elp = eh.cod_elp_fils
+      LEFT JOIN element_pedagogi parent_ep ON eh.cod_elp_pere = parent_ep.cod_elp
+      WHERE od.cod_etu = (
+        SELECT cod_etu FROM students WHERE id = $1
+      )
+    `;
+    
+    let params = [req.user.studentId];
+    let paramIndex = 2;
+    
+    // Filter by semester if specified (for transcript generation)
+    if (semester) {
+      query += ` AND ep.semester_number = $${paramIndex}`;
+      params.push(semester);
+      paramIndex++;
+    }
+    
+    query += ` ORDER BY od.cod_anu DESC, od.cod_ses, ep.semester_number, ep.lib_elp`;
+    
+    const result = await pool.query(query, params);
+    
+    // Organize by semester for transcript generation
+    const documentsBySemester = {};
+    let hasArabicNames = false;
+    
+    result.rows.forEach(doc => {
+      const semesterNumber = doc.semester_number || 1; // Default to S1 if not found
+      const semesterCode = `S${semesterNumber}`;
+      
+      if (!documentsBySemester[semesterCode]) {
+        documentsBySemester[semesterCode] = {
+          semester_number: semesterNumber,
+          semester_name: `السداسي ${semesterNumber} - Semestre ${semesterNumber}`,
+          subjects: [],
+          statistics: {
+            total_subjects: 0,
+            passed_subjects: 0,
+            failed_subjects: 0,
+            average_grade: 0
+          }
+        };
+      }
+      
+      // Check for Arabic names
+      if (doc.lib_elp_arb && doc.lib_elp_arb.trim() !== '') {
+        hasArabicNames = true;
+      }
+      
+      const subject = {
+        cod_elp: doc.cod_elp,
+        lib_elp: doc.lib_elp || 'Module non trouvé',
+        lib_elp_arb: doc.lib_elp_arb || doc.lib_elp || 'الوحدة غير موجودة',
+        not_elp: doc.not_elp,
+        cod_tre: doc.cod_tre,
+        element_type: doc.element_type,
+        is_passed: doc.not_elp >= 10 || doc.cod_tre === 'V'
+      };
+      
+      documentsBySemester[semesterCode].subjects.push(subject);
+    });
+    
+    // Calculate statistics for each semester
+    Object.keys(documentsBySemester).forEach(semesterCode => {
+      const semester = documentsBySemester[semesterCode];
+      const subjects = semester.subjects;
+      
+      semester.statistics.total_subjects = subjects.length;
+      semester.statistics.passed_subjects = subjects.filter(s => s.is_passed).length;
+      semester.statistics.failed_subjects = subjects.filter(s => !s.is_passed).length;
+      
+      const validGrades = subjects.filter(s => s.not_elp !== null);
+      if (validGrades.length > 0) {
+        const totalGrades = validGrades.reduce((sum, s) => sum + s.not_elp, 0);
+        semester.statistics.average_grade = (totalGrades / validGrades.length).toFixed(2);
+      }
+    });
+    
+    res.json({
+      documents: documentsBySemester,
+      total_documents: result.rows.length,
+      has_arabic_names: hasArabicNames,
+      academic_year: '2024-2025',
+      available_semesters: Object.keys(documentsBySemester).sort()
+    });
+    
+  } catch (error) {
+    console.error('Get official documents error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

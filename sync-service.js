@@ -67,8 +67,28 @@ WHERE COD_ELP_PERE LIKE 'JL%' OR COD_ELP_PERE LIKE 'JF%'
 ORDER BY COD_ELP_PERE, COD_ELP_FILS
 `;
 
-// Updated grades query to get all grade data
+// Updated grades query to get current year grades from RESULTAT_EPR
 const GRADES_QUERY = `
+SELECT 
+  i.COD_ETU, 
+  r.COD_ANU, 
+  r.COD_SES, 
+  r.COD_EPR, 
+  r.NOT_EPR, 
+  r.COD_TRE
+FROM RESULTAT_EPR r
+JOIN INDIVIDU i ON r.COD_IND = i.COD_IND
+JOIN INS_ADM_ETP iae ON r.COD_IND = iae.COD_IND AND r.COD_ANU = iae.COD_ANU
+WHERE r.COD_ADM = 1 
+  AND r.COD_ANU IN (2023, 2024)
+  AND iae.COD_CMP = 'FJP'
+  AND iae.ETA_IAE = 'E'
+  AND iae.TEM_IAE_PRM = 'O'
+ORDER BY r.COD_ANU DESC, i.COD_ETU, r.COD_SES, r.COD_EPR
+`;
+
+// Query for official documents/transcripts from RESULTAT_ELP (current year only)
+const OFFICIAL_DOCUMENTS_QUERY = `
 SELECT 
   i.COD_ETU, 
   r.COD_ANU, 
@@ -80,11 +100,11 @@ FROM RESULTAT_ELP r
 JOIN INDIVIDU i ON r.COD_IND = i.COD_IND
 JOIN INS_ADM_ETP iae ON r.COD_IND = iae.COD_IND AND r.COD_ANU = iae.COD_ANU
 WHERE r.COD_ADM = 1 
-  AND r.COD_ANU IN (2023, 2024)
+  AND r.COD_ANU = 2024
   AND iae.COD_CMP = 'FJP'
   AND iae.ETA_IAE = 'E'
   AND iae.TEM_IAE_PRM = 'O'
-ORDER BY r.COD_ANU DESC, i.COD_ETU, r.COD_SES, r.COD_ELP
+ORDER BY i.COD_ETU, r.COD_SES, r.COD_ELP
 `;
 
 const ORACLE_QUERY = `
@@ -530,17 +550,26 @@ async function syncStudentsData(oracleConnection, pgClient) {
   logger.info(`✓ Students sync completed: ${processedCount} total, ${insertedCount} new, ${updatedCount} updated`);
 }
 
+
+
 async function syncGradesData(oracleConnection, pgClient) {
-  logger.info('Syncing grades data for 2023 and 2024...');
+  logger.info('Syncing grades data from RESULTAT_EPR for 2023 and 2024...');
+  
+  // First, let's update the grades table to use the new column names
+  await pgClient.query(`
+    ALTER TABLE grades 
+    ADD COLUMN IF NOT EXISTS cod_epr VARCHAR(20),
+    ADD COLUMN IF NOT EXISTS not_epr DECIMAL(5,2)
+  `);
   
   // Fetch grades from Oracle
   const result = await oracleConnection.execute(GRADES_QUERY);
   const grades = result.rows;
   
-  logger.info(`✓ Fetched ${grades.length} grades from Oracle (2023 & 2024)`);
+  logger.info(`✓ Fetched ${grades.length} grades from Oracle RESULTAT_EPR (2023 & 2024)`);
   
   if (grades.length === 0) {
-    logger.warn('No grades found in Oracle database');
+    logger.warn('No grades found in Oracle RESULTAT_EPR table');
     return;
   }
   
@@ -562,7 +591,17 @@ async function syncGradesData(oracleConnection, pgClient) {
     const batch = grades.slice(i, i + batchSize);
     
     for (const grade of batch) {
-      const [cod_etu, cod_anu, cod_ses, cod_elp, not_elp, cod_tre] = grade;
+      const [cod_etu, cod_anu, cod_ses, cod_epr, not_epr, cod_tre] = grade;
+      
+      // Convert COD_EPR to COD_ELP format for compatibility
+      let cod_elp = cod_epr;
+      if (cod_epr && cod_epr.startsWith('JF') && cod_epr.startsWith('CRJF')) {
+        // Remove CR prefix for JF codes
+        cod_elp = cod_epr.replace(/^CR/, '');
+      } else if (cod_epr && cod_epr.endsWith('CF')) {
+        // Remove CF suffix for other codes
+        cod_elp = cod_epr.replace(/CF$/, '');
+      }
       
       // Track grades by year
       if (cod_anu === 2023) grades2023++;
@@ -587,9 +626,130 @@ async function syncGradesData(oracleConnection, pgClient) {
       
       const isUpdate = existingGrade.rows.length > 0;
       
-      // Upsert grade
+      // Upsert grade with both old and new column formats
       await pgClient.query(`
         INSERT INTO grades (
+          cod_etu, cod_anu, cod_ses, cod_elp, cod_epr, not_elp, not_epr, cod_tre, last_sync
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (cod_etu, cod_elp, cod_anu, cod_ses) DO UPDATE SET
+          cod_epr = EXCLUDED.cod_epr,
+          not_elp = EXCLUDED.not_epr,
+          not_epr = EXCLUDED.not_epr,
+          cod_tre = EXCLUDED.cod_tre,
+          last_sync = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      `, [cod_etu, cod_anu, cod_ses, cod_elp, cod_epr, not_epr, not_epr, cod_tre]);
+      
+      if (isUpdate) {
+        updatedCount++;
+      } else {
+        insertedCount++;
+      }
+      
+      processedCount++;
+    }
+    
+    // Progress indicator
+    const progress = Math.round((i + batch.length) / grades.length * 100);
+    logger.info(`Grades Progress: ${progress}% (${processedCount}/${grades.length}) - Skipped: ${skippedCount}`);
+  }
+  
+  await pgClient.query('COMMIT');
+  
+  // Log sync success
+  await pgClient.query(`
+    INSERT INTO sync_log (sync_type, records_processed, sync_status)
+    VALUES ('grades_epr', $1, 'success')
+  `, [processedCount]);
+  
+  logger.info(`✓ Grades sync completed: ${processedCount} total, ${insertedCount} new, ${updatedCount} updated, ${skippedCount} skipped`);
+  logger.info(`📊 Year breakdown: 2023 (${grades2023} grades), 2024 (${grades2024} grades)`);
+  
+  if (skippedCount > 0) {
+    logger.warn(`⚠️  ${skippedCount} grades skipped due to missing student records`);
+  }
+}
+
+
+async function syncOfficialDocuments(oracleConnection, pgClient) {
+    logger.info('Syncing official documents data from RESULTAT_ELP for 2024 (current year)...');
+  
+  // Create official_documents table
+  await pgClient.query(`
+    CREATE TABLE IF NOT EXISTS official_documents (
+      id SERIAL PRIMARY KEY,
+      cod_etu VARCHAR(20) NOT NULL,
+      cod_anu INTEGER,
+      cod_ses VARCHAR(20),
+      cod_elp VARCHAR(20),
+      not_elp DECIMAL(5,2),
+      cod_tre VARCHAR(20),
+      last_sync TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(cod_etu, cod_elp, cod_anu, cod_ses)
+    )
+  `);
+  
+  // Add indexes
+  await pgClient.query(`
+    CREATE INDEX IF NOT EXISTS idx_official_documents_cod_etu ON official_documents(cod_etu);
+    CREATE INDEX IF NOT EXISTS idx_official_documents_cod_elp ON official_documents(cod_elp);
+    CREATE INDEX IF NOT EXISTS idx_official_documents_cod_anu ON official_documents(cod_anu);
+    CREATE INDEX IF NOT EXISTS idx_official_documents_cod_ses ON official_documents(cod_ses);
+  `);
+  
+  // Fetch official documents from Oracle
+  const result = await oracleConnection.execute(OFFICIAL_DOCUMENTS_QUERY);
+  const documents = result.rows;
+  
+  logger.info(`✓ Fetched ${documents.length} official document records from Oracle RESULTAT_ELP (2023 & 2024)`);
+  
+  if (documents.length === 0) {
+    logger.warn('No official documents found in Oracle RESULTAT_ELP table');
+    return;
+  }
+  
+  // Begin transaction
+  await pgClient.query('BEGIN');
+  
+  let processedCount = 0;
+  let updatedCount = 0;
+  let insertedCount = 0;
+  let skippedCount = 0;
+  
+  // Process documents in batches
+  const batchSize = 200;
+  for (let i = 0; i < documents.length; i += batchSize) {
+    const batch = documents.slice(i, i + batchSize);
+    
+    for (const document of batch) {
+      const [cod_etu, cod_anu, cod_ses, cod_elp, not_elp, cod_tre] = document;
+      
+      // Check if student exists first
+      const studentExists = await pgClient.query(
+        'SELECT 1 FROM students WHERE cod_etu = $1', 
+        [cod_etu]
+      );
+      
+      if (studentExists.rows.length === 0) {
+        skippedCount++;
+        continue;
+      }
+      
+      // Check if document exists
+      const existingDocument = await pgClient.query(
+        'SELECT id FROM official_documents WHERE cod_etu = $1 AND cod_elp = $2 AND cod_anu = $3 AND cod_ses = $4', 
+        [cod_etu, cod_elp, cod_anu, cod_ses]
+      );
+      
+      const isUpdate = existingDocument.rows.length > 0;
+      
+      // Upsert official document
+      await pgClient.query(`
+        INSERT INTO official_documents (
           cod_etu, cod_anu, cod_ses, cod_elp, not_elp, cod_tre, last_sync
         ) VALUES (
           $1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP
@@ -611,8 +771,8 @@ async function syncGradesData(oracleConnection, pgClient) {
     }
     
     // Progress indicator
-    const progress = Math.round((i + batch.length) / grades.length * 100);
-    logger.info(`Grades Progress: ${progress}% (${processedCount}/${grades.length}) - Skipped: ${skippedCount}`);
+    const progress = Math.round((i + batch.length) / documents.length * 100);
+    logger.info(`Official Documents Progress: ${progress}% (${processedCount}/${documents.length}) - Skipped: ${skippedCount}`);
   }
   
   await pgClient.query('COMMIT');
@@ -620,16 +780,12 @@ async function syncGradesData(oracleConnection, pgClient) {
   // Log sync success
   await pgClient.query(`
     INSERT INTO sync_log (sync_type, records_processed, sync_status)
-    VALUES ('grades', $1, 'success')
+    VALUES ('official_documents', $1, 'success')
   `, [processedCount]);
   
-  logger.info(`✓ Grades sync completed: ${processedCount} total, ${insertedCount} new, ${updatedCount} updated, ${skippedCount} skipped`);
-  logger.info(`📊 Year breakdown: 2023 (${grades2023} grades), 2024 (${grades2024} grades)`);
-  
-  if (skippedCount > 0) {
-    logger.warn(`⚠️  ${skippedCount} grades skipped due to missing student records`);
-  }
+  logger.info(`✓ Official documents sync completed: ${processedCount} total, ${insertedCount} new, ${updatedCount} updated, ${skippedCount} skipped`);
 }
+
 
 // Manual sync execution
 if (require.main === module) {
@@ -925,7 +1081,9 @@ async function syncStudents() {
     
     // Sync grades
     await syncGradesData(oracleConnection, pgClient);
-    
+    await syncOfficialDocuments(oracleConnection, pgClient);
+
+
     // NEW: Sync pedagogical situation
     await syncPedagogicalSituation(oracleConnection, pgClient);
     
