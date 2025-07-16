@@ -78,6 +78,18 @@ export const studentAPI = {
     return response.data;
   },
 
+  // Add these methods to studentAPI
+generateTranscriptPDF: async (semester) => {
+  // ... (copy from api_pdf_service artifact)
+},
+
+downloadTranscriptPDF: async (semester, studentCode) => {
+  // ... (copy from api_pdf_service artifact)
+},
+
+printTranscriptPDF: async (semester) => {
+  // ... (copy from api_pdf_service artifact)
+},
   getPedagogicalSituation: async (filters = {}) => {
     const params = new URLSearchParams();
     if (filters.year) params.append('year', filters.year);
