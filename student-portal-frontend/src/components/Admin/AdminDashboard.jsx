@@ -34,6 +34,8 @@ import {
 } from '@mui/icons-material';
 import { useAdmin } from '../../contexts/AdminContext';
 import { useNavigate } from 'react-router-dom';
+import ModuleManagement from './ModuleManagement';
+
 
 // Import admin page components (we'll create these next)
 import AdminOverview from './AdminOverview';
@@ -90,6 +92,12 @@ const AdminDashboard = () => {
       icon: <PeopleIcon />,
       color: '#2ecc71'
     },
+      {
+    id: 'modules',  // ← ADD THIS
+    label: 'Module Management',
+    icon: <SettingsIcon />,
+    color: '#f39c12'
+  },
     {
       id: 'sync',
       label: 'Data Synchronization',
@@ -110,6 +118,8 @@ const AdminDashboard = () => {
         return <AdminOverview onNavigate={handlePageChange} />;
       case 'students':
         return <StudentManagement />;
+            case 'modules':  // ← ADD THIS CASE
+      return <ModuleManagement />;
       case 'sync':
         return <SyncManagement />;
       case 'system':

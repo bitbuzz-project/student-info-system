@@ -100,11 +100,11 @@ FROM RESULTAT_ELP r
 JOIN INDIVIDU i ON r.COD_IND = i.COD_IND
 JOIN INS_ADM_ETP iae ON r.COD_IND = iae.COD_IND AND r.COD_ANU = iae.COD_ANU
 WHERE r.COD_ADM = 1 
-  AND r.COD_ANU = 2024
+  AND r.COD_ANU IN (2023, 2024)  -- Changed from just 2024 to include both years
   AND iae.COD_CMP = 'FJP'
   AND iae.ETA_IAE = 'E'
   AND iae.TEM_IAE_PRM = 'O'
-ORDER BY i.COD_ETU, r.COD_SES, r.COD_ELP
+ORDER BY i.COD_ETU, r.COD_ANU DESC, r.COD_SES, r.COD_ELP
 `;
 
 const ORACLE_QUERY = `
@@ -674,7 +674,8 @@ async function syncGradesData(oracleConnection, pgClient) {
 
 
 async function syncOfficialDocuments(oracleConnection, pgClient) {
-    logger.info('Syncing official documents data from RESULTAT_ELP for 2024 (current year)...');
+      logger.info('Syncing official documents data from RESULTAT_ELP for 2023 and 2024...');
+
   
   // Create official_documents table
   await pgClient.query(`

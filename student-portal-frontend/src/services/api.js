@@ -230,7 +230,172 @@ export const adminAPI = {
   getSystemStats: async (period = 30) => {
     const response = await api.get(`/admin/system/stats?period=${period}`);
     return response.data;
+  },
+
+   // 1. Get all modules with filters and pagination
+  getModules: async (params = {}) => {
+    const searchParams = new URLSearchParams();
+    
+    // Add all filter parameters
+    if (params.search) searchParams.append('search', params.search);
+    if (params.element_type) searchParams.append('element_type', params.element_type);
+    if (params.semester) searchParams.append('semester', params.semester);
+    if (params.parent_code) searchParams.append('parent_code', params.parent_code);
+    if (params.page) searchParams.append('page', params.page);
+    if (params.limit) searchParams.append('limit', params.limit);
+    
+    const response = await api.get(`/admin/modules?${searchParams}`);
+    return response.data;
+  },
+  
+  // 2. Get detailed information about a specific module
+  getModule: async (id) => {
+    const response = await api.get(`/admin/modules/${id}`);
+    return response.data;
+  },
+  
+  // 3. Update module properties
+  updateModule: async (id, moduleData) => {
+    const response = await api.put(`/admin/modules/${id}`, moduleData);
+    return response.data;
+  },
+  
+  // 4. Update module parent relationship
+  updateModuleParent: async (id, parentCode) => {
+    const response = await api.put(`/admin/modules/${id}/parent`, { 
+      parent_code: parentCode 
+    });
+    return response.data;
+  },
+  
+  // 5. Get available parent modules for dropdowns
+  getAvailableParents: async (search = '') => {
+    const params = search ? `?search=${encodeURIComponent(search)}` : '';
+    const response = await api.get(`/admin/modules/available-parents${params}`);
+    return response.data;
+  },
+  
+  // 6. Get module usage statistics
+  getModuleUsage: async (id) => {
+    const response = await api.get(`/admin/modules/${id}/usage`);
+    return response.data;
+  },
+  
+  // 7. Bulk update semester assignments
+  bulkUpdateSemesters: async (updates) => {
+    const response = await api.post('/admin/modules/bulk-update-semester', {
+      updates: updates
+    });
+    return response.data;
+  },
+  
+  // 8. Helper function to get semester options
+  getSemesterOptions: () => {
+    return [
+      { value: null, label: 'No Semester Assigned' },
+      { value: 1, label: 'S1 - First Semester' },
+      { value: 2, label: 'S2 - Second Semester' },
+      { value: 3, label: 'S3 - Third Semester' },
+      { value: 4, label: 'S4 - Fourth Semester' },
+      { value: 5, label: 'S5 - Fifth Semester' },
+      { value: 6, label: 'S6 - Sixth Semester' },
+      { value: 7, label: 'S7 - Seventh Semester' },
+      { value: 8, label: 'S8 - Eighth Semester' },
+      { value: 9, label: 'S9 - Ninth Semester' },
+      { value: 10, label: 'S10 - Tenth Semester' },
+      { value: 11, label: 'S11 - Eleventh Semester' },
+      { value: 12, label: 'S12 - Twelfth Semester' }
+    ];
+  },
+  
+  // 9. Helper function to get element type options
+  getElementTypeOptions: () => {
+    return [
+      { value: 'MATIERE', label: 'MATIERE - Subject/Course' },
+      { value: 'MODULE', label: 'MODULE - Module' },
+      { value: 'SEMESTRE', label: 'SEMESTRE - Semester/Year' }
+    ];
+  },
+  
+  // 10. Format module data for display
+  formatModuleForDisplay: (module) => {
+    return {
+      ...module,
+      semester_display: module.semester_number ? `S${module.semester_number}` : 'Not Assigned',
+      element_type_display: module.element_type || 'Not Set',
+      usage_display: module.grade_usage_count ? `${module.grade_usage_count} grades` : 'No usage',
+      children_display: module.children_count ? `${module.children_count} children` : 'No children',
+      parent_display: module.parent_name || 'No parent',
+      last_sync_display: module.last_sync ? 
+        new Date(module.last_sync).toLocaleDateString() : 'Never'
+    };
+  },
+  
+  // 11. Validate module data before sending
+  validateModuleData: (moduleData) => {
+    const errors = [];
+    
+    // Validate semester number
+    if (moduleData.semester_number !== null && 
+        (moduleData.semester_number < 1 || moduleData.semester_number > 12)) {
+      errors.push('Semester number must be between 1 and 12');
+    }
+    
+    // Validate element type
+    const validTypes = ['SEMESTRE', 'MODULE', 'MATIERE'];
+    if (moduleData.element_type && !validTypes.includes(moduleData.element_type)) {
+      errors.push('Element type must be SEMESTRE, MODULE, or MATIERE');
+    }
+    
+    // Validate required fields
+    if (moduleData.lib_elp && moduleData.lib_elp.trim().length === 0) {
+      errors.push('Module name cannot be empty');
+    }
+    
+    return {
+      isValid: errors.length === 0,
+      errors: errors
+    };
+  },
+  
+  // 12. Search modules with debouncing helper
+  searchModules: async (searchTerm, filters = {}) => {
+    const params = {
+      search: searchTerm,
+      ...filters,
+      limit: 20 // Smaller limit for search results
+    };
+    
+    return await adminAPI.getModules(params);
+  },
+  
+  // 13. Export modules data (for potential CSV export feature)
+  exportModules: async (filters = {}) => {
+    const params = {
+      ...filters,
+      limit: 1000, // Large limit to get all data
+      page: 1
+    };
+    
+    const response = await adminAPI.getModules(params);
+    
+    // Format data for export
+    const exportData = response.modules.map(module => ({
+      'Module Code': module.cod_elp,
+      'Module Name': module.lib_elp,
+      'Arabic Name': module.lib_elp_arb,
+      'Element Type': module.element_type,
+      'Semester': module.semester_number ? `S${module.semester_number}` : 'Not Assigned',
+      'Parent Code': module.parent_code || 'No Parent',
+      'Parent Name': module.parent_name || 'No Parent',
+      'Grade Usage': module.grade_usage_count || 0,
+      'Children Count': module.children_count || 0,
+      'Last Sync': module.last_sync ? new Date(module.last_sync).toLocaleDateString() : 'Never'
+    }));
+    
+    return exportData;
   }
+
 };
 
 // System API
