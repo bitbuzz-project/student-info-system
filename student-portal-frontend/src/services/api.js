@@ -369,50 +369,71 @@ exportRegistrations: async (params = {}) => {
     return [
       { value: 'MATIERE', label: 'MATIERE - Subject/Course' },
       { value: 'MODULE', label: 'MODULE - Module' },
-      { value: 'SEMESTRE', label: 'SEMESTRE - Semester/Year' }
+      { value: 'SEMESTRE', label: 'SEMESTRE - Semester/Year' },
+      { value: 'ANNEE', label: 'ANNEE - Academic Year' }  // NEW: Add this line
     ];
   },
+
+  // Add this new function to get year level options
+getYearLevelOptions: () => {
+  return [
+    { value: null, label: 'No Year Assigned' },
+    { value: 1, label: 'Year 1 (1ère Année)' },
+    { value: 2, label: 'Year 2 (2ème Année)' },
+    { value: 3, label: 'Year 3 (3ème Année)' },
+    { value: 4, label: 'Year 4 (4ème Année)' },
+    { value: 5, label: 'Year 5 (5ème Année)' },
+    { value: 6, label: 'Year 6 (6ème Année)' }
+  ];
+},
   
-  // 10. Format module data for display
-  formatModuleForDisplay: (module) => {
-    return {
-      ...module,
-      semester_display: module.semester_number ? `S${module.semester_number}` : 'Not Assigned',
-      element_type_display: module.element_type || 'Not Set',
-      usage_display: module.grade_usage_count ? `${module.grade_usage_count} grades` : 'No usage',
-      children_display: module.children_count ? `${module.children_count} children` : 'No children',
-      parent_display: module.parent_name || 'No parent',
-      last_sync_display: module.last_sync ? 
-        new Date(module.last_sync).toLocaleDateString() : 'Never'
-    };
-  },
+// Update the formatModuleForDisplay function to handle year_level:
+formatModuleForDisplay: (module) => {
+  return {
+    ...module,
+    semester_display: module.semester_number ? `S${module.semester_number}` : 'Not Assigned',
+    year_display: module.year_level ? `Year ${module.year_level}` : 'Not Assigned',
+    element_type_display: module.element_type || 'Not Set',
+    usage_display: module.grade_usage_count ? `${module.grade_usage_count} grades` : 'No usage',
+    children_display: module.children_count ? `${module.children_count} children` : 'No children',
+    parent_display: module.parent_name || 'No parent',
+    last_sync_display: module.last_sync ? 
+      new Date(module.last_sync).toLocaleDateString() : 'Never'
+  };
+},
   
   // 11. Validate module data before sending
-  validateModuleData: (moduleData) => {
-    const errors = [];
-    
-    // Validate semester number
-    if (moduleData.semester_number !== null && 
-        (moduleData.semester_number < 1 || moduleData.semester_number > 12)) {
-      errors.push('Semester number must be between 1 and 12');
-    }
-    
-    // Validate element type
-    const validTypes = ['SEMESTRE', 'MODULE', 'MATIERE'];
-    if (moduleData.element_type && !validTypes.includes(moduleData.element_type)) {
-      errors.push('Element type must be SEMESTRE, MODULE, or MATIERE');
-    }
-    
-    // Validate required fields
-    if (moduleData.lib_elp && moduleData.lib_elp.trim().length === 0) {
-      errors.push('Module name cannot be empty');
-    }
-    
-    return {
-      isValid: errors.length === 0,
-      errors: errors
-    };
-  },
+validateModuleData: (moduleData) => {
+  const errors = [];
+  
+  // Validate semester number
+  if (moduleData.semester_number !== null && 
+      (moduleData.semester_number < 1 || moduleData.semester_number > 12)) {
+    errors.push('Semester number must be between 1 and 12');
+  }
+  
+  // NEW: Validate year level
+  if (moduleData.year_level !== null && 
+      (moduleData.year_level < 1 || moduleData.year_level > 6)) {
+    errors.push('Year level must be between 1 and 6');
+  }
+  
+  // Validate element type
+  const validTypes = ['SEMESTRE', 'MODULE', 'MATIERE', 'ANNEE'];
+  if (moduleData.element_type && !validTypes.includes(moduleData.element_type)) {
+    errors.push('Invalid element type');
+  }
+  
+  // Validate required fields
+  if (moduleData.lib_elp && moduleData.lib_elp.trim().length === 0) {
+    errors.push('Module name cannot be empty');
+  }
+  
+  return {
+    isValid: errors.length === 0,
+    errors: errors
+  };
+},
   
   // 12. Search modules with debouncing helper
   searchModules: async (searchTerm, filters = {}) => {

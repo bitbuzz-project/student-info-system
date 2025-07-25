@@ -1339,43 +1339,45 @@ app.get('/admin/modules', authenticateAdmin, async (req, res) => {
     
     // Main query with pagination
     const offset = (page - 1) * limit;
-    const dataQuery = `
-      SELECT 
-        ep.id,
-        ep.cod_elp,
-        ep.cod_cmp,
-        ep.cod_nel,
-        ep.cod_pel,
-        ep.lib_elp,
-        ep.lic_elp,
-        ep.lib_elp_arb,
-        ep.element_type,
-        ep.semester_number,
-        ep.last_sync,
-        eh.cod_elp_pere as parent_code,
-        parent_ep.lib_elp as parent_name,
-        -- Count how many times this module is used in grades
-        COALESCE(grade_usage.usage_count, 0) as grade_usage_count,
-        -- Count how many children this module has
-        COALESCE(children_count.child_count, 0) as children_count
-      FROM element_pedagogi ep
-      LEFT JOIN element_hierarchy eh ON ep.cod_elp = eh.cod_elp_fils
-      LEFT JOIN element_pedagogi parent_ep ON eh.cod_elp_pere = parent_ep.cod_elp
-      LEFT JOIN (
-        SELECT cod_elp, COUNT(*) as usage_count
-        FROM grades 
-        GROUP BY cod_elp
-      ) grade_usage ON ep.cod_elp = grade_usage.cod_elp
-      LEFT JOIN (
-        SELECT cod_elp_pere, COUNT(*) as child_count
-        FROM element_hierarchy
-        GROUP BY cod_elp_pere
-      ) children_count ON ep.cod_elp = children_count.cod_elp_pere
-      ${whereClause}
-      ORDER BY ep.semester_number NULLS LAST, ep.element_type, ep.cod_elp
-      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
-    `;
-    
+// Find the main modules query in server.js and replace it with this:
+  const dataQuery = `
+    SELECT 
+      ep.id,
+      ep.cod_elp,
+      ep.cod_cmp,
+      ep.cod_nel,
+      ep.cod_pel,
+      ep.lib_elp,
+      ep.lic_elp,
+      ep.lib_elp_arb,
+      ep.element_type,
+      ep.semester_number,
+      ep.year_level,
+      ep.last_sync,
+      eh.cod_elp_pere as parent_code,
+      parent_ep.lib_elp as parent_name,
+      -- Count how many times this module is used in grades
+      COALESCE(grade_usage.usage_count, 0) as grade_usage_count,
+      -- Count how many children this module has
+      COALESCE(children_count.child_count, 0) as children_count
+    FROM element_pedagogi ep
+    LEFT JOIN element_hierarchy eh ON ep.cod_elp = eh.cod_elp_fils
+    LEFT JOIN element_pedagogi parent_ep ON eh.cod_elp_pere = parent_ep.cod_elp
+    LEFT JOIN (
+      SELECT cod_elp, COUNT(*) as usage_count
+      FROM grades 
+      GROUP BY cod_elp
+    ) grade_usage ON ep.cod_elp = grade_usage.cod_elp
+    LEFT JOIN (
+      SELECT cod_elp_pere, COUNT(*) as child_count
+      FROM element_hierarchy
+      GROUP BY cod_elp_pere
+    ) children_count ON ep.cod_elp = children_count.cod_elp_pere
+    ${whereClause}
+    ORDER BY ep.element_type, ep.year_level NULLS LAST, ep.semester_number NULLS LAST, ep.cod_elp
+    LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+  `;
+      
     const dataResult = await pool.query(dataQuery, [...params, limit, offset]);
     
     res.json({
@@ -1399,27 +1401,28 @@ app.get('/admin/modules/:id', authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     
-    const result = await pool.query(`
-      SELECT 
-        ep.*,
-        eh.cod_elp_pere as parent_code,
-        parent_ep.lib_elp as parent_name,
-        -- Get children
-        array_agg(
-          CASE WHEN child_eh.cod_elp_fils IS NOT NULL 
-          THEN json_build_object(
-            'cod_elp', child_eh.cod_elp_fils,
-            'lib_elp', child_ep.lib_elp
-          ) END
-        ) FILTER (WHERE child_eh.cod_elp_fils IS NOT NULL) as children
-      FROM element_pedagogi ep
-      LEFT JOIN element_hierarchy eh ON ep.cod_elp = eh.cod_elp_fils
-      LEFT JOIN element_pedagogi parent_ep ON eh.cod_elp_pere = parent_ep.cod_elp
-      LEFT JOIN element_hierarchy child_eh ON ep.cod_elp = child_eh.cod_elp_pere
-      LEFT JOIN element_pedagogi child_ep ON child_eh.cod_elp_fils = child_ep.cod_elp
-      WHERE ep.id = $1
-      GROUP BY ep.id, eh.cod_elp_pere, parent_ep.lib_elp
-    `, [id]);
+// Find and replace the module details query:
+const result = await pool.query(`
+  SELECT 
+    ep.*,
+    eh.cod_elp_pere as parent_code,
+    parent_ep.lib_elp as parent_name,
+    -- Get children
+    array_agg(
+      CASE WHEN child_eh.cod_elp_fils IS NOT NULL 
+      THEN json_build_object(
+        'cod_elp', child_eh.cod_elp_fils,
+        'lib_elp', child_ep.lib_elp
+      ) END
+    ) FILTER (WHERE child_eh.cod_elp_fils IS NOT NULL) as children
+  FROM element_pedagogi ep
+  LEFT JOIN element_hierarchy eh ON ep.cod_elp = eh.cod_elp_fils
+  LEFT JOIN element_pedagogi parent_ep ON eh.cod_elp_pere = parent_ep.cod_elp
+  LEFT JOIN element_hierarchy child_eh ON ep.cod_elp = child_eh.cod_elp_pere
+  LEFT JOIN element_pedagogi child_ep ON child_eh.cod_elp_fils = child_ep.cod_elp
+  WHERE ep.id = $1
+  GROUP BY ep.id, eh.cod_elp_pere, parent_ep.lib_elp
+`, [id]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Module not found' });
@@ -1437,15 +1440,20 @@ app.get('/admin/modules/:id', authenticateAdmin, async (req, res) => {
 app.put('/admin/modules/:id', authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { 
-      lib_elp, 
-      lib_elp_arb, 
-      element_type, 
-      semester_number, 
-      cod_nel, 
-      cod_pel 
-    } = req.body;
+const { 
+  lib_elp, 
+  lib_elp_arb, 
+  element_type, 
+  semester_number, 
+  year_level,  // Add this line
+  cod_nel, 
+  cod_pel 
+} = req.body;
     
+// Add validation for year_level
+if (year_level !== null && (year_level < 1 || year_level > 6)) {
+  return res.status(400).json({ error: 'Year level must be between 1 and 6' });
+}
     // Validate semester_number
     if (semester_number !== null && (semester_number < 1 || semester_number > 12)) {
       return res.status(400).json({ error: 'Semester number must be between 1 and 12' });
@@ -1457,19 +1465,20 @@ app.put('/admin/modules/:id', authenticateAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Invalid element type' });
     }
     
-    const result = await pool.query(`
-      UPDATE element_pedagogi 
-      SET 
-        lib_elp = COALESCE($1, lib_elp),
-        lib_elp_arb = COALESCE($2, lib_elp_arb),
-        element_type = COALESCE($3, element_type),
-        semester_number = COALESCE($4, semester_number),
-        cod_nel = COALESCE($5, cod_nel),
-        cod_pel = COALESCE($6, cod_pel),
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = $7
-      RETURNING *
-    `, [lib_elp, lib_elp_arb, element_type, semester_number, cod_nel, cod_pel, id]);
+      const result = await pool.query(`
+    UPDATE element_pedagogi 
+    SET 
+      lib_elp = COALESCE($1, lib_elp),
+      lib_elp_arb = COALESCE($2, lib_elp_arb),
+      element_type = COALESCE($3, element_type),
+      semester_number = COALESCE($4, semester_number),
+      year_level = COALESCE($5, year_level),
+      cod_nel = COALESCE($6, cod_nel),
+      cod_pel = COALESCE($7, cod_pel),
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = $8
+    RETURNING *
+  `, [lib_elp, lib_elp_arb, element_type, semester_number, year_level, cod_nel, cod_pel, id]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Module not found' });

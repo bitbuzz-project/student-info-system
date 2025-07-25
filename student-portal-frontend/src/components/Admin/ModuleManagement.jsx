@@ -54,12 +54,14 @@ import {
 import { adminAPI } from '../../services/api';
 
 // ===== EDIT MODULE DIALOG COMPONENT =====
+// Replace the entire EditModuleDialog component:
 const EditModuleDialog = ({ open, module, onClose, onSave, availableParents }) => {
   const [formData, setFormData] = useState({
     lib_elp: '',
     lib_elp_arb: '',
     element_type: '',
     semester_number: null,
+    year_level: null,  // NEW: Add this field
     cod_nel: '',
     cod_pel: ''
   });
@@ -74,6 +76,7 @@ const EditModuleDialog = ({ open, module, onClose, onSave, availableParents }) =
         lib_elp_arb: module.lib_elp_arb || '',
         element_type: module.element_type || '',
         semester_number: module.semester_number,
+        year_level: module.year_level,  // NEW: Add this field
         cod_nel: module.cod_nel || '',
         cod_pel: module.cod_pel || ''
       });
@@ -81,17 +84,25 @@ const EditModuleDialog = ({ open, module, onClose, onSave, availableParents }) =
     }
   }, [module]);
 
-  const handleSave = () => {
-    // Validate form data
-    const validation = adminAPI.validateModuleData(formData);
-    if (!validation.isValid) {
-      setErrors(validation.errors);
-      return;
-    }
+const handleSave = async () => {
+  // Validate form data
+  const validation = adminAPI.validateModuleData(formData);
+  if (!validation.isValid) {
+    setErrors(validation.errors);
+    return;
+  }
 
-    setErrors([]);
-    onSave(formData, parentCode);
-  };
+  setErrors([]);
+  
+  try {
+    // Call the parent's onSave function and wait for it to complete
+    await onSave(formData, parentCode);
+    // The parent function (handleEditModule) will close the dialog
+  } catch (error) {
+    // Error handling is done in the parent function
+    console.error('Save error in dialog:', error);
+  }
+};
 
   const handleClose = () => {
     setErrors([]);
@@ -188,15 +199,38 @@ const EditModuleDialog = ({ open, module, onClose, onSave, availableParents }) =
             </FormControl>
           </Grid>
 
-          {/* Semester Number */}
+          {/* NEW: Year Level - Only show for ANNEE type */}
           <Grid item xs={12} md={4}>
-            <FormControl fullWidth>
+            <FormControl fullWidth disabled={formData.element_type !== 'ANNEE'}>
+              <InputLabel>Academic Year Level</InputLabel>
+              <Select
+                value={formData.year_level || ''}
+                onChange={(e) => setFormData({ 
+                  ...formData, 
+                  year_level: e.target.value === '' ? null : parseInt(e.target.value),
+                  semester_number: null // Clear semester when setting year
+                })}
+                label="Academic Year Level"
+              >
+                {adminAPI.getYearLevelOptions().map((option) => (
+                  <MenuItem key={option.value || 'null'} value={option.value || ''}>
+                    {option.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Grid>
+
+          {/* Semester Number - Only show for non-ANNEE types */}
+          <Grid item xs={12} md={4}>
+            <FormControl fullWidth disabled={formData.element_type === 'ANNEE'}>
               <InputLabel>Semester</InputLabel>
               <Select
                 value={formData.semester_number || ''}
                 onChange={(e) => setFormData({ 
                   ...formData, 
-                  semester_number: e.target.value === '' ? null : parseInt(e.target.value)
+                  semester_number: e.target.value === '' ? null : parseInt(e.target.value),
+                  year_level: null // Clear year when setting semester
                 })}
                 label="Semester"
               >
@@ -210,7 +244,7 @@ const EditModuleDialog = ({ open, module, onClose, onSave, availableParents }) =
           </Grid>
 
           {/* COD_NEL */}
-          <Grid item xs={12} md={4}>
+          <Grid item xs={12} md={6}>
             <TextField
               fullWidth
               label="COD_NEL"
@@ -230,7 +264,7 @@ const EditModuleDialog = ({ open, module, onClose, onSave, availableParents }) =
           </Grid>
 
           {/* Parent Module */}
-          <Grid item xs={12} md={6}>
+          <Grid item xs={12}>
             <Autocomplete
               options={availableParents}
               getOptionLabel={(option) => `${option.cod_elp} - ${option.lib_elp}`}
@@ -507,6 +541,7 @@ const ModuleManagement = () => {
   const [filters, setFilters] = useState({
     search: '',
     element_type: '',
+    year_level: '',  // NEW: Add this line
     semester: '',
     parent_code: '',
     page: 1,
@@ -563,6 +598,7 @@ const ModuleManagement = () => {
       search: '',
       element_type: '',
       semester: '',
+      year_level: '',  // NEW: Add this line
       parent_code: '',
       page: 1,
       limit: 50
@@ -579,25 +615,32 @@ const ModuleManagement = () => {
   };
 
   // Handle module edit
-  const handleEditModule = async (moduleData) => {
-    try {
-      const validation = adminAPI.validateModuleData(moduleData);
-      if (!validation.isValid) {
-        setError('Validation errors: ' + validation.errors.join(', '));
-        return;
-      }
-
-      await adminAPI.updateModule(editDialog.module.id, moduleData);
-      setSuccess('Module updated successfully!');
-      setEditDialog({ open: false, module: null });
-      loadModules();
-      
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to update module');
-      console.error('Error updating module:', err);
+// Replace the handleEditModule function:
+const handleEditModule = async (moduleData, parentCode) => {
+  try {
+    const validation = adminAPI.validateModuleData(moduleData);
+    if (!validation.isValid) {
+      setError('Validation errors: ' + validation.errors.join(', '));
+      return;
     }
-  };
 
+    // First, update the module properties
+    await adminAPI.updateModule(editDialog.module.id, moduleData);
+    
+    // Then, update the parent relationship if it changed
+    if (editDialog.module && parentCode !== editDialog.module.parent_code) {
+      await adminAPI.updateModuleParent(editDialog.module.id, parentCode);
+    }
+    
+    setSuccess('Module updated successfully!');
+    setEditDialog({ open: false, module: null }); // Close the dialog
+    loadModules(); // Reload the modules list
+    
+  } catch (err) {
+    setError(err.response?.data?.error || 'Failed to update module');
+    console.error('Error updating module:', err);
+  }
+};
   // Handle parent update
   const handleUpdateParent = async (moduleId, parentCode) => {
     try {
@@ -689,6 +732,8 @@ const ModuleManagement = () => {
       case 'SEMESTRE': return 'success';
       case 'MODULE': return 'primary';
       case 'MATIERE': return 'warning';
+            case 'ANNEE': return 'info';     // NEW: Add this line
+
       default: return 'default';
     }
   };
@@ -759,87 +804,109 @@ const ModuleManagement = () => {
               </Box>
             </AccordionSummary>
             <AccordionDetails>
-              <Grid container spacing={3}>
-                {/* Search */}
-                <Grid item xs={12} md={4}>
-                  <TextField
-                    fullWidth
-                    label="Search Modules"
-                    placeholder="Module code, name, or Arabic name"
-                    value={filters.search}
-                    onChange={(e) => handleFilterChange('search', e.target.value)}
-                    InputProps={{
-                      startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />
-                    }}
-                  />
-                </Grid>
+          
+<Grid container spacing={3}>
+  {/* Search */}
+  <Grid item xs={12} md={3}>
+    <TextField
+      fullWidth
+      label="Search Modules"
+      placeholder="Module code, name, or Arabic name"
+      value={filters.search}
+      onChange={(e) => handleFilterChange('search', e.target.value)}
+      InputProps={{
+        startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />
+      }}
+    />
+  </Grid>
 
-                {/* Element Type Filter */}
-                <Grid item xs={12} md={2}>
-                  <FormControl fullWidth>
-                    <InputLabel>Element Type</InputLabel>
-                    <Select
-                      value={filters.element_type}
-                      onChange={(e) => handleFilterChange('element_type', e.target.value)}
-                      label="Element Type"
-                    >
-                      <MenuItem value="">All Types</MenuItem>
-                      {adminAPI.getElementTypeOptions().map((option) => (
-                        <MenuItem key={option.value} value={option.value}>
-                          {option.label}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </Grid>
+  {/* Element Type Filter */}
+  <Grid item xs={12} md={2}>
+    <FormControl fullWidth>
+      <InputLabel>Element Type</InputLabel>
+      <Select
+        value={filters.element_type}
+        onChange={(e) => handleFilterChange('element_type', e.target.value)}
+        label="Element Type"
+      >
+        <MenuItem value="">All Types</MenuItem>
+        {adminAPI.getElementTypeOptions().map((option) => (
+          <MenuItem key={option.value} value={option.value}>
+            {option.label}
+          </MenuItem>
+        ))}
+      </Select>
+    </FormControl>
+  </Grid>
 
-                {/* Semester Filter */}
-                <Grid item xs={12} md={2}>
-                  <FormControl fullWidth>
-                    <InputLabel>Semester</InputLabel>
-                    <Select
-                      value={filters.semester}
-                      onChange={(e) => handleFilterChange('semester', e.target.value)}
-                      label="Semester"
-                    >
-                      <MenuItem value="">All Semesters</MenuItem>
-                      {adminAPI.getSemesterOptions().map((option) => (
-                        <MenuItem key={option.value || 'null'} value={option.value || ''}>
-                          {option.label}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </Grid>
+  {/* NEW: Semester Filter - Only for SEMESTRE and MATIERE types */}
+  <Grid item xs={12} md={2}>
+    <FormControl fullWidth>
+      <InputLabel>Semester</InputLabel>
+      <Select
+        value={filters.semester}
+        onChange={(e) => handleFilterChange('semester', e.target.value)}
+        label="Semester"
+        disabled={filters.element_type === 'ANNEE'}
+      >
+        <MenuItem value="">All Semesters</MenuItem>
+        {adminAPI.getSemesterOptions().map((option) => (
+          <MenuItem key={option.value || 'null'} value={option.value || ''}>
+            {option.label}
+          </MenuItem>
+        ))}
+      </Select>
+    </FormControl>
+  </Grid>
 
-                {/* Parent Filter */}
-                <Grid item xs={12} md={2}>
-                  <Autocomplete
-                    options={availableParents}
-                    getOptionLabel={(option) => `${option.cod_elp} - ${option.lib_elp}`}
-                    value={availableParents.find(p => p.cod_elp === filters.parent_code) || null}
-                    onChange={(event, newValue) => {
-                      handleFilterChange('parent_code', newValue?.cod_elp || '');
-                    }}
-                    renderInput={(params) => (
-                      <TextField {...params} label="Parent Module" fullWidth />
-                    )}
-                  />
-                </Grid>
+  {/* NEW: Year Level Filter - Only for ANNEE types */}
+  <Grid item xs={12} md={2}>
+    <FormControl fullWidth>
+      <InputLabel>Academic Year</InputLabel>
+      <Select
+        value={filters.year_level || ''}
+        onChange={(e) => handleFilterChange('year_level', e.target.value)}
+        label="Academic Year"
+        disabled={filters.element_type !== 'ANNEE' && filters.element_type !== ''}
+      >
+        <MenuItem value="">All Years</MenuItem>
+        {adminAPI.getYearLevelOptions().map((option) => (
+          <MenuItem key={option.value || 'null'} value={option.value || ''}>
+            {option.label}
+          </MenuItem>
+        ))}
+      </Select>
+    </FormControl>
+  </Grid>
 
-                {/* Clear Filters */}
-                <Grid item xs={12} md={2}>
-                  <Button
-                    fullWidth
-                    variant="outlined"
-                    startIcon={<ClearIcon />}
-                    onClick={clearFilters}
-                    sx={{ height: '56px' }}
-                  >
-                    Clear Filters
-                  </Button>
-                </Grid>
-              </Grid>
+  {/* Parent Filter */}
+  <Grid item xs={12} md={2}>
+    <Autocomplete
+      options={availableParents}
+      getOptionLabel={(option) => `${option.cod_elp} - ${option.lib_elp}`}
+      value={availableParents.find(p => p.cod_elp === filters.parent_code) || null}
+      onChange={(event, newValue) => {
+        handleFilterChange('parent_code', newValue?.cod_elp || '');
+      }}
+      renderInput={(params) => (
+        <TextField {...params} label="Parent Module" fullWidth />
+      )}
+    />
+  </Grid>
+
+  {/* Clear Filters */}
+  <Grid item xs={12} md={1}>
+    <Button
+      fullWidth
+      variant="outlined"
+      startIcon={<ClearIcon />}
+      onClick={clearFilters}
+      sx={{ height: '56px' }}
+    >
+      Clear
+    </Button>
+  </Grid>
+</Grid>
             </AccordionDetails>
           </Accordion>
         </CardContent>
@@ -901,104 +968,124 @@ const ModuleManagement = () => {
           ) : (
             <TableContainer>
               <Table>
-                <TableHead>
-                  <TableRow sx={{ bgcolor: '#f8f9fa' }}>
-                    <TableCell padding="checkbox">
-                      <Checkbox
-                        checked={modules.length > 0 && modules.every(module => selectedModules.includes(module.id))}
-                        indeterminate={modules.some(module => selectedModules.includes(module.id)) && !modules.every(module => selectedModules.includes(module.id))}
-                        onChange={(e) => handleSelectAll(e.target.checked)}
-                      />
-                    </TableCell>
-                    <TableCell><strong>Module Code</strong></TableCell>
-                    <TableCell><strong>Module Name</strong></TableCell>
-                    <TableCell><strong>Element Type</strong></TableCell>
-                    <TableCell><strong>Semester</strong></TableCell>
-                    <TableCell><strong>Parent Module</strong></TableCell>
-                    <TableCell><strong>Usage</strong></TableCell>
-                    <TableCell align="center"><strong>Actions</strong></TableCell>
-                  </TableRow>
-                </TableHead>
+               
+<TableHead>
+  <TableRow sx={{ bgcolor: '#f8f9fa' }}>
+    <TableCell padding="checkbox">
+      <Checkbox
+        checked={modules.length > 0 && modules.every(module => selectedModules.includes(module.id))}
+        indeterminate={modules.some(module => selectedModules.includes(module.id)) && !modules.every(module => selectedModules.includes(module.id))}
+        onChange={(e) => handleSelectAll(e.target.checked)}
+      />
+    </TableCell>
+    <TableCell><strong>Module Code</strong></TableCell>
+    <TableCell><strong>Module Name</strong></TableCell>
+    <TableCell><strong>Element Type</strong></TableCell>
+    <TableCell><strong>Academic Year</strong></TableCell>  {/* NEW: Changed from Semester */}
+    <TableCell><strong>Semester</strong></TableCell>       {/* NEW: Separate column */}
+    <TableCell><strong>Parent Module</strong></TableCell>
+    <TableCell><strong>Usage</strong></TableCell>
+    <TableCell align="center"><strong>Actions</strong></TableCell>
+  </TableRow>
+</TableHead>
                 <TableBody>
-                  {modules.map((module) => (
-                    <TableRow 
-                      key={module.id}
-                      sx={{ 
-                        '&:hover': { bgcolor: '#f8f9fa' },
-                        bgcolor: selectedModules.includes(module.id) ? '#e3f2fd' : 'inherit'
-                      }}
-                    >
-                      <TableCell padding="checkbox">
-                        <Checkbox
-                          checked={selectedModules.includes(module.id)}
-                          onChange={(e) => handleModuleSelect(module.id, e.target.checked)}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2" fontWeight="600" color="primary">
-                          {module.cod_elp}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Box>
-                          <Typography variant="body2" fontWeight="500">
-                            {module.lib_elp}
-                          </Typography>
-                          {module.lib_elp_arb && (
-                            <Typography variant="caption" color="text.secondary" sx={{ direction: 'rtl' }}>
-                              {module.lib_elp_arb}
-                            </Typography>
-                          )}
-                        </Box>
-                      </TableCell>
-                      <TableCell>
-                        <Chip
-                          label={module.element_type_display}
-                          color={getElementTypeColor(module.element_type)}
-                          size="small"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Chip
-                          label={module.semester_display}
-                          color={getSemesterColor(module.semester_number)}
-                          size="small"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2">
-                          {module.parent_display}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2" color="text.secondary">
-                          {module.usage_display}
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="center">
-                        <Box sx={{ display: 'flex', gap: 1 }}>
-                          <Tooltip title="Edit Module">
-                            <IconButton
-                              color="primary"
-                              onClick={() => setEditDialog({ open: true, module })}
-                              size="small"
-                            >
-                              <EditIcon />
-                            </IconButton>
-                          </Tooltip>
-                          <Tooltip title="View Usage Statistics">
-                            <IconButton
-                              color="info"
-                              onClick={() => loadModuleUsage(module)}
-                              size="small"
-                            >
-                              <AssessmentIcon />
-                            </IconButton>
-                          </Tooltip>
-                        </Box>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+    
+{modules.map((module) => (
+  <TableRow 
+    key={module.id}
+    sx={{ 
+      '&:hover': { bgcolor: '#f8f9fa' },
+      bgcolor: selectedModules.includes(module.id) ? '#e3f2fd' : 'inherit'
+    }}
+  >
+    <TableCell padding="checkbox">
+      <Checkbox
+        checked={selectedModules.includes(module.id)}
+        onChange={(e) => handleModuleSelect(module.id, e.target.checked)}
+      />
+    </TableCell>
+    <TableCell>
+      <Typography variant="body2" fontWeight="600" color="primary">
+        {module.cod_elp}
+      </Typography>
+    </TableCell>
+    <TableCell>
+      <Box>
+        <Typography variant="body2" fontWeight="500">
+          {module.lib_elp}
+        </Typography>
+        {module.lib_elp_arb && (
+          <Typography variant="caption" color="text.secondary" sx={{ direction: 'rtl' }}>
+            {module.lib_elp_arb}
+          </Typography>
+        )}
+      </Box>
+    </TableCell>
+    <TableCell>
+      <Chip
+        label={module.element_type_display}
+        color={getElementTypeColor(module.element_type)}
+        size="small"
+      />
+    </TableCell>
+    {/* NEW: Academic Year Column */}
+    <TableCell>
+      {module.element_type === 'ANNEE' ? (
+        <Chip
+          label={module.year_display}
+          color="info"
+          size="small"
+        />
+      ) : (
+        <Typography variant="body2" color="text.secondary">-</Typography>
+      )}
+    </TableCell>
+    {/* NEW: Semester Column */}
+    <TableCell>
+      {module.element_type === 'SEMESTRE' || (module.semester_number && module.element_type !== 'ANNEE') ? (
+        <Chip
+          label={module.semester_display}
+          color={getSemesterColor(module.semester_number)}
+          size="small"
+        />
+      ) : (
+        <Typography variant="body2" color="text.secondary">-</Typography>
+      )}
+    </TableCell>
+    <TableCell>
+      <Typography variant="body2">
+        {module.parent_display}
+      </Typography>
+    </TableCell>
+    <TableCell>
+      <Typography variant="body2" color="text.secondary">
+        {module.usage_display}
+      </Typography>
+    </TableCell>
+    <TableCell align="center">
+      <Box sx={{ display: 'flex', gap: 1 }}>
+        <Tooltip title="Edit Module">
+          <IconButton
+            color="primary"
+            onClick={() => setEditDialog({ open: true, module })}
+            size="small"
+          >
+            <EditIcon />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title="View Usage Statistics">
+          <IconButton
+            color="info"
+            onClick={() => loadModuleUsage(module)}
+            size="small"
+          >
+            <AssessmentIcon />
+          </IconButton>
+        </Tooltip>
+      </Box>
+    </TableCell>
+  </TableRow>
+))}
                 </TableBody>
               </Table>
             </TableContainer>
@@ -1025,15 +1112,7 @@ const ModuleManagement = () => {
         module={editDialog.module}
         availableParents={availableParents}
         onClose={() => setEditDialog({ open: false, module: null })}
-        onSave={async (moduleData, parentCode) => {
-          // Update module properties
-          await handleEditModule(moduleData);
-          
-          // Update parent relationship if changed
-          if (editDialog.module && parentCode !== editDialog.module.parent_code) {
-            await handleUpdateParent(editDialog.module.id, parentCode);
-          }
-        }}
+       onSave={handleEditModule}
       />
 
       {/* Usage Statistics Dialog */}
