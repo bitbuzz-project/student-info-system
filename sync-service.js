@@ -153,6 +153,57 @@ WHERE i.ETA_IAE = 'E'
   AND i.COD_ANU IN (2023, 2024)
   AND i.COD_CMP = 'FJP'
   AND i.TEM_IAE_PRM = 'O'
+  AND i.NBR_INS_CYC = 1  -- ADDED: Only new registrations (first cycle)
+ORDER BY i.COD_ANU DESC, i.DAT_CRE_IAE DESC, ind.COD_ETU
+`;
+
+// Also add a separate query for all students (including returning students)
+const ORACLE_QUERY_ALL_STUDENTS = `
+SELECT DISTINCT
+  ind.COD_ETU,
+  ind.LIB_NOM_PAT_IND,
+  ind.LIB_PR1_IND,
+  i.COD_ETP,
+  i.COD_ANU,
+  i.COD_VRS_VET,
+  i.COD_DIP,
+  i.COD_UTI,
+  i.DAT_CRE_IAE,
+  i.NBR_INS_CYC,
+  i.NBR_INS_ETP,
+  i.NBR_INS_DIP,
+  i.TEM_DIP_IAE,
+  ind.COD_PAY_NAT,
+  ind.COD_ETB,
+  ind.COD_NNE_IND,
+  ind.DAT_CRE_IND,
+  ind.DAT_MOD_IND,
+  ind.DATE_NAI_IND,
+  ind.DAA_ENT_ETB,
+  ind.LIB_NOM_PAT_IND,
+  ind.LIB_NOM_USU_IND,
+  ind.LIB_PR1_IND,
+  ind.LIB_PR2_IND,
+  ind.LIB_PR3_IND,
+  ind.COD_ETU,
+  ind.COD_SEX_ETU,
+  ind.LIB_VIL_NAI_ETU,
+  ind.COD_DEP_PAY_NAI,
+  ind.DAA_ENS_SUP,
+  ind.DAA_ETB,
+  ind.LIB_NOM_IND_ARB,
+  ind.LIB_PRN_IND_ARB,
+  ind.CIN_IND,
+  ind.LIB_VIL_NAI_ETU_ARB,
+  e.LIB_ETP,
+  e.LIC_ETP
+FROM INS_ADM_ETP i
+JOIN INDIVIDU ind ON i.COD_IND = ind.COD_IND
+JOIN ETAPE e ON i.COD_ETP = e.COD_ETP
+WHERE i.ETA_IAE = 'E'
+  AND i.COD_ANU IN (2023, 2024)
+  AND i.COD_CMP = 'FJP'
+  AND i.TEM_IAE_PRM = 'O'
 ORDER BY i.COD_ANU DESC, ind.COD_ETU
 `;
 
@@ -417,14 +468,24 @@ async function syncElementHierarchy(oracleConnection, pgClient) {
   logger.info(`✓ Element hierarchy sync completed: ${processedCount} relationships`);
 }
 
+// Update the syncStudentsData function to handle both new and all students
 async function syncStudentsData(oracleConnection, pgClient) {
   logger.info('Syncing students data for 2023 and 2024...');
+  logger.info('This will include both new registrations (NBR_INS_CYC=1) and returning students');
   
-  // Fetch data from Oracle
-  const result = await oracleConnection.execute(ORACLE_QUERY);
+  // Use the query that includes all students, not just new registrations
+  // The admin interface will filter for new registrations as needed
+  const result = await oracleConnection.execute(ORACLE_QUERY_ALL_STUDENTS);
   const students = result.rows;
   
   logger.info(`✓ Fetched ${students.length} students from Oracle (2023 & 2024)`);
+  
+  // Count new registrations for logging
+  const newRegistrationsResult = await oracleConnection.execute(ORACLE_QUERY);
+  const newRegistrationsCount = newRegistrationsResult.rows.length;
+  
+  logger.info(`📊 New registrations (NBR_INS_CYC=1): ${newRegistrationsCount} students`);
+  logger.info(`📊 Total students (all): ${students.length} students`);
   
   if (students.length === 0) {
     logger.warn('No students found in Oracle database');
@@ -437,6 +498,7 @@ async function syncStudentsData(oracleConnection, pgClient) {
   let processedCount = 0;
   let updatedCount = 0;
   let insertedCount = 0;
+  let newRegistrationsProcessed = 0;
   
   // Process students in batches for better performance
   const batchSize = 100;
@@ -455,6 +517,11 @@ async function syncStudentsData(oracleConnection, pgClient) {
         lib_etp, lic_etp
       ] = student;
       
+      // Count new registrations
+      if (nbr_ins_cyc === 1) {
+        newRegistrationsProcessed++;
+      }
+      
       // Check if student exists
       const existingStudent = await pgClient.query(
         'SELECT id FROM students WHERE cod_etu = $1', 
@@ -463,7 +530,7 @@ async function syncStudentsData(oracleConnection, pgClient) {
       
       const isUpdate = existingStudent.rows.length > 0;
       
-      // Upsert student
+      // Upsert student (same logic as before)
       await pgClient.query(`
         INSERT INTO students (
           cod_etu, lib_nom_pat_ind, lib_pr1_ind, cod_etp, cod_anu,
@@ -536,19 +603,27 @@ async function syncStudentsData(oracleConnection, pgClient) {
     
     // Progress indicator
     const progress = Math.round((i + batch.length) / students.length * 100);
-    logger.info(`Students Progress: ${progress}% (${processedCount}/${students.length})`);
+    logger.info(`Students Progress: ${progress}% (${processedCount}/${students.length}) - New Reg: ${newRegistrationsProcessed}`);
   }
   
   await pgClient.query('COMMIT');
   
-  // Log sync success
+  // Log sync success with new registration info
   await pgClient.query(`
-    INSERT INTO sync_log (sync_type, records_processed, sync_status)
-    VALUES ('students', $1, 'success')
-  `, [processedCount]);
+    INSERT INTO sync_log (sync_type, records_processed, sync_status, error_message)
+    VALUES ('students', $1, 'success', $2)
+  `, [processedCount, `Total: ${processedCount}, New registrations: ${newRegistrationsProcessed}, Inserted: ${insertedCount}, Updated: ${updatedCount}`]);
   
   logger.info(`✓ Students sync completed: ${processedCount} total, ${insertedCount} new, ${updatedCount} updated`);
+  logger.info(`✓ New registrations processed: ${newRegistrationsProcessed} students`);
 }
+
+// Export the new query for potential direct use
+module.exports = { 
+  syncStudents,
+  ORACLE_QUERY_NEW_REGISTRATIONS: ORACLE_QUERY,
+  ORACLE_QUERY_ALL_STUDENTS
+};
 
 
 

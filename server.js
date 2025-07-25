@@ -1724,6 +1724,321 @@ app.post('/admin/modules/bulk-update-semester', authenticateAdmin, async (req, r
   }
 });
 
+// Add these endpoints to your server.js file
+
+// ===== STUDENT REGISTRATION MANAGEMENT ENDPOINTS =====
+
+// Get student registrations with filters
+app.get('/admin/registrations', authenticateAdmin, async (req, res) => {
+  try {
+    const { year, user, dateFrom, dateTo, limit = 50 } = req.query;
+    
+    let whereConditions = ['nbr_ins_cyc = 1']; // Only new registrations (first cycle)
+    let params = [];
+    let paramIndex = 1;
+    
+    // Add year filter
+    if (year) {
+      whereConditions.push(`cod_anu = $${paramIndex}`);
+      params.push(year);
+      paramIndex++;
+    }
+    
+    // Add user filter
+    if (user) {
+      whereConditions.push(`cod_uti = $${paramIndex}`);
+      params.push(user);
+      paramIndex++;
+    }
+    
+    // Add date range filters
+    if (dateFrom) {
+      whereConditions.push(`dat_cre_iae >= $${paramIndex}::date`);
+      params.push(dateFrom);
+      paramIndex++;
+    }
+    
+    if (dateTo) {
+      whereConditions.push(`dat_cre_iae <= $${paramIndex}::date`);
+      params.push(dateTo);
+      paramIndex++;
+    }
+    
+    const whereClause = whereConditions.length > 0 
+      ? `WHERE ${whereConditions.join(' AND ')}`
+      : '';
+    
+    // Get recent registrations
+    const recentRegistrationsQuery = `
+      SELECT 
+        cod_etu,
+        lib_nom_pat_ind,
+        lib_pr1_ind,
+        lib_nom_ind_arb,
+        lib_prn_ind_arb,
+        cod_anu,
+        dat_cre_iae,
+        cod_uti,
+        lib_etp,
+        nbr_ins_cyc,
+        created_at
+      FROM students 
+      ${whereClause}
+      ORDER BY dat_cre_iae DESC, created_at DESC
+      LIMIT $${paramIndex}
+    `;
+    
+    const recentRegistrations = await pool.query(recentRegistrationsQuery, [...params, limit]);
+    
+    // Get available filter options
+    const availableYearsQuery = `
+      SELECT DISTINCT cod_anu 
+      FROM students 
+      WHERE nbr_ins_cyc = 1 
+      ORDER BY cod_anu DESC
+    `;
+    const availableYears = await pool.query(availableYearsQuery);
+    
+    const availableUsersQuery = `
+      SELECT DISTINCT cod_uti 
+      FROM students 
+      WHERE nbr_ins_cyc = 1 AND cod_uti IS NOT NULL
+      ORDER BY cod_uti
+    `;
+    const availableUsers = await pool.query(availableUsersQuery);
+    
+    res.json({
+      recent_registrations: recentRegistrations.rows,
+      available_years: availableYears.rows.map(row => row.cod_anu),
+      available_users: availableUsers.rows.map(row => row.cod_uti),
+      total_found: recentRegistrations.rows.length
+    });
+    
+  } catch (error) {
+    console.error('Error getting student registrations:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get registration statistics
+app.get('/admin/registrations/stats', authenticateAdmin, async (req, res) => {
+  try {
+    const { year, user, dateFrom, dateTo } = req.query;
+    
+    let whereConditions = ['nbr_ins_cyc = 1']; // Only new registrations
+    let params = [];
+    let paramIndex = 1;
+    
+    // Build where clause for filters
+    if (year) {
+      whereConditions.push(`cod_anu = $${paramIndex}`);
+      params.push(year);
+      paramIndex++;
+    }
+    
+    if (user) {
+      whereConditions.push(`cod_uti = $${paramIndex}`);
+      params.push(user);
+      paramIndex++;
+    }
+    
+    if (dateFrom) {
+      whereConditions.push(`dat_cre_iae >= $${paramIndex}::date`);
+      params.push(dateFrom);
+      paramIndex++;
+    }
+    
+    if (dateTo) {
+      whereConditions.push(`dat_cre_iae <= $${paramIndex}::date`);
+      params.push(dateTo);
+      paramIndex++;
+    }
+    
+    const whereClause = whereConditions.length > 0 
+      ? `WHERE ${whereConditions.join(' AND ')}`
+      : '';
+    
+    // Get summary statistics
+    const summaryQuery = `
+      SELECT 
+        COUNT(*) as total_new_registrations,
+        COUNT(CASE WHEN dat_cre_iae = CURRENT_DATE THEN 1 END) as registrations_today,
+        COUNT(CASE WHEN dat_cre_iae >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as registrations_this_week,
+        COUNT(DISTINCT lib_etp) as unique_programs,
+        COUNT(DISTINCT cod_uti) as unique_users
+      FROM students 
+      ${whereClause}
+    `;
+    
+    const summaryResult = await pool.query(summaryQuery, params);
+    const summary = summaryResult.rows[0];
+    
+    // Get daily trends
+    const dailyTrendsQuery = `
+      SELECT 
+        DATE(dat_cre_iae) as registration_date,
+        cod_anu,
+        cod_uti,
+        COUNT(*) as daily_count,
+        COUNT(DISTINCT lib_etp) as programs_count
+      FROM students 
+      ${whereClause}
+      AND dat_cre_iae >= CURRENT_DATE - INTERVAL '30 days'
+      GROUP BY DATE(dat_cre_iae), cod_anu, cod_uti
+      ORDER BY registration_date DESC, daily_count DESC
+      LIMIT 50
+    `;
+    
+    const dailyTrendsResult = await pool.query(dailyTrendsQuery, params);
+    
+    // Get program breakdown
+    const programBreakdownQuery = `
+      SELECT 
+        lib_etp,
+        cod_anu,
+        COUNT(*) as count,
+        MAX(dat_cre_iae) as latest_registration
+      FROM students 
+      ${whereClause}
+      GROUP BY lib_etp, cod_anu
+      ORDER BY count DESC, latest_registration DESC
+      LIMIT 20
+    `;
+    
+    const programBreakdownResult = await pool.query(programBreakdownQuery, params);
+    
+    // Get monthly trends for chart
+    const monthlyTrendsQuery = `
+      SELECT 
+        DATE_TRUNC('month', dat_cre_iae) as month,
+        COUNT(*) as count
+      FROM students 
+      ${whereClause}
+      AND dat_cre_iae >= CURRENT_DATE - INTERVAL '12 months'
+      GROUP BY DATE_TRUNC('month', dat_cre_iae)
+      ORDER BY month DESC
+    `;
+    
+    const monthlyTrendsResult = await pool.query(monthlyTrendsQuery, params);
+    
+    res.json({
+      summary: {
+        total_new_registrations: parseInt(summary.total_new_registrations),
+        registrations_today: parseInt(summary.registrations_today),
+        registrations_this_week: parseInt(summary.registrations_this_week),
+        unique_programs: parseInt(summary.unique_programs),
+        unique_users: parseInt(summary.unique_users)
+      },
+      daily_trends: dailyTrendsResult.rows,
+      program_breakdown: programBreakdownResult.rows,
+      monthly_trends: monthlyTrendsResult.rows
+    });
+    
+  } catch (error) {
+    console.error('Error getting registration statistics:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Export registrations data as CSV
+app.get('/admin/registrations/export', authenticateAdmin, async (req, res) => {
+  try {
+    const { year, user, dateFrom, dateTo } = req.query;
+    
+    let whereConditions = ['nbr_ins_cyc = 1']; // Only new registrations
+    let params = [];
+    let paramIndex = 1;
+    
+    // Build where clause
+    if (year) {
+      whereConditions.push(`cod_anu = $${paramIndex}`);
+      params.push(year);
+      paramIndex++;
+    }
+    
+    if (user) {
+      whereConditions.push(`cod_uti = $${paramIndex}`);
+      params.push(user);
+      paramIndex++;
+    }
+    
+    if (dateFrom) {
+      whereConditions.push(`dat_cre_iae >= $${paramIndex}::date`);
+      params.push(dateFrom);
+      paramIndex++;
+    }
+    
+    if (dateTo) {
+      whereConditions.push(`dat_cre_iae <= $${paramIndex}::date`);
+      params.push(dateTo);
+      paramIndex++;
+    }
+    
+    const whereClause = whereConditions.length > 0 
+      ? `WHERE ${whereConditions.join(' AND ')}`
+      : '';
+    
+    const exportQuery = `
+      SELECT 
+        cod_etu as "Student Code",
+        lib_nom_pat_ind as "Last Name",
+        lib_pr1_ind as "First Name",
+        lib_nom_ind_arb as "Arabic Last Name",
+        lib_prn_ind_arb as "Arabic First Name",
+        cin_ind as "CIN",
+        cod_anu as "Academic Year",
+        lib_etp as "Program",
+        dat_cre_iae as "Registration Date",
+        cod_uti as "Created By",
+        nbr_ins_cyc as "Cycle Registrations",
+        nbr_ins_etp as "Program Registrations",
+        cod_sex_etu as "Gender",
+        lib_vil_nai_etu as "Birth Place",
+        date_nai_ind as "Birth Date"
+      FROM students 
+      ${whereClause}
+      ORDER BY dat_cre_iae DESC, lib_nom_pat_ind, lib_pr1_ind
+    `;
+    
+    const result = await pool.query(exportQuery, params);
+    
+    // Convert to CSV
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No data found for export' });
+    }
+    
+    // Create CSV header
+    const headers = Object.keys(result.rows[0]);
+    let csv = headers.join(',') + '\n';
+    
+    // Add data rows
+    result.rows.forEach(row => {
+      const values = headers.map(header => {
+        const value = row[header];
+        // Escape commas and quotes in CSV
+        if (value === null || value === undefined) return '';
+        const stringValue = String(value);
+        if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
+          return `"${stringValue.replace(/"/g, '""')}"`;
+        }
+        return stringValue;
+      });
+      csv += values.join(',') + '\n';
+    });
+    
+    // Set response headers for CSV download
+    const filename = `student_registrations_${new Date().toISOString().split('T')[0]}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    
+    // Add BOM for proper UTF-8 encoding in Excel
+    res.send('\ufeff' + csv);
+    
+  } catch (error) {
+    console.error('Error exporting registrations:', error);
+    res.status(500).json({ error: 'Failed to export data' });
+  }
+});
 module.exports = {
   // Export these routes if you're using a separate file
 };

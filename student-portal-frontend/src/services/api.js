@@ -165,6 +165,62 @@ export const adminAPI = {
     }
     return response.data;
   },
+  // Student Registration Management APIs
+getStudentRegistrations: async (params = {}) => {
+  const searchParams = new URLSearchParams();
+  
+  // Add filter parameters
+  if (params.year) searchParams.append('year', params.year);
+  if (params.user) searchParams.append('user', params.user);
+  if (params.dateFrom) searchParams.append('dateFrom', params.dateFrom);
+  if (params.dateTo) searchParams.append('dateTo', params.dateTo);
+  if (params.limit) searchParams.append('limit', params.limit);
+  
+  const response = await api.get(`/admin/registrations?${searchParams}`);
+  return response.data;
+},
+
+getRegistrationStats: async (params = {}) => {
+  const searchParams = new URLSearchParams();
+  
+  if (params.year) searchParams.append('year', params.year);
+  if (params.user) searchParams.append('user', params.user);
+  if (params.dateFrom) searchParams.append('dateFrom', params.dateFrom);
+  if (params.dateTo) searchParams.append('dateTo', params.dateTo);
+  
+  const response = await api.get(`/admin/registrations/stats?${searchParams}`);
+  return response.data;
+},
+
+exportRegistrations: async (params = {}) => {
+  const searchParams = new URLSearchParams();
+  
+  if (params.year) searchParams.append('year', params.year);
+  if (params.user) searchParams.append('user', params.user);
+  if (params.dateFrom) searchParams.append('dateFrom', params.dateFrom);
+  if (params.dateTo) searchParams.append('dateTo', params.dateTo);
+  
+  try {
+    const response = await api.get(`/admin/registrations/export?${searchParams}`, {
+      responseType: 'blob'
+    });
+    
+    // Create blob and download
+    const blob = new Blob([response.data], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `student_registrations_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+    
+  } catch (error) {
+    console.error('Export error:', error);
+    throw error;
+  }
+},
   
   logout: () => {
     localStorage.removeItem('adminToken');
@@ -394,9 +450,16 @@ export const adminAPI = {
     }));
     
     return exportData;
+
+    
   }
 
+
+
+  
 };
+
+
 
 // System API
 export const systemAPI = {
