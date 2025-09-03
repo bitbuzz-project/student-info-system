@@ -1440,45 +1440,49 @@ const result = await pool.query(`
 app.put('/admin/modules/:id', authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-const { 
-  lib_elp, 
-  lib_elp_arb, 
-  element_type, 
-  semester_number, 
-  year_level,  // Add this line
-  cod_nel, 
-  cod_pel 
-} = req.body;
+    const { 
+      lib_elp, 
+      lib_elp_arb, 
+      element_type, 
+      semester_number, 
+      year_level,  // ✅ Make sure this is included
+      cod_nel, 
+      cod_pel 
+    } = req.body;
     
-// Add validation for year_level
-if (year_level !== null && (year_level < 1 || year_level > 6)) {
-  return res.status(400).json({ error: 'Year level must be between 1 and 6' });
-}
+    // ✅ Updated validation for year_level
+    if (year_level !== null && (year_level < 1 || year_level > 6)) {
+      return res.status(400).json({ error: 'Year level must be between 1 and 6' });
+    }
+    
     // Validate semester_number
     if (semester_number !== null && (semester_number < 1 || semester_number > 12)) {
       return res.status(400).json({ error: 'Semester number must be between 1 and 12' });
     }
     
-    // Validate element_type
-    const validTypes = ['SEMESTRE', 'MODULE', 'MATIERE'];
+    // ✅ Updated validation to include ANNEE
+    const validTypes = ['SEMESTRE', 'MODULE', 'MATIERE', 'ANNEE']; // Added ANNEE here
     if (element_type && !validTypes.includes(element_type)) {
-      return res.status(400).json({ error: 'Invalid element type' });
+      return res.status(400).json({ 
+        error: `Invalid element type: ${element_type}. Valid types are: ${validTypes.join(', ')}` 
+      });
     }
     
-      const result = await pool.query(`
-    UPDATE element_pedagogi 
-    SET 
-      lib_elp = COALESCE($1, lib_elp),
-      lib_elp_arb = COALESCE($2, lib_elp_arb),
-      element_type = COALESCE($3, element_type),
-      semester_number = COALESCE($4, semester_number),
-      year_level = COALESCE($5, year_level),
-      cod_nel = COALESCE($6, cod_nel),
-      cod_pel = COALESCE($7, cod_pel),
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = $8
-    RETURNING *
-  `, [lib_elp, lib_elp_arb, element_type, semester_number, year_level, cod_nel, cod_pel, id]);
+    // ✅ Updated SQL query to include year_level
+    const result = await pool.query(`
+      UPDATE element_pedagogi 
+      SET 
+        lib_elp = COALESCE($1, lib_elp),
+        lib_elp_arb = COALESCE($2, lib_elp_arb),
+        element_type = COALESCE($3, element_type),
+        semester_number = COALESCE($4, semester_number),
+        year_level = COALESCE($5, year_level),  -- ✅ Include year_level in update
+        cod_nel = COALESCE($6, cod_nel),
+        cod_pel = COALESCE($7, cod_pel),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $8
+      RETURNING *
+    `, [lib_elp, lib_elp_arb, element_type, semester_number, year_level, cod_nel, cod_pel, id]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Module not found' });
@@ -1502,7 +1506,6 @@ if (year_level !== null && (year_level < 1 || year_level > 6)) {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
 // 4. UPDATE module parent relationship
 app.put('/admin/modules/:id/parent', authenticateAdmin, async (req, res) => {
   try {

@@ -365,14 +365,14 @@ exportRegistrations: async (params = {}) => {
   },
   
   // 9. Helper function to get element type options
-  getElementTypeOptions: () => {
-    return [
-      { value: 'MATIERE', label: 'MATIERE - Subject/Course' },
-      { value: 'MODULE', label: 'MODULE - Module' },
-      { value: 'SEMESTRE', label: 'SEMESTRE - Semester/Year' },
-      { value: 'ANNEE', label: 'ANNEE - Academic Year' }  // NEW: Add this line
-    ];
-  },
+getElementTypeOptions: () => {
+  return [
+    { value: 'MATIERE', label: 'MATIERE - Subject/Course' },
+    { value: 'MODULE', label: 'MODULE - Module' },
+    { value: 'SEMESTRE', label: 'SEMESTRE - Semester/Year' },
+    { value: 'ANNEE', label: 'ANNEE - Academic Year' }  // ✅ Make sure this is included
+  ];
+},
 
   // Add this new function to get year level options
 getYearLevelOptions: () => {
@@ -406,27 +406,43 @@ formatModuleForDisplay: (module) => {
 validateModuleData: (moduleData) => {
   const errors = [];
   
-  // Validate semester number
-  if (moduleData.semester_number !== null && 
-      (moduleData.semester_number < 1 || moduleData.semester_number > 12)) {
-    errors.push('Semester number must be between 1 and 12');
+  // Validate semester number - only if provided and element type is not ANNEE
+  if (moduleData.semester_number !== null && moduleData.element_type !== 'ANNEE') {
+    if (moduleData.semester_number < 1 || moduleData.semester_number > 12) {
+      errors.push('Semester number must be between 1 and 12');
+    }
   }
   
-  // NEW: Validate year level
-  if (moduleData.year_level !== null && 
-      (moduleData.year_level < 1 || moduleData.year_level > 6)) {
-    errors.push('Year level must be between 1 and 6');
+  // Validate year level - only if provided and element type is ANNEE
+  if (moduleData.year_level !== null && moduleData.element_type === 'ANNEE') {
+    if (moduleData.year_level < 1 || moduleData.year_level > 6) {
+      errors.push('Year level must be between 1 and 6');
+    }
   }
   
-  // Validate element type
-  const validTypes = ['SEMESTRE', 'MODULE', 'MATIERE', 'ANNEE'];
+  // Validate element type - UPDATED to include ANNEE
+  const validTypes = ['SEMESTRE', 'MODULE', 'MATIERE', 'ANNEE']; // ✅ Added ANNEE here
   if (moduleData.element_type && !validTypes.includes(moduleData.element_type)) {
-    errors.push('Invalid element type');
+    errors.push(`Invalid element type: ${moduleData.element_type}. Valid types are: ${validTypes.join(', ')}`);
   }
   
   // Validate required fields
   if (moduleData.lib_elp && moduleData.lib_elp.trim().length === 0) {
     errors.push('Module name cannot be empty');
+  }
+  
+  // Validate mutual exclusivity: ANNEE should have year_level, others should have semester_number
+  if (moduleData.element_type === 'ANNEE') {
+    if (moduleData.semester_number !== null) {
+      errors.push('ANNEE elements should not have a semester number');
+    }
+    if (moduleData.year_level === null) {
+      errors.push('ANNEE elements must have a year level');
+    }
+  } else if (moduleData.element_type !== 'ANNEE') {
+    if (moduleData.year_level !== null) {
+      errors.push('Only ANNEE elements can have a year level');
+    }
   }
   
   return {
