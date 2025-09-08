@@ -275,7 +275,7 @@ const StudentProfile = () => {
                 {studentData.lieu_naissance_arabe && (
                   <InfoRow
                     icon={<LocationIcon />}
-                    label="مكان الميلاد (بالعربية)"
+                    label=" مدينة الازدياد (بالعربية)"
                     value={studentData.lieu_naissance_arabe}
                     isArabic={true}
                   />

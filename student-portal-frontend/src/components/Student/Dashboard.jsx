@@ -27,7 +27,7 @@ import {
   Language as LanguageIcon,
   School as SchoolIcon,
   Grade as GradeIcon,
-  BarChart as StatsIcon,
+  Report as ReportIcon, // Changed from BarChart to Report
   Dashboard as DashboardIcon,
   Menu as MenuIcon,
   Description as DescriptionIcon,
@@ -120,8 +120,8 @@ const Dashboard = () => {
     },
     {
       id: 'stats',
-      label: 'الإحصائيات - Statistics',
-      icon: <StatsIcon />,
+      label: 'الشكايات والطلبات',
+      icon: <ReportIcon />,
       color: '#9b59b6'
     }
   ];

@@ -347,6 +347,368 @@ app.get('/student/transcript/:semester/pdf', authenticateToken, async (req, res)
   }
 });
 
+// Add these endpoints to your server.js file after the existing student endpoints
+
+// Create reclamations table if not exists
+const createReclamationsTable = async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS reclamations (
+        id SERIAL PRIMARY KEY,
+        cod_etu VARCHAR(20) NOT NULL,
+        type VARCHAR(50) NOT NULL,
+        subject VARCHAR(200) NOT NULL,
+        description TEXT NOT NULL,
+        module_code VARCHAR(20),
+        academic_year VARCHAR(10),
+        semester VARCHAR(10),
+        urgency VARCHAR(20) DEFAULT 'normal',
+        status VARCHAR(20) DEFAULT 'pending',
+        admin_response TEXT,
+        responded_by VARCHAR(100),
+        responded_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (cod_etu) REFERENCES students(cod_etu)
+      )
+    `);
+
+    // Create indexes for better performance
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_reclamations_cod_etu ON reclamations(cod_etu);
+      CREATE INDEX IF NOT EXISTS idx_reclamations_status ON reclamations(status);
+      CREATE INDEX IF NOT EXISTS idx_reclamations_type ON reclamations(type);
+      CREATE INDEX IF NOT EXISTS idx_reclamations_urgency ON reclamations(urgency);
+      CREATE INDEX IF NOT EXISTS idx_reclamations_created_at ON reclamations(created_at);
+    `);
+
+    console.log('✓ Reclamations table created successfully');
+  } catch (error) {
+    console.error('Error creating reclamations table:', error);
+  }
+};
+
+// Call this function when the server starts
+createReclamationsTable();
+
+// Get student reclamations
+app.get('/student/reclamations', authenticateToken, async (req, res) => {
+  try {
+    const { status, type, limit = 50, offset = 0 } = req.query;
+
+    let query = `
+      SELECT 
+        r.*,
+        s.lib_nom_pat_ind,
+        s.lib_pr1_ind
+      FROM reclamations r
+      JOIN students s ON r.cod_etu = s.cod_etu
+      WHERE r.cod_etu = (
+        SELECT cod_etu FROM students WHERE id = $1
+      )
+    `;
+
+    let params = [req.user.studentId];
+    let paramIndex = 2;
+
+    if (status) {
+      query += ` AND r.status = $${paramIndex}`;
+      params.push(status);
+      paramIndex++;
+    }
+
+    if (type) {
+      query += ` AND r.type = $${paramIndex}`;
+      params.push(type);
+      paramIndex++;
+    }
+
+    query += ` ORDER BY r.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    params.push(limit, offset);
+
+    const result = await pool.query(query, params);
+
+    // Get total count
+    const countQuery = `
+      SELECT COUNT(*) 
+      FROM reclamations r
+      WHERE r.cod_etu = (
+        SELECT cod_etu FROM students WHERE id = $1
+      )
+      ${status ? 'AND r.status = $2' : ''}
+      ${type ? `AND r.type = $${status ? 3 : 2}` : ''}
+    `;
+
+    const countParams = [req.user.studentId];
+    if (status) countParams.push(status);
+    if (type) countParams.push(type);
+
+    const countResult = await pool.query(countQuery, countParams);
+
+    res.json({
+      reclamations: result.rows,
+      total: parseInt(countResult.rows[0].count),
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+  } catch (error) {
+    console.error('Get reclamations error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Submit new reclamation
+app.post('/student/reclamations', authenticateToken, async (req, res) => {
+  try {
+    const {
+      type,
+      subject,
+      description,
+      module_code,
+      academic_year,
+      semester,
+      urgency = 'normal'
+    } = req.body;
+
+    // Validation
+    if (!type || !subject || !description) {
+      return res.status(400).json({ 
+        error: 'Type, subject, and description are required' 
+      });
+    }
+
+    // Valid types
+    const validTypes = [
+      'grade_error', 'missing_grade', 'wrong_module', 
+      'attendance_issue', 'system_error', 'document_request', 'other'
+    ];
+
+    if (!validTypes.includes(type)) {
+      return res.status(400).json({ error: 'Invalid reclamation type' });
+    }
+
+    // Valid urgency levels
+    const validUrgency = ['low', 'normal', 'high', 'urgent'];
+    if (!validUrgency.includes(urgency)) {
+      return res.status(400).json({ error: 'Invalid urgency level' });
+    }
+
+    // Get student code
+    const studentResult = await pool.query(
+      'SELECT cod_etu FROM students WHERE id = $1',
+      [req.user.studentId]
+    );
+
+    if (studentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+
+    const cod_etu = studentResult.rows[0].cod_etu;
+
+    // Insert reclamation
+    const insertResult = await pool.query(`
+      INSERT INTO reclamations (
+        cod_etu, type, subject, description, module_code, 
+        academic_year, semester, urgency, status
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, 'pending'
+      ) RETURNING *
+    `, [
+      cod_etu, type, subject, description, module_code,
+      academic_year, semester, urgency
+    ]);
+
+    const newReclamation = insertResult.rows[0];
+
+    // Log the reclamation submission
+    console.log(`New reclamation submitted: ${newReclamation.id} by ${cod_etu}`);
+
+    res.status(201).json({
+      success: true,
+      reclamation: newReclamation,
+      message: 'Reclamation submitted successfully'
+    });
+
+  } catch (error) {
+    console.error('Submit reclamation error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get reclamation by ID
+app.get('/student/reclamations/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(`
+      SELECT 
+        r.*,
+        s.lib_nom_pat_ind,
+        s.lib_pr1_ind
+      FROM reclamations r
+      JOIN students s ON r.cod_etu = s.cod_etu
+      WHERE r.id = $1 AND r.cod_etu = (
+        SELECT cod_etu FROM students WHERE id = $2
+      )
+    `, [id, req.user.studentId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Reclamation not found' });
+    }
+
+    res.json({
+      reclamation: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error('Get reclamation error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update reclamation (only description can be updated by student)
+app.put('/student/reclamations/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { description } = req.body;
+
+    if (!description) {
+      return res.status(400).json({ error: 'Description is required' });
+    }
+
+    // Check if reclamation exists and belongs to student
+    const checkResult = await pool.query(`
+      SELECT status FROM reclamations 
+      WHERE id = $1 AND cod_etu = (
+        SELECT cod_etu FROM students WHERE id = $2
+      )
+    `, [id, req.user.studentId]);
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Reclamation not found' });
+    }
+
+    // Only allow updates if status is pending
+    if (checkResult.rows[0].status !== 'pending') {
+      return res.status(400).json({ 
+        error: 'Cannot update reclamation that is already being processed' 
+      });
+    }
+
+    // Update reclamation
+    const updateResult = await pool.query(`
+      UPDATE reclamations 
+      SET description = $1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $2 AND cod_etu = (
+        SELECT cod_etu FROM students WHERE id = $3
+      )
+      RETURNING *
+    `, [description, id, req.user.studentId]);
+
+    res.json({
+      success: true,
+      reclamation: updateResult.rows[0],
+      message: 'Reclamation updated successfully'
+    });
+
+  } catch (error) {
+    console.error('Update reclamation error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete reclamation (only if status is pending)
+app.delete('/student/reclamations/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Check if reclamation exists and belongs to student
+    const checkResult = await pool.query(`
+      SELECT status FROM reclamations 
+      WHERE id = $1 AND cod_etu = (
+        SELECT cod_etu FROM students WHERE id = $2
+      )
+    `, [id, req.user.studentId]);
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Reclamation not found' });
+    }
+
+    // Only allow deletion if status is pending
+    if (checkResult.rows[0].status !== 'pending') {
+      return res.status(400).json({ 
+        error: 'Cannot delete reclamation that is already being processed' 
+      });
+    }
+
+    // Delete reclamation
+    await pool.query(`
+      DELETE FROM reclamations 
+      WHERE id = $1 AND cod_etu = (
+        SELECT cod_etu FROM students WHERE id = $2
+      )
+    `, [id, req.user.studentId]);
+
+    res.json({
+      success: true,
+      message: 'Reclamation deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('Delete reclamation error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get reclamation statistics for student
+app.get('/student/reclamations/stats', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        COUNT(*) as total_reclamations,
+        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_count,
+        COUNT(CASE WHEN status = 'in_progress' THEN 1 END) as in_progress_count,
+        COUNT(CASE WHEN status = 'resolved' THEN 1 END) as resolved_count,
+        COUNT(CASE WHEN status = 'rejected' THEN 1 END) as rejected_count,
+        COUNT(CASE WHEN urgency = 'urgent' THEN 1 END) as urgent_count,
+        COUNT(CASE WHEN urgency = 'high' THEN 1 END) as high_priority_count
+      FROM reclamations 
+      WHERE cod_etu = (
+        SELECT cod_etu FROM students WHERE id = $1
+      )
+    `, [req.user.studentId]);
+
+    const typeStats = await pool.query(`
+      SELECT 
+        type,
+        COUNT(*) as count
+      FROM reclamations 
+      WHERE cod_etu = (
+        SELECT cod_etu FROM students WHERE id = $1
+      )
+      GROUP BY type
+      ORDER BY count DESC
+    `, [req.user.studentId]);
+
+    res.json({
+      summary: result.rows[0],
+      by_type: typeStats.rows
+    });
+
+  } catch (error) {
+    console.error('Get reclamation stats error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ADMIN ENDPOINTS FOR RECLAMATIONS MANAGEMENT
+
+
+
+
+// Get reclamation statistics (admin only)
+
 // Print transcript endpoint
 app.get('/student/transcript/:semester/print', authenticateToken, async (req, res) => {
   try {
