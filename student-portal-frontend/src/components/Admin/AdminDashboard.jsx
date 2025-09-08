@@ -25,6 +25,7 @@ import {
   AdminPanelSettings as AdminIcon,
   Dashboard as DashboardIcon,
   People as PeopleIcon,
+  PersonAdd as PersonAddIcon,  // ADD THIS LINE
   Sync as SyncIcon,
   Assessment as AssessmentIcon,
   Settings as SettingsIcon,
@@ -34,12 +35,15 @@ import {
 } from '@mui/icons-material';
 import { useAdmin } from '../../contexts/AdminContext';
 import { useNavigate } from 'react-router-dom';
+import ModuleManagement from './ModuleManagement';
+
 
 // Import admin page components (we'll create these next)
 import AdminOverview from './AdminOverview';
 import StudentManagement from './StudentManagement';
 import SyncManagement from './SyncManagement';
 import SystemHealth from './SystemHealth';
+import StudentRegistrations from './StudentRegistrations';
 
 const DRAWER_WIDTH = 280;
 
@@ -84,12 +88,24 @@ const AdminDashboard = () => {
       icon: <DashboardIcon />,
       color: '#3498db'
     },
+      {
+    id: 'registrations',  // NEW ITEM
+    label: 'Student Registrations',
+    icon: <PersonAddIcon />,
+    color: '#27ae60'
+  },
     {
       id: 'students',
       label: 'Student Management',
       icon: <PeopleIcon />,
       color: '#2ecc71'
     },
+      {
+    id: 'modules',  // ← ADD THIS
+    label: 'Module Management',
+    icon: <SettingsIcon />,
+    color: '#f39c12'
+  },
     {
       id: 'sync',
       label: 'Data Synchronization',
@@ -108,8 +124,12 @@ const AdminDashboard = () => {
     switch (currentPage) {
       case 'overview':
         return <AdminOverview onNavigate={handlePageChange} />;
+           case 'registrations':  // NEW CASE
+      return <StudentRegistrations />;
       case 'students':
         return <StudentManagement />;
+            case 'modules':  // ← ADD THIS CASE
+      return <ModuleManagement />;
       case 'sync':
         return <SyncManagement />;
       case 'system':

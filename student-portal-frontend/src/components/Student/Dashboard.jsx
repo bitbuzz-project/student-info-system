@@ -120,8 +120,8 @@ const Dashboard = () => {
     },
     {
       id: 'stats',
-      label: 'الشكايات والطلبات',
-      icon: <ReportIcon />,
+      label: ' الشكايات والطلبات',
+      icon: <StatsIcon />,
       color: '#9b59b6'
     }
   ];

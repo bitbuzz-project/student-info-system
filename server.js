@@ -1643,6 +1643,779 @@ app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin.html'));
 });
 
+// Add these routes to your server.js or create a new admin-modules-routes.js file
+
+// ===== ADMIN MODULE MANAGEMENT API ENDPOINTS =====
+
+// 1. GET all modules with their relationships and usage statistics
+app.get('/admin/modules', authenticateAdmin, async (req, res) => {
+  try {
+    const { search, element_type, semester, parent_code, page = 1, limit = 50 } = req.query;
+    
+    let whereConditions = [];
+    let params = [];
+    let paramIndex = 1;
+    
+    // Build dynamic query based on filters
+    if (search) {
+      whereConditions.push(`(
+        ep.cod_elp ILIKE $${paramIndex} OR 
+        ep.lib_elp ILIKE $${paramIndex} OR
+        ep.lib_elp_arb ILIKE $${paramIndex}
+      )`);
+      params.push(`%${search}%`);
+      paramIndex++;
+    }
+    
+    if (element_type) {
+      whereConditions.push(`ep.element_type = $${paramIndex}`);
+      params.push(element_type);
+      paramIndex++;
+    }
+    
+    if (semester) {
+      whereConditions.push(`ep.semester_number = $${paramIndex}`);
+      params.push(parseInt(semester));
+      paramIndex++;
+    }
+    
+    if (parent_code) {
+      whereConditions.push(`eh.cod_elp_pere = $${paramIndex}`);
+      params.push(parent_code);
+      paramIndex++;
+    }
+    
+    const whereClause = whereConditions.length > 0 
+      ? `WHERE ${whereConditions.join(' AND ')}`
+      : '';
+    
+    // Get total count for pagination
+    const countQuery = `
+      SELECT COUNT(DISTINCT ep.id) 
+      FROM element_pedagogi ep
+      LEFT JOIN element_hierarchy eh ON ep.cod_elp = eh.cod_elp_fils
+      ${whereClause}
+    `;
+    const countResult = await pool.query(countQuery, params);
+    const totalCount = parseInt(countResult.rows[0].count);
+    
+    // Main query with pagination
+    const offset = (page - 1) * limit;
+// Find the main modules query in server.js and replace it with this:
+  const dataQuery = `
+    SELECT 
+      ep.id,
+      ep.cod_elp,
+      ep.cod_cmp,
+      ep.cod_nel,
+      ep.cod_pel,
+      ep.lib_elp,
+      ep.lic_elp,
+      ep.lib_elp_arb,
+      ep.element_type,
+      ep.semester_number,
+      ep.year_level,
+      ep.last_sync,
+      eh.cod_elp_pere as parent_code,
+      parent_ep.lib_elp as parent_name,
+      -- Count how many times this module is used in grades
+      COALESCE(grade_usage.usage_count, 0) as grade_usage_count,
+      -- Count how many children this module has
+      COALESCE(children_count.child_count, 0) as children_count
+    FROM element_pedagogi ep
+    LEFT JOIN element_hierarchy eh ON ep.cod_elp = eh.cod_elp_fils
+    LEFT JOIN element_pedagogi parent_ep ON eh.cod_elp_pere = parent_ep.cod_elp
+    LEFT JOIN (
+      SELECT cod_elp, COUNT(*) as usage_count
+      FROM grades 
+      GROUP BY cod_elp
+    ) grade_usage ON ep.cod_elp = grade_usage.cod_elp
+    LEFT JOIN (
+      SELECT cod_elp_pere, COUNT(*) as child_count
+      FROM element_hierarchy
+      GROUP BY cod_elp_pere
+    ) children_count ON ep.cod_elp = children_count.cod_elp_pere
+    ${whereClause}
+    ORDER BY ep.element_type, ep.year_level NULLS LAST, ep.semester_number NULLS LAST, ep.cod_elp
+    LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+  `;
+      
+    const dataResult = await pool.query(dataQuery, [...params, limit, offset]);
+    
+    res.json({
+      modules: dataResult.rows,
+      pagination: {
+        current_page: parseInt(page),
+        total_pages: Math.ceil(totalCount / limit),
+        total_count: totalCount,
+        per_page: parseInt(limit)
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error fetching modules:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// 2. GET module details by ID
+app.get('/admin/modules/:id', authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+// Find and replace the module details query:
+const result = await pool.query(`
+  SELECT 
+    ep.*,
+    eh.cod_elp_pere as parent_code,
+    parent_ep.lib_elp as parent_name,
+    -- Get children
+    array_agg(
+      CASE WHEN child_eh.cod_elp_fils IS NOT NULL 
+      THEN json_build_object(
+        'cod_elp', child_eh.cod_elp_fils,
+        'lib_elp', child_ep.lib_elp
+      ) END
+    ) FILTER (WHERE child_eh.cod_elp_fils IS NOT NULL) as children
+  FROM element_pedagogi ep
+  LEFT JOIN element_hierarchy eh ON ep.cod_elp = eh.cod_elp_fils
+  LEFT JOIN element_pedagogi parent_ep ON eh.cod_elp_pere = parent_ep.cod_elp
+  LEFT JOIN element_hierarchy child_eh ON ep.cod_elp = child_eh.cod_elp_pere
+  LEFT JOIN element_pedagogi child_ep ON child_eh.cod_elp_fils = child_ep.cod_elp
+  WHERE ep.id = $1
+  GROUP BY ep.id, eh.cod_elp_pere, parent_ep.lib_elp
+`, [id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Module not found' });
+    }
+    
+    res.json({ module: result.rows[0] });
+    
+  } catch (error) {
+    console.error('Error fetching module details:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// 3. UPDATE module properties
+app.put('/admin/modules/:id', authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { 
+      lib_elp, 
+      lib_elp_arb, 
+      element_type, 
+      semester_number, 
+      year_level,  // ✅ Make sure this is included
+      cod_nel, 
+      cod_pel 
+    } = req.body;
+    
+    // ✅ Updated validation for year_level
+    if (year_level !== null && (year_level < 1 || year_level > 6)) {
+      return res.status(400).json({ error: 'Year level must be between 1 and 6' });
+    }
+    
+    // Validate semester_number
+    if (semester_number !== null && (semester_number < 1 || semester_number > 12)) {
+      return res.status(400).json({ error: 'Semester number must be between 1 and 12' });
+    }
+    
+    // ✅ Updated validation to include ANNEE
+    const validTypes = ['SEMESTRE', 'MODULE', 'MATIERE', 'ANNEE']; // Added ANNEE here
+    if (element_type && !validTypes.includes(element_type)) {
+      return res.status(400).json({ 
+        error: `Invalid element type: ${element_type}. Valid types are: ${validTypes.join(', ')}` 
+      });
+    }
+    
+    // ✅ Updated SQL query to include year_level
+    const result = await pool.query(`
+      UPDATE element_pedagogi 
+      SET 
+        lib_elp = COALESCE($1, lib_elp),
+        lib_elp_arb = COALESCE($2, lib_elp_arb),
+        element_type = COALESCE($3, element_type),
+        semester_number = COALESCE($4, semester_number),
+        year_level = COALESCE($5, year_level),  -- ✅ Include year_level in update
+        cod_nel = COALESCE($6, cod_nel),
+        cod_pel = COALESCE($7, cod_pel),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $8
+      RETURNING *
+    `, [lib_elp, lib_elp_arb, element_type, semester_number, year_level, cod_nel, cod_pel, id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Module not found' });
+    }
+    
+    // Log the change
+    console.log(`Module updated by admin ${req.admin.username}:`, {
+      module_id: id,
+      changes: req.body,
+      timestamp: new Date().toISOString()
+    });
+    
+    res.json({ 
+      success: true, 
+      message: 'Module updated successfully',
+      module: result.rows[0]
+    });
+    
+  } catch (error) {
+    console.error('Error updating module:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+// 4. UPDATE module parent relationship
+app.put('/admin/modules/:id/parent', authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { parent_code } = req.body;
+    
+    // Get the module's cod_elp
+    const moduleResult = await pool.query(
+      'SELECT cod_elp FROM element_pedagogi WHERE id = $1', 
+      [id]
+    );
+    
+    if (moduleResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Module not found' });
+    }
+    
+    const cod_elp = moduleResult.rows[0].cod_elp;
+    
+    // Begin transaction
+    await pool.query('BEGIN');
+    
+    try {
+      // Remove existing parent relationship
+      await pool.query(
+        'DELETE FROM element_hierarchy WHERE cod_elp_fils = $1', 
+        [cod_elp]
+      );
+      
+      // Add new parent relationship if parent_code is provided
+      if (parent_code && parent_code.trim() !== '') {
+        // Verify parent exists
+        const parentExists = await pool.query(
+          'SELECT 1 FROM element_pedagogi WHERE cod_elp = $1', 
+          [parent_code]
+        );
+        
+        if (parentExists.rows.length === 0) {
+          throw new Error('Parent module not found');
+        }
+        
+        // Prevent circular relationships
+        const circularCheck = await pool.query(`
+          WITH RECURSIVE hierarchy_check AS (
+            SELECT cod_elp_pere, cod_elp_fils, 1 as level
+            FROM element_hierarchy
+            WHERE cod_elp_fils = $1
+            
+            UNION ALL
+            
+            SELECT eh.cod_elp_pere, eh.cod_elp_fils, hc.level + 1
+            FROM element_hierarchy eh
+            JOIN hierarchy_check hc ON eh.cod_elp_fils = hc.cod_elp_pere
+            WHERE hc.level < 10
+          )
+          SELECT 1 FROM hierarchy_check WHERE cod_elp_pere = $2
+        `, [parent_code, cod_elp]);
+        
+        if (circularCheck.rows.length > 0) {
+          throw new Error('Circular relationship detected');
+        }
+        
+        // Insert new relationship
+        await pool.query(
+          'INSERT INTO element_hierarchy (cod_elp_pere, cod_elp_fils) VALUES ($1, $2)', 
+          [parent_code, cod_elp]
+        );
+      }
+      
+      await pool.query('COMMIT');
+      
+      // Log the change
+      console.log(`Module parent updated by admin ${req.admin.username}:`, {
+        module_id: id,
+        module_code: cod_elp,
+        new_parent: parent_code,
+        timestamp: new Date().toISOString()
+      });
+      
+      res.json({ 
+        success: true, 
+        message: parent_code ? 'Parent relationship updated' : 'Parent relationship removed'
+      });
+      
+    } catch (error) {
+      await pool.query('ROLLBACK');
+      throw error;
+    }
+    
+  } catch (error) {
+    console.error('Error updating module parent:', error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+});
+
+// 5. GET available parents (modules that can be parents)
+app.get('/admin/modules/available-parents', authenticateAdmin, async (req, res) => {
+  try {
+    const { search } = req.query;
+    
+    let whereClause = "WHERE element_type IN ('SEMESTRE', 'MODULE')";
+    let params = [];
+    
+    if (search) {
+      whereClause += " AND (cod_elp ILIKE $1 OR lib_elp ILIKE $1)";
+      params.push(`%${search}%`);
+    }
+    
+    const result = await pool.query(`
+      SELECT cod_elp, lib_elp, element_type, semester_number
+      FROM element_pedagogi 
+      ${whereClause}
+      ORDER BY semester_number NULLS LAST, element_type, cod_elp
+      LIMIT 100
+    `, params);
+    
+    res.json({ parents: result.rows });
+    
+  } catch (error) {
+    console.error('Error fetching available parents:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// 6. GET module usage statistics
+app.get('/admin/modules/:id/usage', authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Get module code first
+    const moduleResult = await pool.query(
+      'SELECT cod_elp FROM element_pedagogi WHERE id = $1', 
+      [id]
+    );
+    
+    if (moduleResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Module not found' });
+    }
+    
+    const cod_elp = moduleResult.rows[0].cod_elp;
+    
+    // Get usage statistics
+    const usageStats = await pool.query(`
+      SELECT 
+        COUNT(*) as total_grades,
+        COUNT(DISTINCT cod_etu) as unique_students,
+        COUNT(CASE WHEN cod_anu = 2024 THEN 1 END) as grades_2024,
+        COUNT(CASE WHEN cod_anu = 2023 THEN 1 END) as grades_2023,
+        AVG(CASE WHEN not_elp IS NOT NULL THEN not_elp END) as average_grade
+      FROM grades 
+      WHERE cod_elp = $1
+    `, [cod_elp]);
+    
+    // Get grade distribution by year and session
+    const distribution = await pool.query(`
+      SELECT 
+        cod_anu,
+        cod_ses,
+        COUNT(*) as count,
+        AVG(CASE WHEN not_elp IS NOT NULL THEN not_elp END) as avg_grade
+      FROM grades 
+      WHERE cod_elp = $1
+      GROUP BY cod_anu, cod_ses
+      ORDER BY cod_anu DESC, cod_ses
+    `, [cod_elp]);
+    
+    res.json({
+      usage_statistics: usageStats.rows[0],
+      distribution: distribution.rows
+    });
+    
+  } catch (error) {
+    console.error('Error fetching module usage:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// 7. BULK update semester assignments
+app.post('/admin/modules/bulk-update-semester', authenticateAdmin, async (req, res) => {
+  try {
+    const { updates } = req.body; // Array of { id, semester_number }
+    
+    if (!Array.isArray(updates) || updates.length === 0) {
+      return res.status(400).json({ error: 'Updates array is required' });
+    }
+    
+    // Validate all updates
+    for (const update of updates) {
+      if (!update.id || (update.semester_number !== null && (update.semester_number < 1 || update.semester_number > 12))) {
+        return res.status(400).json({ error: 'Invalid update data' });
+      }
+    }
+    
+    await pool.query('BEGIN');
+    
+    let updatedCount = 0;
+    
+    for (const update of updates) {
+      const result = await pool.query(`
+        UPDATE element_pedagogi 
+        SET semester_number = $1, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $2
+      `, [update.semester_number, update.id]);
+      
+      if (result.rowCount > 0) {
+        updatedCount++;
+      }
+    }
+    
+    await pool.query('COMMIT');
+    
+    // Log the bulk change
+    console.log(`Bulk semester update by admin ${req.admin.username}:`, {
+      updates_count: updatedCount,
+      total_requested: updates.length,
+      timestamp: new Date().toISOString()
+    });
+    
+    res.json({ 
+      success: true, 
+      message: `Successfully updated ${updatedCount} modules`,
+      updated_count: updatedCount
+    });
+    
+  } catch (error) {
+    await pool.query('ROLLBACK');
+    console.error('Error in bulk update:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Add these endpoints to your server.js file
+
+// ===== STUDENT REGISTRATION MANAGEMENT ENDPOINTS =====
+
+// Get student registrations with filters
+app.get('/admin/registrations', authenticateAdmin, async (req, res) => {
+  try {
+    const { year, user, dateFrom, dateTo, limit = 50 } = req.query;
+    
+    let whereConditions = ['nbr_ins_cyc = 1']; // Only new registrations (first cycle)
+    let params = [];
+    let paramIndex = 1;
+    
+    // Add year filter
+    if (year) {
+      whereConditions.push(`cod_anu = $${paramIndex}`);
+      params.push(year);
+      paramIndex++;
+    }
+    
+    // Add user filter
+    if (user) {
+      whereConditions.push(`cod_uti = $${paramIndex}`);
+      params.push(user);
+      paramIndex++;
+    }
+    
+    // Add date range filters
+    if (dateFrom) {
+      whereConditions.push(`dat_cre_iae >= $${paramIndex}::date`);
+      params.push(dateFrom);
+      paramIndex++;
+    }
+    
+    if (dateTo) {
+      whereConditions.push(`dat_cre_iae <= $${paramIndex}::date`);
+      params.push(dateTo);
+      paramIndex++;
+    }
+    
+    const whereClause = whereConditions.length > 0 
+      ? `WHERE ${whereConditions.join(' AND ')}`
+      : '';
+    
+    // Get recent registrations
+    const recentRegistrationsQuery = `
+      SELECT 
+        cod_etu,
+        lib_nom_pat_ind,
+        lib_pr1_ind,
+        lib_nom_ind_arb,
+        lib_prn_ind_arb,
+        cod_anu,
+        dat_cre_iae,
+        cod_uti,
+        lib_etp,
+        nbr_ins_cyc,
+        created_at
+      FROM students 
+      ${whereClause}
+      ORDER BY dat_cre_iae DESC, created_at DESC
+      LIMIT $${paramIndex}
+    `;
+    
+    const recentRegistrations = await pool.query(recentRegistrationsQuery, [...params, limit]);
+    
+    // Get available filter options
+    const availableYearsQuery = `
+      SELECT DISTINCT cod_anu 
+      FROM students 
+      WHERE nbr_ins_cyc = 1 
+      ORDER BY cod_anu DESC
+    `;
+    const availableYears = await pool.query(availableYearsQuery);
+    
+    const availableUsersQuery = `
+      SELECT DISTINCT cod_uti 
+      FROM students 
+      WHERE nbr_ins_cyc = 1 AND cod_uti IS NOT NULL
+      ORDER BY cod_uti
+    `;
+    const availableUsers = await pool.query(availableUsersQuery);
+    
+    res.json({
+      recent_registrations: recentRegistrations.rows,
+      available_years: availableYears.rows.map(row => row.cod_anu),
+      available_users: availableUsers.rows.map(row => row.cod_uti),
+      total_found: recentRegistrations.rows.length
+    });
+    
+  } catch (error) {
+    console.error('Error getting student registrations:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get registration statistics
+app.get('/admin/registrations/stats', authenticateAdmin, async (req, res) => {
+  try {
+    const { year, user, dateFrom, dateTo } = req.query;
+    
+    let whereConditions = ['nbr_ins_cyc = 1']; // Only new registrations
+    let params = [];
+    let paramIndex = 1;
+    
+    // Build where clause for filters
+    if (year) {
+      whereConditions.push(`cod_anu = $${paramIndex}`);
+      params.push(year);
+      paramIndex++;
+    }
+    
+    if (user) {
+      whereConditions.push(`cod_uti = $${paramIndex}`);
+      params.push(user);
+      paramIndex++;
+    }
+    
+    if (dateFrom) {
+      whereConditions.push(`dat_cre_iae >= $${paramIndex}::date`);
+      params.push(dateFrom);
+      paramIndex++;
+    }
+    
+    if (dateTo) {
+      whereConditions.push(`dat_cre_iae <= $${paramIndex}::date`);
+      params.push(dateTo);
+      paramIndex++;
+    }
+    
+    const whereClause = whereConditions.length > 0 
+      ? `WHERE ${whereConditions.join(' AND ')}`
+      : '';
+    
+    // Get summary statistics
+    const summaryQuery = `
+      SELECT 
+        COUNT(*) as total_new_registrations,
+        COUNT(CASE WHEN dat_cre_iae = CURRENT_DATE THEN 1 END) as registrations_today,
+        COUNT(CASE WHEN dat_cre_iae >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as registrations_this_week,
+        COUNT(DISTINCT lib_etp) as unique_programs,
+        COUNT(DISTINCT cod_uti) as unique_users
+      FROM students 
+      ${whereClause}
+    `;
+    
+    const summaryResult = await pool.query(summaryQuery, params);
+    const summary = summaryResult.rows[0];
+    
+    // Get daily trends
+    const dailyTrendsQuery = `
+      SELECT 
+        DATE(dat_cre_iae) as registration_date,
+        cod_anu,
+        cod_uti,
+        COUNT(*) as daily_count,
+        COUNT(DISTINCT lib_etp) as programs_count
+      FROM students 
+      ${whereClause}
+      AND dat_cre_iae >= CURRENT_DATE - INTERVAL '30 days'
+      GROUP BY DATE(dat_cre_iae), cod_anu, cod_uti
+      ORDER BY registration_date DESC, daily_count DESC
+      LIMIT 50
+    `;
+    
+    const dailyTrendsResult = await pool.query(dailyTrendsQuery, params);
+    
+    // Get program breakdown
+    const programBreakdownQuery = `
+      SELECT 
+        lib_etp,
+        cod_anu,
+        COUNT(*) as count,
+        MAX(dat_cre_iae) as latest_registration
+      FROM students 
+      ${whereClause}
+      GROUP BY lib_etp, cod_anu
+      ORDER BY count DESC, latest_registration DESC
+      LIMIT 20
+    `;
+    
+    const programBreakdownResult = await pool.query(programBreakdownQuery, params);
+    
+    // Get monthly trends for chart
+    const monthlyTrendsQuery = `
+      SELECT 
+        DATE_TRUNC('month', dat_cre_iae) as month,
+        COUNT(*) as count
+      FROM students 
+      ${whereClause}
+      AND dat_cre_iae >= CURRENT_DATE - INTERVAL '12 months'
+      GROUP BY DATE_TRUNC('month', dat_cre_iae)
+      ORDER BY month DESC
+    `;
+    
+    const monthlyTrendsResult = await pool.query(monthlyTrendsQuery, params);
+    
+    res.json({
+      summary: {
+        total_new_registrations: parseInt(summary.total_new_registrations),
+        registrations_today: parseInt(summary.registrations_today),
+        registrations_this_week: parseInt(summary.registrations_this_week),
+        unique_programs: parseInt(summary.unique_programs),
+        unique_users: parseInt(summary.unique_users)
+      },
+      daily_trends: dailyTrendsResult.rows,
+      program_breakdown: programBreakdownResult.rows,
+      monthly_trends: monthlyTrendsResult.rows
+    });
+    
+  } catch (error) {
+    console.error('Error getting registration statistics:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Export registrations data as CSV
+app.get('/admin/registrations/export', authenticateAdmin, async (req, res) => {
+  try {
+    const { year, user, dateFrom, dateTo } = req.query;
+    
+    let whereConditions = ['nbr_ins_cyc = 1']; // Only new registrations
+    let params = [];
+    let paramIndex = 1;
+    
+    // Build where clause
+    if (year) {
+      whereConditions.push(`cod_anu = $${paramIndex}`);
+      params.push(year);
+      paramIndex++;
+    }
+    
+    if (user) {
+      whereConditions.push(`cod_uti = $${paramIndex}`);
+      params.push(user);
+      paramIndex++;
+    }
+    
+    if (dateFrom) {
+      whereConditions.push(`dat_cre_iae >= $${paramIndex}::date`);
+      params.push(dateFrom);
+      paramIndex++;
+    }
+    
+    if (dateTo) {
+      whereConditions.push(`dat_cre_iae <= $${paramIndex}::date`);
+      params.push(dateTo);
+      paramIndex++;
+    }
+    
+    const whereClause = whereConditions.length > 0 
+      ? `WHERE ${whereConditions.join(' AND ')}`
+      : '';
+    
+    const exportQuery = `
+      SELECT 
+        cod_etu as "Student Code",
+        lib_nom_pat_ind as "Last Name",
+        lib_pr1_ind as "First Name",
+        lib_nom_ind_arb as "Arabic Last Name",
+        lib_prn_ind_arb as "Arabic First Name",
+        cin_ind as "CIN",
+        cod_anu as "Academic Year",
+        lib_etp as "Program",
+        dat_cre_iae as "Registration Date",
+        cod_uti as "Created By",
+        nbr_ins_cyc as "Cycle Registrations",
+        nbr_ins_etp as "Program Registrations",
+        cod_sex_etu as "Gender",
+        lib_vil_nai_etu as "Birth Place",
+        date_nai_ind as "Birth Date"
+      FROM students 
+      ${whereClause}
+      ORDER BY dat_cre_iae DESC, lib_nom_pat_ind, lib_pr1_ind
+    `;
+    
+    const result = await pool.query(exportQuery, params);
+    
+    // Convert to CSV
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No data found for export' });
+    }
+    
+    // Create CSV header
+    const headers = Object.keys(result.rows[0]);
+    let csv = headers.join(',') + '\n';
+    
+    // Add data rows
+    result.rows.forEach(row => {
+      const values = headers.map(header => {
+        const value = row[header];
+        // Escape commas and quotes in CSV
+        if (value === null || value === undefined) return '';
+        const stringValue = String(value);
+        if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
+          return `"${stringValue.replace(/"/g, '""')}"`;
+        }
+        return stringValue;
+      });
+      csv += values.join(',') + '\n';
+    });
+    
+    // Set response headers for CSV download
+    const filename = `student_registrations_${new Date().toISOString().split('T')[0]}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    
+    // Add BOM for proper UTF-8 encoding in Excel
+    res.send('\ufeff' + csv);
+    
+  } catch (error) {
+    console.error('Error exporting registrations:', error);
+    res.status(500).json({ error: 'Failed to export data' });
+  }
+});
+module.exports = {
+  // Export these routes if you're using a separate file
+};
 // Admin - Get system statistics (with auth)
 app.get('/admin/stats', authenticateAdmin, async (req, res) => {
   try {
