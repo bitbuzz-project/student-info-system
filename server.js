@@ -166,6 +166,33 @@ app.get('/student/official-documents', authenticateToken, async (req, res) => {
   }
 });
 
+
+
+app.get('/student/request/student-card/status', authenticateToken, async (req, res) => {
+  try {
+    const studentResult = await pool.query(
+      'SELECT cod_etu FROM students WHERE id = $1',
+      [req.user.studentId]
+    );
+
+    if (studentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+    const cod_etu = studentResult.rows[0].cod_etu;
+
+    const existingRequest = await pool.query(
+      "SELECT id FROM student_card_requests WHERE cod_etu = $1 AND status = 'pending'",
+      [cod_etu]
+    );
+
+    res.json({ has_pending_request: existingRequest.rows.length > 0 });
+
+  } catch (error) {
+    console.error('Check student card request status error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // PDF Generation endpoint for transcripts
 app.get('/student/transcript/:semester/pdf', authenticateToken, async (req, res) => {
   try {
@@ -3043,6 +3070,17 @@ app.post('/student/request/student-card', authenticateToken, upload.single('proo
     }
 
     const cod_etu = studentResult.rows[0].cod_etu;
+
+    // Check for an existing pending request
+    const existingRequest = await pool.query(
+        "SELECT id FROM student_card_requests WHERE cod_etu = $1 AND status = 'pending'",
+        [cod_etu]
+    );
+
+    if (existingRequest.rows.length > 0) {
+        return res.status(400).json({ error: 'You already have a pending request.' });
+    }
+
     const proofOfLossPath = req.file.path;
 
     const result = await pool.query(
@@ -3062,29 +3100,3 @@ app.post('/student/request/student-card', authenticateToken, upload.single('proo
   }
 });
 
-// Admin endpoint to get all student card requests
-app.get('/admin/student-card-requests', authenticateAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT 
-        scr.id, 
-        scr.status, 
-        scr.created_at,
-        s.cod_etu,
-        s.lib_nom_pat_ind,
-        s.lib_pr1_ind,
-        s.cin_ind
-      FROM student_card_requests scr
-      JOIN students s ON scr.cod_etu = s.cod_etu
-      ORDER BY scr.created_at DESC
-    `);
-    
-    res.json({
-      requests: result.rows
-    });
-
-  } catch (error) {
-    console.error('Get student card requests error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});

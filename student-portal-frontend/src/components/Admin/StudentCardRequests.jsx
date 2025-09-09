@@ -87,6 +87,7 @@ const StudentCardRequests = () => {
 
 // Add this function to the adminAPI object in src/services/api.js
 adminAPI.getStudentCardRequests = async () => {
+    // The endpoint is now '/admin/student-card-requests'
     const response = await api.get('/admin/student-card-requests');
     return response.data;
 };

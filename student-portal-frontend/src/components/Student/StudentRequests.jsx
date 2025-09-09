@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -29,6 +29,25 @@ const RequestStudentCard = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [submitError, setSubmitError] = useState(null);
+  const [hasPendingRequest, setHasPendingRequest] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const checkPendingRequest = async () => {
+      try {
+        const response = await studentAPI.getStudentCardRequestStatus();
+        if (response.has_pending_request) {
+          setHasPendingRequest(true);
+        }
+      } catch (err) {
+        // Silently fail, but log for debugging
+        console.error("Could not check for pending requests:", err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    checkPendingRequest();
+  }, []);
 
   const handleFileChange = (event) => {
     setProofOfLoss(event.target.files[0]);
@@ -51,6 +70,7 @@ const RequestStudentCard = () => {
     try {
       await studentAPI.requestStudentCard(formData);
       setSubmitSuccess(true);
+      setHasPendingRequest(true); // After successful submission, there is a pending request
       setProofOfLoss(null);
     } catch (err) {
       setSubmitError(err.response?.data?.error || 'حدث خطأ أثناء إرسال الطلب.');
@@ -58,6 +78,26 @@ const RequestStudentCard = () => {
       setIsSubmitting(false);
     }
   };
+
+  if (isLoading) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  if (hasPendingRequest) {
+    return (
+      <Card>
+        <CardContent>
+          <Alert severity="info">
+            لديك بالفعل طلب قيد المراجعة. سيتم إعلامك عند معالجته.
+          </Alert>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>

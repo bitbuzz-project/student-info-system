@@ -80,7 +80,10 @@ export const studentAPI = {
     const response = await api.get('/student/me');
     return response.data;
   },
-  
+  getStudentCardRequestStatus: async () => {
+    const response = await api.get('/student/request/student-card/status');
+    return response.data;
+  },
   getPedagogicalSituation: async (filters = {}) => {
     const params = new URLSearchParams();
     if (filters.year) params.append('year', filters.year);

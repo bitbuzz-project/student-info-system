@@ -568,7 +568,31 @@ router.get('/system/health', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Health check failed' });
   }
 });
+router.get('/student-card-requests', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        scr.id,
+        scr.status,
+        scr.created_at,
+        s.cod_etu,
+        s.lib_nom_pat_ind,
+        s.lib_pr1_ind,
+        s.cin_ind
+      FROM student_card_requests scr
+      JOIN students s ON scr.cod_etu = s.cod_etu
+      ORDER BY scr.created_at DESC
+    `);
 
+    res.json({
+      requests: result.rows
+    });
+
+  } catch (error) {
+    console.error('Get student card requests error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 // Get system statistics
 router.get('/system/stats', authenticateAdmin, async (req, res) => {
   try {
