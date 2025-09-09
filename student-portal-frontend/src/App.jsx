@@ -9,6 +9,7 @@ import ProtectedRoute from './components/Auth/ProtectedRoute';
 import Dashboard from './components/Student/Dashboard';
 import Loading from './components/common/Loading';
 import StudentRequests from './components/Student/StudentRequests'; // 1. Import the new component
+import StudentCardRequests from './components/Admin/StudentCardRequests';
 
 // Admin Components
 import AdminLogin from './components/Admin/AdminLogin';
@@ -58,6 +59,8 @@ function App() {
       {/* Catch all route */}
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
       <Route path="requests" element={<StudentRequests />} />
+      <Route path="/admin/student-card-requests" element={<AdminProtectedRoute><StudentCardRequests /></AdminProtectedRoute>} />
+
     </Routes>
   );
 }

@@ -8,6 +8,8 @@ require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const multer = require('multer');
+const upload = multer({ dest: 'uploads/' }); 
 
 // Middleware
 app.use(cors());
@@ -2995,6 +2997,94 @@ app.get('/student/pedagogical-stats', authenticateToken, async (req, res) => {
     
   } catch (error) {
     console.error('Get pedagogical stats error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+
+
+// Create student_card_requests table if not exists
+const createStudentCardRequestsTable = async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS student_card_requests (
+        id SERIAL PRIMARY KEY,
+        cod_etu VARCHAR(20) NOT NULL,
+        proof_of_loss_path TEXT NOT NULL,
+        status VARCHAR(20) DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (cod_etu) REFERENCES students(cod_etu)
+      )
+    `);
+    console.log('✓ Student Card Requests table created successfully');
+  } catch (error) {
+    console.error('Error creating student_card_requests table:', error);
+  }
+};
+
+// Call this function when the server starts
+createStudentCardRequestsTable();
+
+// Handle student card request
+app.post('/student/request/student-card', authenticateToken, upload.single('proofOfLoss'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Proof of loss file is required' });
+    }
+
+    const studentResult = await pool.query(
+      'SELECT cod_etu FROM students WHERE id = $1',
+      [req.user.studentId]
+    );
+
+    if (studentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+
+    const cod_etu = studentResult.rows[0].cod_etu;
+    const proofOfLossPath = req.file.path;
+
+    const result = await pool.query(
+      'INSERT INTO student_card_requests (cod_etu, proof_of_loss_path) VALUES ($1, $2) RETURNING *',
+      [cod_etu, proofOfLossPath]
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Student card request submitted successfully',
+      request: result.rows[0],
+    });
+
+  } catch (error) {
+    console.error('Submit student card request error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin endpoint to get all student card requests
+app.get('/admin/student-card-requests', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        scr.id, 
+        scr.status, 
+        scr.created_at,
+        s.cod_etu,
+        s.lib_nom_pat_ind,
+        s.lib_pr1_ind,
+        s.cin_ind
+      FROM student_card_requests scr
+      JOIN students s ON scr.cod_etu = s.cod_etu
+      ORDER BY scr.created_at DESC
+    `);
+    
+    res.json({
+      requests: result.rows
+    });
+
+  } catch (error) {
+    console.error('Get student card requests error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

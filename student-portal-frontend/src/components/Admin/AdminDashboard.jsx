@@ -31,11 +31,14 @@ import {
   Settings as SettingsIcon,
   Menu as MenuIcon,
   MoreVert as MoreVertIcon,
+  CreditCard as CreditCardIcon, // Icon for card requests
+
   Home as HomeIcon
 } from '@mui/icons-material';
 import { useAdmin } from '../../contexts/AdminContext';
 import { useNavigate } from 'react-router-dom';
 import ModuleManagement from './ModuleManagement';
+import StudentCardRequests from './StudentCardRequests';
 
 
 // Import admin page components (we'll create these next)
@@ -112,6 +115,12 @@ const AdminDashboard = () => {
       icon: <SyncIcon />,
       color: '#e74c3c'
     },
+      {
+    id: 'card-requests',
+    label: 'Student Card Requests',
+    icon: <CreditCardIcon />,
+    color: '#1abc9c'
+  },
     {
       id: 'system',
       label: 'System Health',
@@ -134,6 +143,8 @@ const AdminDashboard = () => {
         return <SyncManagement />;
       case 'system':
         return <SystemHealth />;
+      case 'card-requests':
+        return <StudentCardRequests />;
       default:
         return <AdminOverview onNavigate={handlePageChange} />;
     }

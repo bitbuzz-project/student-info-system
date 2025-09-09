@@ -89,7 +89,7 @@ export const studentAPI = {
     return response.data;
   },
     getGradeStats: () => apiClient.get('/student/grades/stats').then(res => res.data),
-  requestStudentCard: (formData) => apiClient.post('/student/request/student-card', formData, {
+  requestStudentCard: (formData) => api.post('/student/request/student-card', formData, {
     headers: {
       'Content-Type': 'multipart/form-data'
     }
@@ -172,6 +172,7 @@ export const adminAPI = {
     }
     return response.data;
   },
+
   // Student Registration Management APIs
 getStudentRegistrations: async (params = {}) => {
   const searchParams = new URLSearchParams();
@@ -496,7 +497,11 @@ validateModuleData: (moduleData) => {
     return exportData;
 
     
-  }
+  },
+   getStudentCardRequests: async () => {
+    const response = await api.get('/admin/student-card-requests');
+    return response.data;
+  },
 
 
 
