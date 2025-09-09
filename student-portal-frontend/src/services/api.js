@@ -9,6 +9,7 @@ const api = axios.create({
   },
 });
 
+
 // Request interceptor to add auth token
 api.interceptors.request.use(
   (config) => {
@@ -87,6 +88,12 @@ export const studentAPI = {
     const response = await api.get(`/student/pedagogical-situation?${params}`);
     return response.data;
   },
+    getGradeStats: () => apiClient.get('/student/grades/stats').then(res => res.data),
+  requestStudentCard: (formData) => apiClient.post('/student/request/student-card', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    }
+  }).then(res => res.data),
   
   getPedagogicalStats: async () => {
     const response = await api.get('/student/pedagogical-stats');

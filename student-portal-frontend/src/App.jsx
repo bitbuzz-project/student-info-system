@@ -8,6 +8,7 @@ import LoginForm from './components/Auth/LoginForm';
 import ProtectedRoute from './components/Auth/ProtectedRoute';
 import Dashboard from './components/Student/Dashboard';
 import Loading from './components/common/Loading';
+import StudentRequests from './components/Student/StudentRequests'; // 1. Import the new component
 
 // Admin Components
 import AdminLogin from './components/Admin/AdminLogin';
@@ -34,7 +35,8 @@ function App() {
           </ProtectedRoute>
         } 
       />
-      
+        
+    
       {/* Admin Routes */}
       <Route path="/admin/login" element={<AdminLogin />} />
       <Route 
@@ -55,6 +57,7 @@ function App() {
       
       {/* Catch all route */}
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      <Route path="requests" element={<StudentRequests />} />
     </Routes>
   );
 }

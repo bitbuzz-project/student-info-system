@@ -27,6 +27,7 @@ import {
   Language as LanguageIcon,
   School as SchoolIcon,
   Grade as GradeIcon,
+  QueryStats as StatsIcon,
   Report as ReportIcon, // Changed from BarChart to Report
   Dashboard as DashboardIcon,
   Menu as MenuIcon,
@@ -43,6 +44,7 @@ import StudentProfile from './StudentProfile';
 import StudentGrades from './StudentGrades';
 import StudentStats from './StudentStats';
 import PedagogicalSituation from './PedagogicalSituation';
+import StudentRequests from './StudentRequests'; // 1. Import the new component
 
 const DRAWER_WIDTH = 280;
 
@@ -120,10 +122,16 @@ const Dashboard = () => {
     },
     {
       id: 'stats',
-      label: ' الشكايات والطلبات',
+      label: 'الاحصائيات',
       icon: <StatsIcon />,
       color: '#9b59b6'
-    }
+    },
+    {
+            id: 'requests',
+            label: 'الشكايات والطلبات',
+            icon: <ReportIcon/>,
+            color: '#c62b3dff'
+        }
   ];
 
   const renderPageContent = () => {
@@ -140,6 +148,8 @@ const Dashboard = () => {
         return <StudentGrades />;
       case 'stats':
         return <StudentStats />;
+         case 'requests':
+            return <StudentRequests />;
       default:
         return <DashboardHome onNavigate={handlePageChange} />;
     }
