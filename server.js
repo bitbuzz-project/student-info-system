@@ -64,6 +64,7 @@ app.get('/student/official-documents', authenticateToken, async (req, res) => {
         ep.lib_elp_arb,
         ep.element_type,
         ep.semester_number,
+        ep.year_level,
         ep.cod_pel,
         ep.cod_nel
       FROM official_documents od
@@ -77,11 +78,11 @@ app.get('/student/official-documents', authenticateToken, async (req, res) => {
     let paramIndex = 2;
 
     if (semester) {
-      query += ` AND ep.semester_number = $${paramIndex}`;
+      query += ` AND (ep.semester_number = $${paramIndex} OR ep.year_level = $${paramIndex})`;
       params.push(semester);
     }
 
-    query += ` ORDER BY od.cod_anu DESC, od.cod_ses, ep.semester_number, ep.lib_elp`;
+    query += ` ORDER BY od.cod_anu DESC, od.cod_ses, ep.year_level NULLS LAST, ep.semester_number NULLS LAST, ep.lib_elp`;
 
     const result = await pool.query(query, params);
 
@@ -97,14 +98,43 @@ app.get('/student/official-documents', authenticateToken, async (req, res) => {
     const availableSemesters = new Set();
 
     result.rows.forEach(grade => {
-      const semesterNumber = grade.semester_number;
-      if (!semesterNumber) return;
+      // Determine how to categorize this grade
+      let categoryKey = null;
+      
+      if (grade.semester_number) {
+        // Semester-based element
+        categoryKey = `S${grade.semester_number}`;
+      } else if (grade.year_level) {
+        // Year-based element
+        categoryKey = `A${grade.year_level}`; // A1, A2, A3 for years
+      } else if (grade.lib_elp && (grade.lib_elp.includes('année') || grade.lib_elp.includes('Année'))) {
+        // Try to extract year from the name
+        if (grade.lib_elp.includes('Première') || grade.lib_elp.includes('première')) {
+          categoryKey = 'A1';
+        } else if (grade.lib_elp.includes('Deuxième') || grade.lib_elp.includes('deuxième')) {
+          categoryKey = 'A2';
+        } else if (grade.lib_elp.includes('Troisième') || grade.lib_elp.includes('troisième')) {
+          categoryKey = 'A3';
+        } else if (grade.lib_elp.includes('Quatrième') || grade.lib_elp.includes('quatrième')) {
+          categoryKey = 'A4';
+        } else if (grade.lib_elp.includes('Cinquième') || grade.lib_elp.includes('cinquième')) {
+          categoryKey = 'A5';
+        } else if (grade.lib_elp.includes('Sixième') || grade.lib_elp.includes('sixième')) {
+          categoryKey = 'A6';
+        } else {
+          categoryKey = 'AUTRES'; // Other/Miscellaneous
+        }
+      } else {
+        // Fallback for uncategorized elements
+        categoryKey = 'AUTRES';
+      }
 
-      const semesterKey = `S${semesterNumber}`;
-      availableSemesters.add(semesterKey);
+      if (!categoryKey) return; // Skip if we couldn't determine category
 
-      if (!documentsBySemester[semesterKey]) {
-        documentsBySemester[semesterKey] = {
+      availableSemesters.add(categoryKey);
+
+      if (!documentsBySemester[categoryKey]) {
+        documentsBySemester[categoryKey] = {
           subjects: [],
           statistics: {
             total_subjects: 0,
@@ -119,7 +149,7 @@ app.get('/student/official-documents', authenticateToken, async (req, res) => {
       const gradeValue = grade.not_elp;
       const isPassed = gradeValue !== null && parseFloat(gradeValue) >= 10;
 
-      documentsBySemester[semesterKey].subjects.push({
+      documentsBySemester[categoryKey].subjects.push({
         cod_elp: grade.cod_elp,
         lib_elp: grade.lib_elp || 'Module non trouvé',
         lib_elp_arb: grade.lib_elp_arb || grade.lib_elp || 'الوحدة غير موجودة',
@@ -127,10 +157,13 @@ app.get('/student/official-documents', authenticateToken, async (req, res) => {
         cod_tre: grade.cod_tre,
         final_session: grade.cod_ses === '1' ? 1 : 2,
         is_passed: isPassed,
-        element_type: grade.element_type
+        element_type: grade.element_type,
+        semester_number: grade.semester_number,
+        year_level: grade.year_level,
+        category: categoryKey
       });
 
-      const stats = documentsBySemester[semesterKey].statistics;
+      const stats = documentsBySemester[categoryKey].statistics;
       stats.total_subjects++;
 
       if (gradeValue !== null) {
@@ -144,19 +177,35 @@ app.get('/student/official-documents', authenticateToken, async (req, res) => {
       }
     });
 
-    Object.keys(documentsBySemester).forEach(semesterKey => {
-      const semester = documentsBySemester[semesterKey];
-      const validGrades = semester.subjects.filter(s => s.not_elp !== null);
+    // Calculate averages
+    Object.keys(documentsBySemester).forEach(categoryKey => {
+      const category = documentsBySemester[categoryKey];
+      const validGrades = category.subjects.filter(s => s.not_elp !== null);
 
       if (validGrades.length > 0) {
         const sum = validGrades.reduce((acc, s) => acc + parseFloat(s.not_elp), 0);
-        semester.statistics.average_grade = (sum / validGrades.length).toFixed(2);
+        category.statistics.average_grade = (sum / validGrades.length).toFixed(2);
       }
+    });
+
+    // Sort available categories (semesters first, then years, then others)
+    const sortedCategories = Array.from(availableSemesters).sort((a, b) => {
+      if (a.startsWith('S') && b.startsWith('S')) {
+        return parseInt(a.substring(1)) - parseInt(b.substring(1));
+      }
+      if (a.startsWith('A') && b.startsWith('A')) {
+        return parseInt(a.substring(1)) - parseInt(b.substring(1));
+      }
+      if (a.startsWith('S') && !b.startsWith('S')) return -1;
+      if (!a.startsWith('S') && b.startsWith('S')) return 1;
+      if (a.startsWith('A') && !b.startsWith('A')) return -1;
+      if (!a.startsWith('A') && b.startsWith('A')) return 1;
+      return a.localeCompare(b);
     });
 
     res.json({
       documents: documentsBySemester,
-      available_semesters: Array.from(availableSemesters).sort(),
+      available_semesters: sortedCategories,
       total_semesters: availableSemesters.size
     });
 
@@ -2261,32 +2310,55 @@ app.get('/admin/registrations/stats', authenticateAdmin, async (req, res) => {
       ? `WHERE ${whereConditions.join(' AND ')}`
       : '';
     
-    // Get summary statistics
+    // Get summary statistics with filtering
     const summaryQuery = `
       SELECT 
         COUNT(*) as total_new_registrations,
-        COUNT(CASE WHEN dat_cre_iae = CURRENT_DATE THEN 1 END) as registrations_today,
-        COUNT(CASE WHEN dat_cre_iae >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as registrations_this_week,
         COUNT(DISTINCT lib_etp) as unique_programs,
-        COUNT(DISTINCT cod_uti) as unique_users
-      FROM students 
+        COUNT(DISTINCT cod_uti) as unique_users,
+        COUNT(CASE WHEN UPPER(cod_sex_etu) = 'M' THEN 1 END) as male_count,
+        COUNT(CASE WHEN UPPER(cod_sex_etu) = 'F' THEN 1 END) as female_count,
+        -- Calculate filtered date-based counts
+        COUNT(CASE WHEN dat_cre_iae::date = CURRENT_DATE THEN 1 END) as registrations_today,
+        COUNT(CASE WHEN dat_cre_iae >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as registrations_this_week
+      FROM students
       ${whereClause}
     `;
     
     const summaryResult = await pool.query(summaryQuery, params);
     const summary = summaryResult.rows[0];
     
-    // Get daily trends
+    // Get program breakdown with filtering
+    const programBreakdownQuery = `
+      SELECT 
+        lib_etp as program_name,
+        cod_anu,
+        COUNT(*) as total_count,
+        COUNT(CASE WHEN UPPER(cod_sex_etu) = 'M' THEN 1 END) as male_count,
+        COUNT(CASE WHEN UPPER(cod_sex_etu) = 'F' THEN 1 END) as female_count,
+        MAX(dat_cre_iae) as latest_registration,
+        MIN(dat_cre_iae) as earliest_registration
+      FROM students 
+      ${whereClause}
+      AND lib_etp IS NOT NULL
+      GROUP BY lib_etp, cod_anu
+      ORDER BY total_count DESC, latest_registration DESC
+    `;
+    
+    const programBreakdownResult = await pool.query(programBreakdownQuery, params);
+    
+    // Get daily trends within the filtered period
     const dailyTrendsQuery = `
       SELECT 
         DATE(dat_cre_iae) as registration_date,
         cod_anu,
         cod_uti,
         COUNT(*) as daily_count,
+        COUNT(CASE WHEN UPPER(cod_sex_etu) = 'M' THEN 1 END) as daily_male,
+        COUNT(CASE WHEN UPPER(cod_sex_etu) = 'F' THEN 1 END) as daily_female,
         COUNT(DISTINCT lib_etp) as programs_count
       FROM students 
       ${whereClause}
-      AND dat_cre_iae >= CURRENT_DATE - INTERVAL '30 days'
       GROUP BY DATE(dat_cre_iae), cod_anu, cod_uti
       ORDER BY registration_date DESC, daily_count DESC
       LIMIT 50
@@ -2294,35 +2366,53 @@ app.get('/admin/registrations/stats', authenticateAdmin, async (req, res) => {
     
     const dailyTrendsResult = await pool.query(dailyTrendsQuery, params);
     
-    // Get program breakdown
-    const programBreakdownQuery = `
+    // Get gender distribution by program
+    const genderByProgramQuery = `
       SELECT 
-        lib_etp,
-        cod_anu,
-        COUNT(*) as count,
-        MAX(dat_cre_iae) as latest_registration
+        lib_etp as program_name,
+        COUNT(CASE WHEN UPPER(cod_sex_etu) = 'M' THEN 1 END) as male_count,
+        COUNT(CASE WHEN UPPER(cod_sex_etu) = 'F' THEN 1 END) as female_count,
+        COUNT(*) as total_count
       FROM students 
       ${whereClause}
-      GROUP BY lib_etp, cod_anu
-      ORDER BY count DESC, latest_registration DESC
-      LIMIT 20
+      AND lib_etp IS NOT NULL
+      GROUP BY lib_etp
+      HAVING COUNT(*) > 0
+      ORDER BY total_count DESC
     `;
     
-    const programBreakdownResult = await pool.query(programBreakdownQuery, params);
+    const genderByProgramResult = await pool.query(genderByProgramQuery, params);
     
-    // Get monthly trends for chart
-    const monthlyTrendsQuery = `
+    // Get date range summary for filtered data
+    const dateRangeQuery = `
       SELECT 
-        DATE_TRUNC('month', dat_cre_iae) as month,
-        COUNT(*) as count
+        MIN(dat_cre_iae) as earliest_date,
+        MAX(dat_cre_iae) as latest_date,
+        COUNT(DISTINCT DATE(dat_cre_iae)) as unique_days
       FROM students 
       ${whereClause}
-      AND dat_cre_iae >= CURRENT_DATE - INTERVAL '12 months'
-      GROUP BY DATE_TRUNC('month', dat_cre_iae)
-      ORDER BY month DESC
     `;
     
-    const monthlyTrendsResult = await pool.query(monthlyTrendsQuery, params);
+    const dateRangeResult = await pool.query(dateRangeQuery, params);
+    
+    // Get user statistics (registrations by creator)
+    const userStatsQuery = `
+      SELECT 
+        COALESCE(cod_uti, 'System') as created_by,
+        COUNT(*) as total_registrations,
+        COUNT(CASE WHEN UPPER(cod_sex_etu) = 'M' THEN 1 END) as male_count,
+        COUNT(CASE WHEN UPPER(cod_sex_etu) = 'F' THEN 1 END) as female_count,
+        COUNT(DISTINCT lib_etp) as programs_handled,
+        MIN(dat_cre_iae) as first_registration,
+        MAX(dat_cre_iae) as latest_registration,
+        COUNT(DISTINCT DATE(dat_cre_iae)) as active_days
+      FROM students 
+      ${whereClause}
+      GROUP BY COALESCE(cod_uti, 'System')
+      ORDER BY total_registrations DESC, latest_registration DESC
+    `;
+    
+    const userStatsResult = await pool.query(userStatsQuery, params);
     
     res.json({
       summary: {
@@ -2330,11 +2420,21 @@ app.get('/admin/registrations/stats', authenticateAdmin, async (req, res) => {
         registrations_today: parseInt(summary.registrations_today),
         registrations_this_week: parseInt(summary.registrations_this_week),
         unique_programs: parseInt(summary.unique_programs),
-        unique_users: parseInt(summary.unique_users)
+        unique_users: parseInt(summary.unique_users),
+        male_count: parseInt(summary.male_count),
+        female_count: parseInt(summary.female_count)
       },
-      daily_trends: dailyTrendsResult.rows,
       program_breakdown: programBreakdownResult.rows,
-      monthly_trends: monthlyTrendsResult.rows
+      daily_trends: dailyTrendsResult.rows,
+      gender_by_program: genderByProgramResult.rows,
+      date_range: dateRangeResult.rows[0],
+      user_statistics: userStatsResult.rows,
+      filter_applied: {
+        year: year || null,
+        user: user || null,
+        date_from: dateFrom || null,
+        date_to: dateTo || null
+      }
     });
     
   } catch (error) {
@@ -2343,6 +2443,484 @@ app.get('/admin/registrations/stats', authenticateAdmin, async (req, res) => {
   }
 });
 
+
+app.get('/admin/registrations/export-pdf', authenticateAdmin, async (req, res) => {
+  try {
+    const { year, user, dateFrom, dateTo } = req.query;
+    
+    let whereConditions = ['nbr_ins_cyc = 1']; // Only new registrations
+    let params = [];
+    let paramIndex = 1;
+    
+    // Build where clause for filters
+    if (year) {
+      whereConditions.push(`cod_anu = $${paramIndex}`);
+      params.push(year);
+      paramIndex++;
+    }
+    
+    if (user) {
+      whereConditions.push(`cod_uti = $${paramIndex}`);
+      params.push(user);
+      paramIndex++;
+    }
+    
+    if (dateFrom) {
+      whereConditions.push(`dat_cre_iae >= $${paramIndex}::date`);
+      params.push(dateFrom);
+      paramIndex++;
+    }
+    
+    if (dateTo) {
+      whereConditions.push(`dat_cre_iae <= $${paramIndex}::date`);
+      params.push(dateTo);
+      paramIndex++;
+    }
+    
+    const whereClause = whereConditions.length > 0 
+      ? `WHERE ${whereConditions.join(' AND ')}`
+      : '';
+
+    // Get all the data for the report
+    const [summaryResult, programBreakdownResult, userStatsResult, dailyTrendsResult, dateRangeResult, detailedRegistrationsResult] = await Promise.all([
+      // Summary statistics
+      pool.query(`
+        SELECT 
+          COUNT(*) as total_new_registrations,
+          COUNT(DISTINCT lib_etp) as unique_programs,
+          COUNT(DISTINCT cod_uti) as unique_users,
+          COUNT(CASE WHEN UPPER(cod_sex_etu) = 'M' THEN 1 END) as male_count,
+          COUNT(CASE WHEN UPPER(cod_sex_etu) = 'F' THEN 1 END) as female_count
+        FROM students ${whereClause}
+      `, params),
+      
+      // Program breakdown
+      pool.query(`
+        SELECT 
+          lib_etp as program_name,
+          cod_anu,
+          COUNT(*) as total_count,
+          COUNT(CASE WHEN UPPER(cod_sex_etu) = 'M' THEN 1 END) as male_count,
+          COUNT(CASE WHEN UPPER(cod_sex_etu) = 'F' THEN 1 END) as female_count
+        FROM students ${whereClause}
+        AND lib_etp IS NOT NULL
+        GROUP BY lib_etp, cod_anu
+        ORDER BY total_count DESC
+      `, params),
+      
+      // User statistics
+      pool.query(`
+        SELECT 
+          COALESCE(cod_uti, 'Système') as created_by,
+          COUNT(*) as total_registrations,
+          COUNT(CASE WHEN UPPER(cod_sex_etu) = 'M' THEN 1 END) as male_count,
+          COUNT(CASE WHEN UPPER(cod_sex_etu) = 'F' THEN 1 END) as female_count,
+          COUNT(DISTINCT lib_etp) as programs_handled
+        FROM students ${whereClause}
+        GROUP BY COALESCE(cod_uti, 'Système')
+        ORDER BY total_registrations DESC
+      `, params),
+      
+      // Daily trends
+      pool.query(`
+        SELECT 
+          DATE(dat_cre_iae) as registration_date,
+          COUNT(*) as daily_count,
+          COUNT(CASE WHEN UPPER(cod_sex_etu) = 'M' THEN 1 END) as daily_male,
+          COUNT(CASE WHEN UPPER(cod_sex_etu) = 'F' THEN 1 END) as daily_female
+        FROM students ${whereClause}
+        GROUP BY DATE(dat_cre_iae)
+        ORDER BY registration_date DESC
+        LIMIT 30
+      `, params),
+      
+      // Date range
+      pool.query(`
+        SELECT 
+          MIN(dat_cre_iae) as earliest_date,
+          MAX(dat_cre_iae) as latest_date,
+          COUNT(DISTINCT DATE(dat_cre_iae)) as unique_days
+        FROM students ${whereClause}
+      `, params),
+      
+      // Detailed registrations for appendix
+      pool.query(`
+        SELECT 
+          cod_etu,
+          lib_nom_pat_ind || ' ' || lib_pr1_ind as nom_complet,
+          lib_etp as programme,
+          cod_anu,
+          dat_cre_iae as date_inscription,
+          CASE WHEN UPPER(cod_sex_etu) = 'M' THEN 'Masculin' ELSE 'Féminin' END as sexe,
+          COALESCE(cod_uti, 'Système') as cree_par
+        FROM students ${whereClause}
+        ORDER BY dat_cre_iae DESC, lib_nom_pat_ind
+        LIMIT 500
+      `, params)
+    ]);
+
+    const summary = summaryResult.rows[0];
+    const programBreakdown = programBreakdownResult.rows;
+    const userStats = userStatsResult.rows;
+    const dailyTrends = dailyTrendsResult.rows;
+    const dateRange = dateRangeResult.rows[0];
+    const detailedRegistrations = detailedRegistrationsResult.rows;
+
+    // Generate HTML content for PDF
+    const reportDate = new Date().toLocaleDateString('fr-FR', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+
+    const formatDate = (dateStr) => {
+      if (!dateStr) return 'N/A';
+      return new Date(dateStr).toLocaleDateString('fr-FR');
+    };
+
+    const getFilterDescription = () => {
+      let description = '';
+      if (year) description += `Année universitaire: ${year}-${parseInt(year) + 1}, `;
+      if (user) description += `Utilisateur: ${user}, `;
+      if (dateFrom) description += `Du: ${formatDate(dateFrom)}, `;
+      if (dateTo) description += `Au: ${formatDate(dateTo)}, `;
+      return description.slice(0, -2) || 'Aucun filtre appliqué';
+    };
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>Rapport d'Inscriptions Étudiantes - ${reportDate}</title>
+        <style>
+          body { 
+            font-family: 'Segoe UI', Arial, sans-serif; 
+            margin: 0; 
+            padding: 20px;
+            line-height: 1.6;
+            color: #333;
+          }
+          .header { 
+            text-align: center; 
+            margin-bottom: 40px;
+            padding: 30px;
+            background: linear-gradient(135deg, #2c5aa0, #1e3a5f);
+            color: white;
+            border-radius: 15px;
+          }
+          .header h1 {
+            margin: 0 0 10px 0;
+            font-size: 28px;
+            font-weight: bold;
+          }
+          .header h2 {
+            margin: 0 0 15px 0;
+            font-size: 20px;
+            opacity: 0.9;
+          }
+          .university-info {
+            background: rgba(255,255,255,0.1);
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+          }
+          .executive-summary { 
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            border-left: 5px solid #2c5aa0;
+          }
+          .filter-info {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 25px;
+            border: 1px solid #90caf9;
+          }
+          .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+          }
+          .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            border-top: 4px solid #2c5aa0;
+          }
+          .stat-number {
+            font-size: 32px;
+            font-weight: bold;
+            color: #2c5aa0;
+            margin: 10px 0;
+          }
+          .stat-label {
+            font-size: 14px;
+            color: #666;
+            text-transform: uppercase;
+            font-weight: 600;
+          }
+          .section {
+            margin: 30px 0;
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+          }
+          .section-header {
+            background: #2c5aa0;
+            color: white;
+            padding: 20px;
+            font-size: 18px;
+            font-weight: bold;
+          }
+          .section-content {
+            padding: 25px;
+          }
+          table { 
+            width: 100%; 
+            border-collapse: collapse;
+            margin: 15px 0;
+          }
+          th, td { 
+            padding: 12px 8px; 
+            text-align: left; 
+            border-bottom: 1px solid #ddd;
+          }
+          th { 
+            background-color: #f5f5f5; 
+            font-weight: bold;
+            color: #2c5aa0;
+          }
+          tr:nth-child(even) {
+            background-color: #fafafa;
+          }
+          tr:hover {
+            background-color: #f0f7ff;
+          }
+          .number-cell {
+            text-align: center;
+            font-weight: bold;
+          }
+          .highlight {
+            background-color: #e3f2fd;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+          }
+          .footer {
+            margin-top: 50px;
+            text-align: center;
+            padding: 25px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            font-size: 12px;
+            color: #666;
+          }
+          .signature-section {
+            margin-top: 40px;
+            display: flex;
+            justify-content: space-between;
+          }
+          .signature-box {
+            text-align: center;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            width: 200px;
+          }
+          @media print {
+            body { margin: 0; }
+            .section { break-inside: avoid; }
+            .no-print { display: none; }
+          }
+        </style>
+      </head>
+      <body>
+        <!-- Header -->
+        <div class="header">
+          <h1>RAPPORT D'INSCRIPTIONS ÉTUDIANTES</h1>
+          <h2>Analyse Détaillée des Nouvelles Inscriptions</h2>
+          <div class="university-info">
+            <p><strong>Faculté des Sciences Juridiques et Politiques</strong></p>
+            <p>Université Hassan 1er - Settat</p>
+            <p>Généré le: ${reportDate}</p>
+          </div>
+        </div>
+
+        <!-- Executive Summary -->
+        <div class="executive-summary">
+          <h3 style="color: #2c5aa0; margin-top: 0;">RÉSUMÉ EXÉCUTIF</h3>
+          <p>Ce rapport présente une analyse complète des inscriptions étudiantes pour la période sélectionnée. 
+          Les données incluent ${summary.total_new_registrations} nouvelles inscriptions réparties sur 
+          ${summary.unique_programs} programmes différents, avec une répartition de ${summary.male_count} étudiants 
+          masculins et ${summary.female_count} étudiantes féminines.</p>
+          
+          <div class="filter-info">
+            <strong>Critères de filtrage appliqués:</strong> ${getFilterDescription()}
+          </div>
+
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-number">${summary.total_new_registrations}</div>
+              <div class="stat-label">Total Inscriptions</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-number">${summary.unique_programs}</div>
+              <div class="stat-label">les filières</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-number">${summary.male_count}</div>
+              <div class="stat-label">Étudiants (H)</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-number">${summary.female_count}</div>
+              <div class="stat-label">Étudiantes (F)</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Program Analysis -->
+        <div class="section">
+          <div class="section-header">RÉPARTITION PAR filières</div>
+          <div class="section-content">
+            <p>Analyse détaillée des inscriptions par filières d'études :</p>
+            <table>
+              <thead>
+                <tr>
+                  <th>les filières</th>
+                  <th>Année Universitaire</th>
+                  <th class="number-cell">Total</th>
+                  <th class="number-cell">Hommes</th>
+                  <th class="number-cell">Femmes</th>
+                  <th class="number-cell">% du Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${programBreakdown.map(program => `
+                  <tr>
+                    <td>${program.program_name}</td>
+                    <td>${program.cod_anu} - ${parseInt(program.cod_anu) + 1}</td>
+                    <td class="number-cell">${program.total_count}</td>
+                    <td class="number-cell">${program.male_count}</td>
+                    <td class="number-cell">${program.female_count}</td>
+                    <td class="number-cell">${((program.total_count / summary.total_new_registrations) * 100).toFixed(1)}%</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+
+
+        <!-- Daily Trends -->
+        ${dailyTrends.length > 0 ? `
+        <div class="section">
+          <div class="section-header">ÉVOLUTION QUOTIDIENNE</div>
+          <div class="section-content">
+            <p>Tendances des inscriptions par jour (30 derniers jours) :</p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th class="number-cell">Total Jour</th>
+                  <th class="number-cell">Hommes</th>
+                  <th class="number-cell">Femmes</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${dailyTrends.map(trend => `
+                  <tr>
+                    <td>${formatDate(trend.registration_date)}</td>
+                    <td class="number-cell">${trend.daily_count}</td>
+                    <td class="number-cell">${trend.daily_male}</td>
+                    <td class="number-cell">${trend.daily_female}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        ` : ''}
+
+        <!-- Period Summary -->
+        <div class="section">
+          <div class="section-header">ANALYSE DE LA PÉRIODE</div>
+          <div class="section-content">
+            <div class="stats-grid">
+              <div class="stat-card">
+                <div class="stat-label">Période Couverte</div>
+                <div style="font-size: 14px; margin: 10px 0;">
+                  Du ${formatDate(dateRange.earliest_date)}<br>
+                  Au ${formatDate(dateRange.latest_date)}
+                </div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-number">${dateRange.unique_days || 0}</div>
+                <div class="stat-label">Jours d'Activité</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-number">${dailyTrends.length > 0 ? Math.round(summary.total_new_registrations / dailyTrends.length) : 0}</div>
+                <div class="stat-label">Moyenne/Jour</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-number">${((summary.female_count / summary.total_new_registrations) * 100).toFixed(1)}%</div>
+                <div class="stat-label">Taux Féminisation</div>
+              </div>
+            </div>
+
+            <div class="highlight">
+              <h4 style="color: #2c5aa0;">RECOMMANDATIONS:</h4>
+              <ul>
+                <li>Maintenir la cadence actuelle d'inscriptions avec une moyenne de ${dailyTrends.length > 0 ? Math.round(summary.total_new_registrations / dailyTrends.length) : 0} inscriptions par jour active</li>
+                <li>Continuer à promouvoir l'équité de genre avec un taux de féminisation de ${((summary.female_count / summary.total_new_registrations) * 100).toFixed(1)}%</li>
+                <li>Optimiser la répartition des programmes en fonction de la demande observée</li>
+                ${userStats.length > 1 ? '<li>Assurer une formation continue des agents pour maintenir la qualité des inscriptions</li>' : ''}
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Signature Section -->
+        <div class="signature-section">
+          <div class="signature-box">
+            <p><strong>Préparé par:</strong></p>
+            <br><br>
+            <p>Le Service Informatique</p>
+            <p style="font-size: 12px;">Faculté des Sciences Juridiques et Politiques</p>
+          </div>
+     
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+          <p>Ce rapport a été généré automatiquement le ${reportDate}</p>
+          <p>Faculté des Sciences Juridiques et Politiques - Université Hassan 1er - Settat</p>
+          <p>Données extraites du système de gestion académique - Confidentiel</p>
+        </div>
+      </body>
+      </html>
+    `;
+
+    // Set response headers for PDF
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Content-Disposition', `inline; filename="rapport_inscriptions_${new Date().toISOString().split('T')[0]}.html"`);
+    
+    // Send HTML content (can be converted to PDF by browser)
+    res.send(htmlContent);
+
+  } catch (error) {
+    console.error('Error generating PDF report:', error);
+    res.status(500).json({ error: 'Failed to generate report' });
+  }
+});
 // Export registrations data as CSV
 app.get('/admin/registrations/export', authenticateAdmin, async (req, res) => {
   try {

@@ -48,28 +48,49 @@ const OfficialDocuments = () => {
   const [previewSemester, setPreviewSemester] = useState(null);
   const { user } = useAuth();
 
-  const processDocumentsData = (rawData) => {
-    const processedData = {};
-    const availableSemestersSet = new Set();
-    for (const semesterCode in rawData) {
-      if (rawData.hasOwnProperty(semesterCode)) {
-        const semesterData = rawData[semesterCode];
-        const modulesMap = new Map();
-        semesterData.subjects.forEach(subject => {
-          if (subject.cod_tre === null) return;
-          const currentGrade = parseFloat(subject.not_elp);
-          const existingModule = modulesMap.get(subject.cod_elp);
-          if (!existingModule || currentGrade > parseFloat(existingModule.not_elp) || (currentGrade === parseFloat(existingModule.not_elp) && subject.final_session > existingModule.final_session)) {
-            modulesMap.set(subject.cod_elp, { ...subject, is_passed: parseFloat(subject.not_elp) >= 10 });
-          }
-        });
-        const filteredSubjects = Array.from(modulesMap.values()).sort((a, b) => a.cod_elp.localeCompare(b.cod_elp));
-        processedData[semesterCode] = { subjects: filteredSubjects };
-        availableSemestersSet.add(semesterCode);
-      }
+const processDocumentsData = (rawData) => {
+  const processedData = {};
+  const availableSemestersSet = new Set();
+  
+  for (const semesterCode in rawData) {
+    if (rawData.hasOwnProperty(semesterCode)) {
+      const semesterData = rawData[semesterCode];
+      const modulesMap = new Map();
+      
+      semesterData.subjects.forEach(subject => {
+        // Don't filter out subjects with null cod_tre - they might be yearly elements
+        const currentGrade = parseFloat(subject.not_elp);
+        const existingModule = modulesMap.get(subject.cod_elp);
+        
+        if (!existingModule || 
+            currentGrade > parseFloat(existingModule.not_elp) || 
+            (currentGrade === parseFloat(existingModule.not_elp) && 
+             subject.final_session > existingModule.final_session)) {
+          
+          modulesMap.set(subject.cod_elp, { 
+            ...subject, 
+            is_passed: parseFloat(subject.not_elp) >= 10,
+            // Add logic to handle yearly elements
+            display_semester: subject.semester_number ? `S${subject.semester_number}` : 
+                            subject.lib_elp.includes('année') || subject.lib_elp.includes('Année') ? 
+                            subject.lib_elp : semesterCode
+          });
+        }
+      });
+      
+      const filteredSubjects = Array.from(modulesMap.values())
+        .sort((a, b) => a.cod_elp.localeCompare(b.cod_elp));
+      
+      processedData[semesterCode] = { subjects: filteredSubjects };
+      availableSemestersSet.add(semesterCode);
     }
-    return { documents: processedData, available_semesters: Array.from(availableSemestersSet).sort() };
+  }
+  
+  return { 
+    documents: processedData, 
+    available_semesters: Array.from(availableSemestersSet).sort() 
   };
+};
 
   const fetchOfficialDocuments = async (semester = '') => {
     try {
@@ -300,7 +321,9 @@ const OfficialDocuments = () => {
     <Box sx={{ p: 3 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}><DescriptionIcon sx={{ mr: 2, color: 'primary.main', fontSize: 32 }} /><Typography variant="h4" fontWeight="600" color="primary">📄 Relevés de Notes</Typography><Button startIcon={<RefreshIcon />} onClick={() => fetchOfficialDocuments(selectedSemester)} sx={{ ml: 'auto' }} variant="outlined">Refresh</Button></Box>
       {error && (<Alert severity="error" onClose={() => setError(null)} sx={{ mb: 3 }}>{error}</Alert>)}
-      <Card sx={{ mb: 3, borderRadius: 3 }}><CardContent><FormControl fullWidth><InputLabel>Sélectionner le Semestre</InputLabel><Select value={selectedSemester} onChange={handleSemesterChange} label="Sélectionner le Semestre"><MenuItem value=""><em>Tous les Semestres</em></MenuItem>{availableSemesters.map((semester) => (<MenuItem key={semester} value={semester.replace('S', '')}>{getSemesterDisplayName(semester)}</MenuItem>))}</Select></FormControl></CardContent></Card>
+      <Card sx={{ mb: 3, borderRadius: 3 }}><CardContent><FormControl fullWidth><InputLabel>Sélectionner le Semestre</InputLabel><Select value={selectedSemester} onChange={handleSemesterChange} label="Sélectionner le Semestre"><MenuItem value=""><em>Tous les Semestres</em></MenuItem>{availableSemesters.map((semester) => (<MenuItem key={semester} value={semester.replace('S', '').replace('A', '')}>
+  {getSemesterDisplayName(semester)}
+</MenuItem>))}</Select></FormControl></CardContent></Card>
       
       {documentsData && Object.keys(documentsData).length > 0 ? (
         Object.entries(documentsData)

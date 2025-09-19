@@ -191,6 +191,47 @@ getStudentRegistrations: async (params = {}) => {
   return response.data;
 },
 
+ exportRegistrationsPDF: async (filters = {}) => {
+    try {
+      const token = localStorage.getItem('adminToken');
+      const queryParams = new URLSearchParams();
+      
+      if (filters.year) queryParams.append('year', filters.year);
+      if (filters.user) queryParams.append('user', filters.user);
+      if (filters.dateFrom) queryParams.append('dateFrom', filters.dateFrom);
+      if (filters.dateTo) queryParams.append('dateTo', filters.dateTo);
+
+      // Use the same base URL as your api instance
+      const url = `/admin/registrations/export-pdf?${queryParams.toString()}`;
+      
+      // Use the configured axios instance instead of fetch
+      const response = await api.get(url, {
+        responseType: 'text', // We expect HTML content
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      // Create a new window and write the HTML content
+      const newWindow = window.open('', '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
+      if (newWindow) {
+        newWindow.document.write(response.data);
+        newWindow.document.close();
+      } else {
+        // Fallback: create blob URL if popup blocked
+        const blob = new Blob([response.data], { type: 'text/html' });
+        const blobUrl = URL.createObjectURL(blob);
+        window.open(blobUrl, '_blank');
+        // Clean up after a delay
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+      }
+      
+      return { success: true, message: 'Rapport PDF généré avec succès' };
+    } catch (error) {
+      console.error('Error generating PDF report:', error);
+      throw error;
+    }
+  },
 getRegistrationStats: async (params = {}) => {
   const searchParams = new URLSearchParams();
   
