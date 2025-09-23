@@ -596,7 +596,8 @@ async function syncStudentsData(oracleConnection, pgClient) {
           $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
           $31, $32, $33, $34, CURRENT_TIMESTAMP
         )
-        ON CONFLICT (cod_etu) DO UPDATE SET
+        ON CONFLICT (cod_etu, cod_anu) DO UPDATE SET
+
           lib_nom_pat_ind = EXCLUDED.lib_nom_pat_ind,
           lib_pr1_ind = EXCLUDED.lib_pr1_ind,
           cod_etp = EXCLUDED.cod_etp,
@@ -604,7 +605,7 @@ async function syncStudentsData(oracleConnection, pgClient) {
           cod_vrs_vet = EXCLUDED.cod_vrs_vet,
           cod_dip = EXCLUDED.cod_dip,
           cod_uti = EXCLUDED.cod_uti,
-          dat_cre_iae = EXCLUDED.dat_cre_iae,
+          dat_cre_iae = EXCLUDED.dat_cre_iae,  
           nbr_ins_cyc = EXCLUDED.nbr_ins_cyc,
           nbr_ins_etp = EXCLUDED.nbr_ins_etp,
           nbr_ins_dip = EXCLUDED.nbr_ins_dip,
@@ -798,11 +799,12 @@ async function syncGradesData(oracleConnection, pgClient) {
 }
 
 
-async function syncOfficialDocuments(oracleConnection, pgClient) {
-      logger.info('Syncing official documents data from RESULTAT_ELP for 2023 and 2024...');
+// Replace the existing syncOfficialDocuments function in sync-service.js
 
+async function syncOfficialDocuments(oracleConnection, pgClient) {
+  logger.info('Syncing official documents data from RESULTAT_ELP for 2023 and 2024...');
   
-  // Create official_documents table
+  // Create official_documents table with additional fields for better specialization tracking
   await pgClient.query(`
     CREATE TABLE IF NOT EXISTS official_documents (
       id SERIAL PRIMARY KEY,
@@ -812,11 +814,23 @@ async function syncOfficialDocuments(oracleConnection, pgClient) {
       cod_elp VARCHAR(20),
       not_elp DECIMAL(5,2),
       cod_tre VARCHAR(20),
+      -- Add fields to track specialization info
+      cod_etp VARCHAR(20),
+      lib_etp VARCHAR(200),
+      lic_etp VARCHAR(200),
       last_sync TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(cod_etu, cod_elp, cod_anu, cod_ses)
     )
+  `);
+  
+  // Add columns if they don't exist (for existing installations)
+  await pgClient.query(`
+    ALTER TABLE official_documents 
+    ADD COLUMN IF NOT EXISTS cod_etp VARCHAR(20),
+    ADD COLUMN IF NOT EXISTS lib_etp VARCHAR(200),
+    ADD COLUMN IF NOT EXISTS lic_etp VARCHAR(200)
   `);
   
   // Add indexes
@@ -825,13 +839,39 @@ async function syncOfficialDocuments(oracleConnection, pgClient) {
     CREATE INDEX IF NOT EXISTS idx_official_documents_cod_elp ON official_documents(cod_elp);
     CREATE INDEX IF NOT EXISTS idx_official_documents_cod_anu ON official_documents(cod_anu);
     CREATE INDEX IF NOT EXISTS idx_official_documents_cod_ses ON official_documents(cod_ses);
+    CREATE INDEX IF NOT EXISTS idx_official_documents_cod_etp ON official_documents(cod_etp);
   `);
   
-  // Fetch official documents from Oracle
-  const result = await oracleConnection.execute(OFFICIAL_DOCUMENTS_QUERY);
+  // Updated query to include specialization information from the enrollment data
+  const OFFICIAL_DOCUMENTS_WITH_SPECIALIZATION_QUERY = `
+    SELECT 
+      i.COD_ETU, 
+      r.COD_ANU, 
+      r.COD_SES, 
+      r.COD_ELP, 
+      r.NOT_ELP, 
+      r.COD_TRE,
+      -- Get specialization info from the enrollment for this specific year
+      iae.COD_ETP,
+      e.LIB_ETP,
+      e.LIC_ETP
+    FROM RESULTAT_ELP r
+    JOIN INDIVIDU i ON r.COD_IND = i.COD_IND
+    JOIN INS_ADM_ETP iae ON r.COD_IND = iae.COD_IND AND r.COD_ANU = iae.COD_ANU
+    LEFT JOIN ETAPE e ON iae.COD_ETP = e.COD_ETP
+    WHERE r.COD_ADM = 1 
+      AND r.COD_ANU IN (2023, 2024, 2025)
+      AND iae.COD_CMP = 'FJP'
+      AND iae.ETA_IAE = 'E'
+      AND iae.TEM_IAE_PRM = 'O'
+    ORDER BY i.COD_ETU, r.COD_ANU DESC, r.COD_SES, r.COD_ELP
+  `;
+  
+  // Fetch official documents from Oracle with specialization info
+  const result = await oracleConnection.execute(OFFICIAL_DOCUMENTS_WITH_SPECIALIZATION_QUERY);
   const documents = result.rows;
   
-  logger.info(`✓ Fetched ${documents.length} official document records from Oracle RESULTAT_ELP (2023 & 2024)`);
+  logger.info(`✓ Fetched ${documents.length} official document records from Oracle RESULTAT_ELP with specialization info (2023 & 2024)`);
   
   if (documents.length === 0) {
     logger.warn('No official documents found in Oracle RESULTAT_ELP table');
@@ -846,13 +886,21 @@ async function syncOfficialDocuments(oracleConnection, pgClient) {
   let insertedCount = 0;
   let skippedCount = 0;
   
+  // Track specializations found
+  let specializationsFound = new Set();
+  
   // Process documents in batches
   const batchSize = 200;
   for (let i = 0; i < documents.length; i += batchSize) {
     const batch = documents.slice(i, i + batchSize);
     
     for (const document of batch) {
-      const [cod_etu, cod_anu, cod_ses, cod_elp, not_elp, cod_tre] = document;
+      const [cod_etu, cod_anu, cod_ses, cod_elp, not_elp, cod_tre, cod_etp, lib_etp, lic_etp] = document;
+      
+      // Track specializations for logging
+      if (lib_etp) {
+        specializationsFound.add(lib_etp);
+      }
       
       // Check if student exists first
       const studentExists = await pgClient.query(
@@ -873,19 +921,23 @@ async function syncOfficialDocuments(oracleConnection, pgClient) {
       
       const isUpdate = existingDocument.rows.length > 0;
       
-      // Upsert official document
+      // Upsert official document with specialization info
       await pgClient.query(`
         INSERT INTO official_documents (
-          cod_etu, cod_anu, cod_ses, cod_elp, not_elp, cod_tre, last_sync
+          cod_etu, cod_anu, cod_ses, cod_elp, not_elp, cod_tre, 
+          cod_etp, lib_etp, lic_etp, last_sync
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP
         )
         ON CONFLICT (cod_etu, cod_elp, cod_anu, cod_ses) DO UPDATE SET
           not_elp = EXCLUDED.not_elp,
           cod_tre = EXCLUDED.cod_tre,
+          cod_etp = EXCLUDED.cod_etp,
+          lib_etp = EXCLUDED.lib_etp,
+          lic_etp = EXCLUDED.lic_etp,
           last_sync = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
-      `, [cod_etu, cod_anu, cod_ses, cod_elp, not_elp, cod_tre]);
+      `, [cod_etu, cod_anu, cod_ses, cod_elp, not_elp, cod_tre, cod_etp, lib_etp, lic_etp]);
       
       if (isUpdate) {
         updatedCount++;
@@ -903,13 +955,19 @@ async function syncOfficialDocuments(oracleConnection, pgClient) {
   
   await pgClient.query('COMMIT');
   
-  // Log sync success
+  // Log sync success with specialization info
+  const specializationsList = Array.from(specializationsFound).sort();
   await pgClient.query(`
-    INSERT INTO sync_log (sync_type, records_processed, sync_status)
-    VALUES ('official_documents', $1, 'success')
-  `, [processedCount]);
+    INSERT INTO sync_log (sync_type, records_processed, sync_status, error_message)
+    VALUES ('official_documents', $1, 'success', $2)
+  `, [processedCount, `Total: ${processedCount}, Specializations found: ${specializationsList.length} (${specializationsList.slice(0, 5).join(', ')}${specializationsList.length > 5 ? '...' : ''})`]);
   
   logger.info(`✓ Official documents sync completed: ${processedCount} total, ${insertedCount} new, ${updatedCount} updated, ${skippedCount} skipped`);
+  logger.info(`📚 Specializations found: ${specializationsList.length} different specializations`);
+  if (specializationsList.length > 0) {
+    
+    logger.info(`📚 Sample specializations: ${specializationsList.slice(0, 3).join(', ')}`);
+  }
 }
 
 

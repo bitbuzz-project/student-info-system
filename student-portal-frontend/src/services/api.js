@@ -84,13 +84,13 @@ export const studentAPI = {
     const response = await api.get('/student/request/student-card/status');
     return response.data;
   },
-  getPedagogicalSituation: async (filters = {}) => {
-    const params = new URLSearchParams();
-    if (filters.year) params.append('year', filters.year);
-    
-    const response = await api.get(`/student/pedagogical-situation?${params}`);
-    return response.data;
-  },
+    getPedagogicalSituation: async (filters = {}) => {
+      const params = new URLSearchParams();
+      if (filters.year) params.append('year', filters.year);
+      
+      const response = await api.get(`/student/pedagogical-situation?${params}`);
+      return response.data;
+    },
     getGradeStats: () => apiClient.get('/student/grades/stats').then(res => res.data),
   requestStudentCard: (formData) => api.post('/student/request/student-card', formData, {
     headers: {

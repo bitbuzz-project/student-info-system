@@ -8,13 +8,14 @@ import LoginForm from './components/Auth/LoginForm';
 import ProtectedRoute from './components/Auth/ProtectedRoute';
 import Dashboard from './components/Student/Dashboard';
 import Loading from './components/common/Loading';
-import StudentRequests from './components/Student/StudentRequests'; // 1. Import the new component
-import StudentCardRequests from './components/Admin/StudentCardRequests';
+import StudentRequests from './components/Student/StudentRequests';
+import DocumentVerification from './components/DocumentVerification';
 
 // Admin Components
 import AdminLogin from './components/Admin/AdminLogin';
 import AdminDashboard from './components/Admin/AdminDashboard';
 import AdminProtectedRoute from './components/Admin/AdminProtectedRoute';
+import StudentCardRequests from './components/Admin/StudentCardRequests';
 
 function App() {
   const { isLoading } = useAuth();
@@ -26,7 +27,10 @@ function App() {
 
   return (
     <Routes>
-      {/* Student Routes */}
+      {/* PUBLIC ROUTES - NO AUTHENTICATION REQUIRED */}
+      <Route path="/verify-document/:token" element={<DocumentVerification />} />
+      
+      {/* STUDENT ROUTES */}
       <Route path="/login" element={<LoginForm />} />
       <Route 
         path="/dashboard/*" 
@@ -36,9 +40,16 @@ function App() {
           </ProtectedRoute>
         } 
       />
-        
-    
-      {/* Admin Routes */}
+      <Route 
+        path="/requests" 
+        element={
+          <ProtectedRoute>
+            <StudentRequests />
+          </ProtectedRoute>
+        } 
+      />
+      
+      {/* ADMIN ROUTES */}
       <Route path="/admin/login" element={<AdminLogin />} />
       <Route 
         path="/admin/dashboard/*" 
@@ -49,18 +60,23 @@ function App() {
         } 
       />
       <Route 
+        path="/admin/student-card-requests" 
+        element={
+          <AdminProtectedRoute>
+            <StudentCardRequests />
+          </AdminProtectedRoute>
+        } 
+      />
+      <Route 
         path="/admin/*" 
         element={<Navigate to="/admin/dashboard" replace />} 
       />
-      
-      {/* Default redirects */}
+
+      {/* DEFAULT REDIRECTS */}
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       
-      {/* Catch all route */}
+      {/* CATCH ALL ROUTE - Must be last */}
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
-      <Route path="requests" element={<StudentRequests />} />
-      <Route path="/admin/student-card-requests" element={<AdminProtectedRoute><StudentCardRequests /></AdminProtectedRoute>} />
-
     </Routes>
   );
 }

@@ -48,7 +48,8 @@ const authenticateToken = (req, res, next) => {
 // Add this to your server.js file to fix the official documents endpoint
 // This is a temporary solution that uses the existing grades table
 
-// Official Documents endpoint - Returns grades organized for official documents
+// Replace the existing official documents endpoint in server.js with this updated version
+
 app.get('/student/official-documents', authenticateToken, async (req, res) => {
   try {
     const { semester } = req.query;
@@ -66,7 +67,11 @@ app.get('/student/official-documents', authenticateToken, async (req, res) => {
         ep.semester_number,
         ep.year_level,
         ep.cod_pel,
-        ep.cod_nel
+        ep.cod_nel,
+        -- Use specialization info from official_documents table (year-specific)
+        od.lib_etp as student_specialization,
+        od.lic_etp as student_license_specialization,
+        od.cod_etp as student_specialization_code
       FROM official_documents od
       LEFT JOIN element_pedagogi ep ON od.cod_elp = ep.cod_elp
       WHERE od.cod_etu = (
@@ -96,6 +101,9 @@ app.get('/student/official-documents', authenticateToken, async (req, res) => {
 
     const documentsBySemester = {};
     const availableSemesters = new Set();
+
+    // Group subjects by academic year and semester for better data organization
+    const subjectsByYearAndSemester = {};
 
     result.rows.forEach(grade => {
       // Determine how to categorize this grade
@@ -133,8 +141,11 @@ app.get('/student/official-documents', authenticateToken, async (req, res) => {
 
       availableSemesters.add(categoryKey);
 
-      if (!documentsBySemester[categoryKey]) {
-        documentsBySemester[categoryKey] = {
+      // Create a composite key that includes academic year for proper grouping
+      const compositeKey = `${categoryKey}_${grade.cod_anu}`;
+
+      if (!documentsBySemester[compositeKey]) {
+        documentsBySemester[compositeKey] = {
           subjects: [],
           statistics: {
             total_subjects: 0,
@@ -142,28 +153,35 @@ app.get('/student/official-documents', authenticateToken, async (req, res) => {
             failed_subjects: 0,
             absent_subjects: 0,
             average_grade: null
-          }
+          },
+          // Add semester-specific metadata
+          academic_year: grade.cod_anu,
+          semester_code: categoryKey,
+          specialization: grade.student_specialization || grade.student_license_specialization || null
         };
       }
 
       const gradeValue = grade.not_elp;
       const isPassed = gradeValue !== null && parseFloat(gradeValue) >= 10;
 
-      documentsBySemester[categoryKey].subjects.push({
+      documentsBySemester[compositeKey].subjects.push({
         cod_elp: grade.cod_elp,
         lib_elp: grade.lib_elp || 'Module non trouvé',
         lib_elp_arb: grade.lib_elp_arb || grade.lib_elp || 'الوحدة غير موجودة',
         not_elp: grade.not_elp,
         cod_tre: grade.cod_tre,
+        cod_anu: grade.cod_anu, // Include academic year in each subject
         final_session: grade.cod_ses === '1' ? 1 : 2,
         is_passed: isPassed,
         element_type: grade.element_type,
         semester_number: grade.semester_number,
         year_level: grade.year_level,
-        category: categoryKey
+        category: categoryKey,
+        // Add specialization at subject level too for consistency
+        specialization: grade.student_specialization || grade.student_license_specialization
       });
 
-      const stats = documentsBySemester[categoryKey].statistics;
+      const stats = documentsBySemester[compositeKey].statistics;
       stats.total_subjects++;
 
       if (gradeValue !== null) {
@@ -177,18 +195,60 @@ app.get('/student/official-documents', authenticateToken, async (req, res) => {
       }
     });
 
-    // Calculate averages
-    Object.keys(documentsBySemester).forEach(categoryKey => {
-      const category = documentsBySemester[categoryKey];
-      const validGrades = category.subjects.filter(s => s.not_elp !== null);
+    // Calculate averages and reorganize data
+    const finalDocuments = {};
+    
+    Object.keys(documentsBySemester).forEach(compositeKey => {
+      const semesterData = documentsBySemester[compositeKey];
+      const validGrades = semesterData.subjects.filter(s => s.not_elp !== null);
 
       if (validGrades.length > 0) {
         const sum = validGrades.reduce((acc, s) => acc + parseFloat(s.not_elp), 0);
-        category.statistics.average_grade = (sum / validGrades.length).toFixed(2);
+        semesterData.statistics.average_grade = (sum / validGrades.length).toFixed(2);
+      }
+
+      // Use semester code as key (removing the academic year suffix)
+      const semesterCode = semesterData.semester_code;
+      
+      // If we have multiple academic years for the same semester, 
+      // we might want to keep them separate or merge them
+      if (!finalDocuments[semesterCode]) {
+        finalDocuments[semesterCode] = semesterData;
+      } else {
+        // If semester already exists, merge the subjects and update stats
+        // This handles cases where a student has grades from multiple years for the same semester
+        finalDocuments[semesterCode].subjects = [
+          ...finalDocuments[semesterCode].subjects,
+          ...semesterData.subjects
+        ];
+        
+        // Update statistics
+        const currentStats = finalDocuments[semesterCode].statistics;
+        const newStats = semesterData.statistics;
+        
+        currentStats.total_subjects += newStats.total_subjects;
+        currentStats.passed_subjects += newStats.passed_subjects;
+        currentStats.failed_subjects += newStats.failed_subjects;
+        currentStats.absent_subjects += newStats.absent_subjects;
+        
+        // Recalculate average
+        const allValidGrades = finalDocuments[semesterCode].subjects.filter(s => s.not_elp !== null);
+        if (allValidGrades.length > 0) {
+          const sum = allValidGrades.reduce((acc, s) => acc + parseFloat(s.not_elp), 0);
+          currentStats.average_grade = (sum / allValidGrades.length).toFixed(2);
+        }
+        
+        // Use the most recent academic year and specialization
+        if (semesterData.academic_year > finalDocuments[semesterCode].academic_year) {
+          finalDocuments[semesterCode].academic_year = semesterData.academic_year;
+          if (semesterData.specialization) {
+            finalDocuments[semesterCode].specialization = semesterData.specialization;
+          }
+        }
       }
     });
 
-    // Sort available categories (semesters first, then years, then others)
+    // Sort available semesters
     const sortedCategories = Array.from(availableSemesters).sort((a, b) => {
       if (a.startsWith('S') && b.startsWith('S')) {
         return parseInt(a.substring(1)) - parseInt(b.substring(1));
@@ -204,7 +264,7 @@ app.get('/student/official-documents', authenticateToken, async (req, res) => {
     });
 
     res.json({
-      documents: documentsBySemester,
+      documents: finalDocuments,
       available_semesters: sortedCategories,
       total_semesters: availableSemesters.size
     });
@@ -1243,9 +1303,25 @@ app.post('/auth/login', async (req, res) => {
 // Get current student info
 app.get('/student/me', authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT * FROM students WHERE id = $1',
+    // Get the student's cod_etu first
+    const studentIdResult = await pool.query(
+      'SELECT cod_etu FROM students WHERE id = $1',
       [req.user.studentId]
+    );
+    
+    if (studentIdResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+    
+    const cod_etu = studentIdResult.rows[0].cod_etu;
+    
+    // Get the MOST RECENT enrollment record for this student
+    const result = await pool.query(
+      `SELECT * FROM students 
+       WHERE cod_etu = $1 
+       ORDER BY cod_anu DESC, dat_cre_iae DESC 
+       LIMIT 1`,
+      [cod_etu]
     );
     
     if (result.rows.length === 0) {
@@ -1254,24 +1330,37 @@ app.get('/student/me', authenticateToken, async (req, res) => {
     
     const student = result.rows[0];
     
+    // Also get all enrollment years for this student
+    const enrollmentYears = await pool.query(
+      `SELECT DISTINCT cod_anu 
+       FROM students 
+       WHERE cod_etu = $1 
+       ORDER BY cod_anu DESC`,
+      [cod_etu]
+    );
+    
     res.json({
       student: {
         cod_etu: student.cod_etu,
         nom_complet: `${student.lib_nom_pat_ind} ${student.lib_pr1_ind}`,
         nom_arabe: `${student.lib_nom_ind_arb} ${student.lib_prn_ind_arb}`,
         cin: student.cin_ind,
+        cod_nne_ind: student.cod_nne_ind, // Add this line
+
         date_naissance: student.date_nai_ind,
         lieu_naissance: student.lib_vil_nai_etu,
         lieu_naissance_arabe: student.lib_vil_nai_etu_arb,
         sexe: student.cod_sex_etu,
         etape: student.lib_etp,
         licence_etape: student.lic_etp,
-        annee_universitaire: student.cod_anu,
+        annee_universitaire: student.cod_anu, // This will now show the latest year
         diplome: student.cod_dip,
         nombre_inscriptions_cycle: student.nbr_ins_cyc,
         nombre_inscriptions_etape: student.nbr_ins_etp,
         nombre_inscriptions_diplome: student.nbr_ins_dip,
-        derniere_mise_a_jour: student.updated_at
+        derniere_mise_a_jour: student.updated_at,
+        // Add all enrollment years
+        enrollment_years: enrollmentYears.rows.map(row => row.cod_anu)
       }
     });
     
@@ -1280,7 +1369,6 @@ app.get('/student/me', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
 // Get current student grades with ELEMENT_PEDAGOGI integration
 // Get current student grades from RESULTAT_EPR (current year grades)
 app.get('/student/grades', authenticateToken, async (req, res) => {
@@ -1430,7 +1518,414 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
 
 // Get official documents/transcripts from RESULTAT_ELP (final consolidated grades)
 
+// Document verification endpoint
+app.get('/verify-document/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const CryptoJS = require('crypto-js');
+    
+    // Secret should match frontend
+    const SIGNATURE_SECRET = process.env.DOC_SIGNATURE_SECRET || 'your-secret-key-here';
+    
+    // Decrypt verification token
+    const decryptedData = CryptoJS.AES.decrypt(decodeURIComponent(token), SIGNATURE_SECRET);
+    const documentInfo = JSON.parse(decryptedData.toString(CryptoJS.enc.Utf8));
+    
+    // Verify document exists in database
+    const verificationQuery = `
+      SELECT 
+        COUNT(*) as count,
+        MIN(od.cod_anu) as year,
+        STRING_AGG(DISTINCT ep.lib_elp, ', ') as modules
+      FROM official_documents od
+      LEFT JOIN element_pedagogi ep ON od.cod_elp = ep.cod_elp
+      LEFT JOIN students s ON od.cod_etu = s.cod_etu
+      WHERE od.cod_etu = $1 
+        AND (ep.semester_number = $2 OR ep.year_level = $2)
+        AND s.cod_etu IS NOT NULL
+    `;
+    
+    const semesterNum = documentInfo.semester.replace('S', '').replace('A', '');
+    const result = await pool.query(verificationQuery, [documentInfo.studentId, semesterNum]);
+    
+    const isValid = result.rows[0].count > 0;
+    
+    // Generate verification page HTML
+    const verificationHTML = `
+      <!DOCTYPE html>
+      <html lang="fr">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Vérification de Document - وضعيتي</title>
+        <style>
+          body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; 
+            padding: 20px; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+          }
+          .container { 
+            max-width: 600px; 
+            margin: 0 auto; 
+            background: white; 
+            border-radius: 15px; 
+            padding: 40px; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+          }
+          .status { 
+            text-align: center; 
+            padding: 20px; 
+            border-radius: 10px; 
+            margin-bottom: 30px;
+            font-size: 18px;
+            font-weight: bold;
+          }
+          .valid { 
+            background-color: #d4edda; 
+            color: #155724; 
+            border: 2px solid #c3e6cb;
+          }
+          .invalid { 
+            background-color: #f8d7da; 
+            color: #721c24; 
+            border: 2px solid #f5c6cb;
+          }
+          .info { 
+            background: #f8f9fa; 
+            padding: 20px; 
+            border-radius: 8px; 
+            margin: 20px 0;
+          }
+          .header { 
+            text-align: center; 
+            margin-bottom: 30px; 
+            color: #2c3e50;
+          }
+          .logo { 
+            font-size: 24px; 
+            font-weight: bold; 
+            color: #3498db; 
+            margin-bottom: 10px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <div class="logo">🎓 وضعيتي - WADAITI</div>
+            <h2>Vérification de Document Officiel</h2>
+            <p>تحقق من صحة الوثيقة الرسمية</p>
+          </div>
+          
+          <div class="status ${isValid ? 'valid' : 'invalid'}">
+            ${isValid ? '✅ Document Authentique - وثيقة صحيحة' : '❌ Document Non Valide - وثيقة غير صحيحة'}
+          </div>
+          
+          <div class="info">
+            <h3>معلومات الوثيقة - Informations du Document</h3>
+            <p><strong>Code Étudiant:</strong> ${documentInfo.studentId}</p>
+            <p><strong>Semestre:</strong> ${documentInfo.semester}</p>
+            <p><strong>Date de génération:</strong> ${new Date(documentInfo.timestamp).toLocaleString('fr-FR')}</p>
+            <p><strong>Signature:</strong> ${documentInfo.signature.substring(0, 16)}...</p>
+            ${isValid ? `
+              <p><strong>Année académique:</strong> ${result.rows[0].year}</p>
+              <p><strong>Nombre de modules:</strong> ${result.rows[0].count}</p>
+            ` : ''}
+          </div>
+          
+          <div class="info">
+            <h3>À propos de cette vérification</h3>
+            <p>Cette page confirme l'authenticité du document généré par le système وضعيتي de la Faculté des Sciences Juridiques et Politiques de Settat.</p>
+            <p>Les documents authentiques sont signés numériquement et peuvent être vérifiés à tout moment.</p>
+          </div>
+          
+          <div style="text-align: center; margin-top: 30px; color: #6c757d;">
+            <small>
+              Université Hassan 1er - Settat<br>
+              كلية العلوم القانونية والسياسية
+            </small>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+    
+    res.send(verificationHTML);
+    
+  } catch (error) {
+    console.error('Document verification error:', error);
+    res.status(400).send(`
+      <div style="text-align: center; padding: 50px; font-family: Arial;">
+        <h2>❌ Erreur de Vérification</h2>
+        <p>Le lien de vérification est invalide ou expiré.</p>
+        <p>تعذر التحقق من صحة الوثيقة</p>
+      </div>
+    `);
+  }
+});
 
+// Simple API endpoint for JSON response
+// Add these endpoints to your server.js
+
+// Simple API endpoint for JSON response
+app.get('/api/verify-document/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    
+    // For testing, let's first check if this endpoint is even being hit
+    console.log('API Verification attempt for token:', token.substring(0, 20) + '...');
+    
+    if (token === 'test') {
+      // Test response
+      return res.json({
+        valid: true,
+        student_id: 'TEST-123',
+        semester: 'S1',
+        timestamp: new Date().toISOString(),
+        verified_at: new Date().toISOString()
+      });
+    }
+
+    const CryptoJS = require('crypto-js');
+    const SIGNATURE_SECRET = process.env.DOC_SIGNATURE_SECRET || '228QYTXF26w4XAUNQ7GQ7Nj5Grat7fSD';
+    
+    // Decrypt verification token
+    const decryptedData = CryptoJS.AES.decrypt(decodeURIComponent(token), SIGNATURE_SECRET);
+    const documentInfo = JSON.parse(decryptedData.toString(CryptoJS.enc.Utf8));
+    
+    console.log('Decrypted document info:', documentInfo);
+    
+    // Verify document exists in database
+    const verificationQuery = `
+      SELECT 
+        COUNT(*) as count,
+        MIN(od.cod_anu) as year,
+        MIN(s.lib_nom_pat_ind || ' ' || s.lib_pr1_ind) as student_name
+      FROM official_documents od
+      LEFT JOIN element_pedagogi ep ON od.cod_elp = ep.cod_elp
+      LEFT JOIN students s ON od.cod_etu = s.cod_etu
+      WHERE od.cod_etu = $1 
+        AND (ep.semester_number = $2 OR ep.year_level = $2)
+        AND s.cod_etu IS NOT NULL
+    `;
+    
+    const semesterNum = documentInfo.semester.replace('S', '').replace('A', '');
+    const result = await pool.query(verificationQuery, [documentInfo.studentId, semesterNum]);
+    
+    const isValid = result.rows[0].count > 0;
+    
+    console.log('Database check result:', { isValid, count: result.rows[0].count });
+    
+    res.json({
+      valid: isValid,
+      student_id: documentInfo.studentId,
+      student_name: isValid ? result.rows[0].student_name : undefined,
+      semester: documentInfo.semester,
+      timestamp: documentInfo.timestamp,
+      academic_year: isValid ? result.rows[0].year : undefined,
+      verified_at: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('API Document verification error:', error.message);
+    res.status(400).json({
+      valid: false,
+      error: 'Token invalide ou document corrompu: ' + error.message,
+      verified_at: new Date().toISOString()
+    });
+  }
+});
+
+// HTML verification endpoint (fallback)
+app.get('/verify-document/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    
+    console.log('HTML Verification attempt for token:', token.substring(0, 20) + '...');
+    
+    if (token === 'test') {
+      // Test HTML response
+      return res.send(`
+        <html>
+          <body style="font-family: Arial; text-align: center; padding: 50px;">
+            <h2 style="color: green;">✅ Test Document Valid</h2>
+            <p>This is a test verification response.</p>
+          </body>
+        </html>
+      `);
+    }
+
+    // Real verification logic here...
+    const CryptoJS = require('crypto-js');
+    const SIGNATURE_SECRET = process.env.DOC_SIGNATURE_SECRET || '228QYTXF26w4XAUNQ7GQ7Nj5Grat7fSD';
+    
+    const decryptedData = CryptoJS.AES.decrypt(decodeURIComponent(token), SIGNATURE_SECRET);
+    const documentInfo = JSON.parse(decryptedData.toString(CryptoJS.enc.Utf8));
+    
+    // Database verification...
+    const isValid = true; // Placeholder - implement your verification
+    
+    res.send(`
+      <html>
+        <body style="font-family: Arial; text-align: center; padding: 50px;">
+          <h2 style="color: ${isValid ? 'green' : 'red'};">
+            ${isValid ? '✅ Document Authentique' : '❌ Document Non Valide'}
+          </h2>
+          <p>Student: ${documentInfo.studentId}</p>
+          <p>Semester: ${documentInfo.semester}</p>
+        </body>
+      </html>
+    `);
+    
+  } catch (error) {
+    console.error('HTML Document verification error:', error);
+    res.send(`
+      <html>
+        <body style="font-family: Arial; text-align: center; padding: 50px;">
+          <h2 style="color: red;">❌ Verification Failed</h2>
+          <p>Error: ${error.message}</p>
+        </body>
+      </html>
+    `);
+  }
+});
+// Simple test endpoint - add this to your server.js
+app.get('/api/test-connection', (req, res) => {
+  res.json({ 
+    message: 'Backend connection working!', 
+    timestamp: new Date().toISOString() 
+  });
+});
+
+// Debug endpoint for verification
+app.get('/api/debug-verify/:token', (req, res) => {
+  const { token } = req.params;
+  
+  console.log('=== DEBUG VERIFICATION ===');
+  console.log('Token received:', token);
+  console.log('Token length:', token.length);
+  console.log('First 50 chars:', token.substring(0, 50));
+  
+  // Test if crypto-js is available
+  try {
+    const CryptoJS = require('crypto-js');
+    console.log('CryptoJS loaded successfully');
+    
+    const SIGNATURE_SECRET = process.env.DOC_SIGNATURE_SECRET || '228QYTXF26w4XAUNQ7GQ7Nj5Grat7fSD';
+    console.log('Secret available:', !!SIGNATURE_SECRET);
+    console.log('Secret length:', SIGNATURE_SECRET.length);
+    
+    res.json({
+      status: 'debug_ok',
+      token_received: token.substring(0, 50) + '...',
+      token_length: token.length,
+      crypto_available: true,
+      secret_available: !!SIGNATURE_SECRET
+    });
+    
+  } catch (error) {
+    console.error('Debug error:', error);
+    res.status(500).json({
+      status: 'debug_error',
+      error: error.message
+    });
+  }
+});
+// Add this temporary debug endpoint to server.js
+app.get('/api/debug-decrypt/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const CryptoJS = require('crypto-js');
+    
+    console.log('=== TOKEN DECRYPTION DEBUG ===');
+    console.log('Raw token:', token);
+    console.log('Token length:', token.length);
+    
+    const SIGNATURE_SECRET = process.env.DOC_SIGNATURE_SECRET || '228QYTXF26w4XAUNQ7GQ7Nj5Grat7fSD';
+    console.log('Backend secret:', SIGNATURE_SECRET);
+    console.log('Secret length:', SIGNATURE_SECRET.length);
+    
+    // Try to decrypt
+    const decryptedData = CryptoJS.AES.decrypt(decodeURIComponent(token), SIGNATURE_SECRET);
+    console.log('Decrypted bytes:', decryptedData.toString());
+    
+    const decryptedString = decryptedData.toString(CryptoJS.enc.Utf8);
+    console.log('Decrypted string:', decryptedString);
+    console.log('String length:', decryptedString.length);
+    
+    if (decryptedString) {
+      try {
+        const documentInfo = JSON.parse(decryptedString);
+        console.log('Parsed document info:', documentInfo);
+        
+        res.json({
+          success: true,
+          token_length: token.length,
+          secret_used: SIGNATURE_SECRET.substring(0, 8) + '...',
+          decrypted_length: decryptedString.length,
+          document_info: documentInfo
+        });
+      } catch (parseError) {
+        console.error('JSON parse error:', parseError);
+        res.json({
+          success: false,
+          error: 'JSON parse failed',
+          decrypted_string: decryptedString,
+          secret_used: SIGNATURE_SECRET.substring(0, 8) + '...'
+        });
+      }
+    } else {
+      res.json({
+        success: false,
+        error: 'Decryption failed - empty result',
+        secret_used: SIGNATURE_SECRET.substring(0, 8) + '...'
+      });
+    }
+    
+  } catch (error) {
+    console.error('Debug decrypt error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+// Add this temporary debug endpoint to your server.js
+app.get('/debug-verify/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const CryptoJS = require('crypto-js');
+    
+    console.log('Received token:', token);
+    console.log('Token length:', token.length);
+    
+    const SIGNATURE_SECRET = process.env.DOC_SIGNATURE_SECRET || '228QYTXF26w4XAUNQ7GQ7Nj5Grat7fSD';
+    console.log('Using secret:', SIGNATURE_SECRET.substring(0, 8) + '...');
+    
+    // Try to decrypt
+    const decryptedData = CryptoJS.AES.decrypt(decodeURIComponent(token), SIGNATURE_SECRET);
+    console.log('Decrypted raw:', decryptedData.toString());
+    
+    const documentInfo = JSON.parse(decryptedData.toString(CryptoJS.enc.Utf8));
+    console.log('Document info:', documentInfo);
+    
+    res.json({
+      success: true,
+      token: token.substring(0, 50) + '...',
+      documentInfo: documentInfo
+    });
+    
+  } catch (error) {
+    console.error('Debug error:', error);
+    res.status(400).json({
+      success: false,
+      error: error.message,
+      token: req.params.token.substring(0, 50) + '...'
+    });
+  }
+});
 // Get student grade statistics
 app.get('/student/grade-stats', authenticateToken, async (req, res) => {
   try {

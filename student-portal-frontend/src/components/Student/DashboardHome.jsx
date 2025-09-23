@@ -198,8 +198,7 @@ const DashboardHome = ({ onNavigate }) => {
             
               <Typography variant="body1" sx={{ opacity: 0.9, mt: 2 }}>
                 {i18n.language === 'ar' 
-                  ? 'مرحباً بك في تطبيق وضعيتي – المنصة الخاصة بطلبة كلية العلوم القانونية والسياسية بسطات. يمكنك من خلاله الاطلاع على وضعيتك الجامعية، نقاطك، وتتبع مسارك الدراسي بكل سهولة وفي أي وقت.'
-                  : 'Bienvenue dans le système d\'information des étudiants. Vous pouvez consulter toutes vos informations académiques et notes ici.'
+? 'مرحباً بك في تطبيق وضعيتي – المنصة الخاصة بطلبة كلية العلوم القانونية والسياسية بسطات. يمكنك من خلاله الاطلاع على وضعيتك الجامعية، نقاطك، وتتبع مسارك الجامعي بكل سهولة وفي أي وقت.'                  : 'Bienvenue dans le système d\'information des étudiants. Vous pouvez consulter toutes vos informations académiques et notes ici.'
                 }
               </Typography>
             </Grid>
