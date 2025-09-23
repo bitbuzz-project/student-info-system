@@ -1,17 +1,15 @@
-// src/App.jsx
+// src/App.jsx - Updated version
 import React from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 
-// Student Components
+// Components
 import LoginForm from './components/Auth/LoginForm';
 import ProtectedRoute from './components/Auth/ProtectedRoute';
 import Dashboard from './components/Student/Dashboard';
 import Loading from './components/common/Loading';
 import StudentRequests from './components/Student/StudentRequests';
 import DocumentVerification from './components/DocumentVerification';
-
-// Admin Components
 import AdminLogin from './components/Admin/AdminLogin';
 import AdminDashboard from './components/Admin/AdminDashboard';
 import AdminProtectedRoute from './components/Admin/AdminProtectedRoute';
@@ -19,16 +17,20 @@ import StudentCardRequests from './components/Admin/StudentCardRequests';
 
 function App() {
   const { isLoading } = useAuth();
-
-  // Show loading screen while checking authentication
-  if (isLoading) {
+  const location = useLocation();
+  
+  // Don't show loading for public routes
+  const isPublicRoute = location.pathname.startsWith('/verify-document');
+  
+  if (isLoading && !isPublicRoute) {
     return <Loading message="جاري فحص حالة المصادقة... Checking authentication..." />;
   }
 
   return (
     <Routes>
-      {/* PUBLIC ROUTES - NO AUTHENTICATION REQUIRED */}
+      {/* PUBLIC ROUTES - Handle both with and without token */}
       <Route path="/verify-document/:token" element={<DocumentVerification />} />
+      <Route path="/verify-document" element={<DocumentVerification />} />
       
       {/* STUDENT ROUTES */}
       <Route path="/login" element={<LoginForm />} />

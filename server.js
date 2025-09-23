@@ -1514,10 +1514,155 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
+// Add this endpoint to your server.js file
+app.post('/api/store-document-signature', authenticateToken, async (req, res) => {
+  try {
+    const { signature, studentId, semester, documentData } = req.body;
+    
+    console.log('Storing signature for:', studentId, semester);
+    
+    // Create the table if it doesn't exist
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS document_signatures (
+        id SERIAL PRIMARY KEY,
+        signature_hash VARCHAR(255) UNIQUE NOT NULL,
+        cod_etu VARCHAR(20) NOT NULL,
+        semester VARCHAR(10),
+        document_data JSONB,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    
+    // Store the signature
+    await pool.query(`
+      INSERT INTO document_signatures (signature_hash, cod_etu, semester, document_data)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (signature_hash) DO UPDATE SET
+        cod_etu = EXCLUDED.cod_etu,
+        semester = EXCLUDED.semester,
+        document_data = EXCLUDED.document_data
+    `, [signature, studentId, semester, JSON.stringify(documentData)]);
+    
+    console.log('Signature stored successfully');
+    
+    res.json({ 
+      success: true, 
+      message: 'Signature stored successfully' 
+    });
+    
+  } catch (error) {
+    console.error('Store signature error:', error);
+    res.status(500).json({ 
+      error: 'Failed to store signature',
+      details: error.message 
+    });
+  }
+});
 
 // Get official documents/transcripts from RESULTAT_ELP (final consolidated grades)
-
+// Add this new endpoint specifically for raw signature verification
+// Replace your current /api/verify-signature endpoint with this
+app.post('/api/verify-signature', async (req, res) => {
+  try {
+    const { signature } = req.body;
+    
+    console.log('=== RAW SIGNATURE VERIFICATION ===');
+    console.log('Raw signature received:', signature);
+    
+    if (!signature || signature.length < 10) {
+      return res.json({
+        valid: false,
+        error: 'Signature trop courte ou invalide',
+        verified_at: new Date().toISOString()
+      });
+    }
+    
+    // Look up the signature in the database
+    const result = await pool.query(`
+      SELECT 
+        ds.cod_etu,
+        ds.semester,
+        ds.document_data,
+        s.lib_nom_pat_ind,
+        s.lib_pr1_ind
+      FROM document_signatures ds
+      LEFT JOIN students s ON ds.cod_etu = s.cod_etu
+      WHERE ds.signature_hash = $1
+    `, [signature]);
+    
+    if (result.rows.length > 0) {
+      const doc = result.rows[0];
+      const studentName = doc.lib_nom_pat_ind && doc.lib_pr1_ind 
+        ? `${doc.lib_nom_pat_ind} ${doc.lib_pr1_ind}` 
+        : null;
+      
+      res.json({
+        valid: true,
+        student_id: doc.cod_etu,
+        student_name: studentName,
+        semester: doc.semester,
+        verified_at: new Date().toISOString()
+      });
+    } else {
+      res.json({
+        valid: false,
+        error: 'Signature non trouvée dans la base de données',
+        note: 'Cette signature ne correspond à aucun document officiel enregistré',
+        verified_at: new Date().toISOString()
+      });
+    }
+    
+  } catch (error) {
+    console.error('Raw signature verification error:', error);
+    res.status(500).json({
+      valid: false,
+      error: 'Erreur de vérification de signature: ' + error.message,
+      verified_at: new Date().toISOString()
+    });
+  }
+});
+// Add this new endpoint to your server.js file
+app.post('/api/store-document-signature', authenticateToken, async (req, res) => {
+  try {
+    const { signature, studentId, semester, documentData } = req.body;
+    
+    // First, create the table if it doesn't exist
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS document_signatures (
+        id SERIAL PRIMARY KEY,
+        signature_hash VARCHAR(255) UNIQUE NOT NULL,
+        cod_etu VARCHAR(20) NOT NULL,
+        semester VARCHAR(10),
+        document_data JSONB,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    
+    // Store the signature
+    await pool.query(`
+      INSERT INTO document_signatures (signature_hash, cod_etu, semester, document_data)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (signature_hash) DO UPDATE SET
+        cod_etu = EXCLUDED.cod_etu,
+        semester = EXCLUDED.semester,
+        document_data = EXCLUDED.document_data
+    `, [signature, studentId, semester, JSON.stringify(documentData)]);
+    
+    console.log(`Stored signature for student ${studentId}, semester ${semester}`);
+    
+    res.json({ 
+      success: true, 
+      message: 'Signature stored successfully' 
+    });
+    
+  } catch (error) {
+    console.error('Store signature error:', error);
+    res.status(500).json({ 
+      error: 'Failed to store signature',
+      details: error.message 
+    });
+  }
+});
 // Document verification endpoint
 app.get('/verify-document/:token', async (req, res) => {
   try {
@@ -1525,7 +1670,7 @@ app.get('/verify-document/:token', async (req, res) => {
     const CryptoJS = require('crypto-js');
     
     // Secret should match frontend
-    const SIGNATURE_SECRET = process.env.DOC_SIGNATURE_SECRET || 'your-secret-key-here';
+    const SIGNATURE_SECRET = process.env.DOC_SIGNATURE_SECRET || '228QYTXF26w4XAUNQ7GQ7Nj5Grat7fSD';
     
     // Decrypt verification token
     const decryptedData = CryptoJS.AES.decrypt(decodeURIComponent(token), SIGNATURE_SECRET);

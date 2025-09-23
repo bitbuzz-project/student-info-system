@@ -37,6 +37,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import Loading from '../common/Loading';
 import { studentAPI } from '../../services/api';
 import { DocumentSecurity } from '../../services/documentSecurity';
+const BACKEND_URL = 'http://localhost:3000';
 
 const OfficialDocuments = () => {
   const [documentsData, setDocumentsData] = useState(null);
@@ -256,10 +257,10 @@ const OfficialDocuments = () => {
       doc.setTextColor(...textColor);
       doc.setFontSize(22);
       doc.setFont('Amiri', 'bold');
-      doc.text('RELEVÉ DE NOTES OFFICIEL', pageWidth / 2, 50, { align: 'center' });
+      doc.text('RELEVÉ DE NOTES ', pageWidth / 2, 50, { align: 'center' });
       doc.setFont('Amiri', 'normal');
       doc.setFontSize(16);
-      doc.text('كشف النقط الرسمي', pageWidth / 2, 60, { align: 'center' });
+      doc.text('كشف النقط ', pageWidth / 2, 60, { align: 'center' });
 
       // Semester info
       const semesterNames = {
@@ -361,7 +362,25 @@ const OfficialDocuments = () => {
       const qrCodeDataUrl = await DocumentSecurity.generateQRCode(verificationUrl);
 
       const pageHeight = doc.internal.pageSize.getHeight();
+try {
+  await fetch(`${BACKEND_URL}/api/store-document-signature`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${localStorage.getItem('authToken')}`
 
+    },
+    body: JSON.stringify({
+      signature: signature,
+      studentId: user?.cod_etu,
+      semester: semesterCode,
+      documentData: documentData
+    })
+  });
+  console.log('Signature stored successfully');
+} catch (err) {
+  console.warn('Failed to store signature:', err);
+}
       // Add QR code if generated successfully
       if (qrCodeDataUrl) {
         try {
@@ -379,7 +398,7 @@ const OfficialDocuments = () => {
 
       const documentId = `DOC-${user?.cod_etu}-${semesterCode}-${Date.now()}`;
       doc.text(`ID Document: ${documentId}`, 15, pageHeight - 35);
-      doc.text(`Signature numérique: ${signature.substring(0, 32)}...`, 15, pageHeight - 30);
+      doc.text(`Signature numérique: ${signature}`, 15, pageHeight - 30);
       doc.text(`Vérification: Scannez le QR code ou visitez le lien de vérification`, 15, pageHeight - 25);
 
       // Footer text
@@ -459,10 +478,10 @@ const OfficialDocuments = () => {
       <Paper sx={{ p: 4, mb: 3, borderRadius: 3, border: '1px solid #e0e0e0' }}>
         <Box sx={{ textAlign: 'center', mb: 4, pb: 2, borderBottom: '3px solid #3498db' }}>
           <Typography variant="h4" fontWeight="600" color="primary" gutterBottom>
-            🎓 كشف النقط الرسمي
+            🎓 كشف النقط 
           </Typography>
           <Typography variant="h5" color="text.secondary" gutterBottom>
-            RELEVÉ DE NOTES OFFICIEL
+            RELEVÉ DE NOTES 
           </Typography>
         </Box>
         
