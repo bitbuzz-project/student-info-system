@@ -102,7 +102,19 @@ export const studentAPI = {
     const response = await api.get('/student/pedagogical-stats');
     return response.data;
   },
+  // Add to studentAPI in src/services/api.js
+getAdministrativeSituation: async (filters = {}) => {
+  const params = new URLSearchParams();
+  if (filters.year) params.append('year', filters.year);
   
+  const response = await api.get(`/student/administrative-situation?${params}`);
+  return response.data;
+},
+
+getAdministrativeStats: async () => {
+  const response = await api.get('/student/administrative-stats');
+  return response.data;
+},
   // Current year grades from RESULTAT_EPR
   getGrades: async (filters = {}) => {
     const params = new URLSearchParams();
@@ -165,6 +177,8 @@ export const studentAPI = {
     return response.data;
   }
 };
+
+
 
 // Admin API
 export const adminAPI = {

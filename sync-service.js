@@ -43,19 +43,19 @@ const oracleConfig = {
 };
 
 // Oracle query to get element pedagogi data with proper hierarchy
-const ELEMENT_PEDAGOGI_QUERY = `
-SELECT 
-  e.COD_ELP, 
-  e.COD_CMP, 
-  e.COD_NEL, 
-  e.COD_PEL, 
-  e.LIB_ELP, 
-  e.LIC_ELP, 
-  fix_encoding(e.LIB_ELP_ARB) AS LIB_ELP_ARB
-FROM ELEMENT_PEDAGOGI e 
-WHERE e.COD_CMP = 'FJP'
-ORDER BY e.COD_PEL, e.COD_NEL, e.COD_ELP
-`;
+// const ELEMENT_PEDAGOGI_QUERY = `
+// SELECT 
+//   e.COD_ELP, 
+//   e.COD_CMP, 
+//   e.COD_NEL, 
+//   e.COD_PEL, 
+//   e.LIB_ELP, 
+//   e.LIC_ELP, 
+//   fix_encoding(e.LIB_ELP_ARB) AS LIB_ELP_ARB
+// FROM ELEMENT_PEDAGOGI e 
+// WHERE e.COD_CMP = 'FJP'
+// ORDER BY e.COD_PEL, e.COD_NEL, e.COD_ELP
+// `;
 
 // Query to get element hierarchy
 const ELEMENT_HIERARCHY_QUERY = `
@@ -157,6 +157,163 @@ WHERE i.ETA_IAE = 'E'
 ORDER BY i.COD_ANU DESC, i.DAT_CRE_IAE DESC, ind.COD_ETU
 `;
 
+
+// Add this new query to sync-service.js
+const ADMINISTRATIVE_SITUATION_QUERY = `
+SELECT DISTINCT 
+    i.COD_ETU,
+    iae.COD_ANU,
+    iae.COD_ETP,
+    e.LIB_ETP,
+    e.LIC_ETP,
+    iae.COD_VRS_VET,
+    iae.ETA_IAE,
+    iae.TEM_IAE_PRM,
+    iae.DAT_CRE_IAE,
+    iae.DAT_MOD_IAE,
+    iae.NBR_INS_CYC,
+    iae.NBR_INS_ETP,
+    iae.NBR_INS_DIP,
+    iae.TEM_DIP_IAE,
+    iae.COD_UTI,
+    d.LIB_DIP
+FROM INS_ADM_ETP iae
+JOIN INDIVIDU i ON iae.COD_IND = i.COD_IND
+JOIN ETAPE e ON iae.COD_ETP = e.COD_ETP
+LEFT JOIN DIPLOME d ON iae.COD_DIP = d.COD_DIP
+WHERE iae.COD_CMP = 'FJP'
+  AND iae.COD_ANU IN (2020, 2021, 2022, 2023, 2024, 2025)
+ORDER BY i.COD_ETU, iae.COD_ANU DESC
+`;
+
+// Add this sync function to sync-service.js
+async function syncAdministrativeSituation(oracleConnection, pgClient) {
+  logger.info('Syncing administrative situation data...');
+  
+  // Create table
+  await pgClient.query(`
+    CREATE TABLE IF NOT EXISTS administrative_situation (
+      id SERIAL PRIMARY KEY,
+      cod_etu VARCHAR(20) NOT NULL,
+      cod_anu INTEGER,
+      cod_etp VARCHAR(20),
+      lib_etp VARCHAR(200),
+      lic_etp VARCHAR(200),
+      cod_vrs_vet VARCHAR(20),
+      eta_iae VARCHAR(10),
+      tem_iae_prm VARCHAR(10),
+      dat_cre_iae DATE,
+      dat_mod_iae DATE,
+      nbr_ins_cyc INTEGER,
+      nbr_ins_etp INTEGER,
+      nbr_ins_dip INTEGER,
+      tem_dip_iae VARCHAR(10),
+      cod_uti VARCHAR(20),
+      lib_dip VARCHAR(200),
+      last_sync TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(cod_etu, cod_anu, cod_etp)
+    )
+  `);
+  
+  // Add indexes
+  await pgClient.query(`
+    CREATE INDEX IF NOT EXISTS idx_admin_situation_cod_etu ON administrative_situation(cod_etu);
+    CREATE INDEX IF NOT EXISTS idx_admin_situation_cod_anu ON administrative_situation(cod_anu);
+    CREATE INDEX IF NOT EXISTS idx_admin_situation_eta_iae ON administrative_situation(eta_iae);
+  `);
+  
+  // Fetch data from Oracle
+  const result = await oracleConnection.execute(ADMINISTRATIVE_SITUATION_QUERY);
+  const adminSituations = result.rows;
+  
+  logger.info(`✓ Fetched ${adminSituations.length} administrative situation records from Oracle`);
+  
+  if (adminSituations.length === 0) {
+    logger.warn('No administrative situation data found');
+    return;
+  }
+  
+  // Begin transaction
+  await pgClient.query('BEGIN');
+  
+  let processedCount = 0;
+  let insertedCount = 0;
+  let updatedCount = 0;
+  
+  // Process in batches
+  const batchSize = 100;
+  for (let i = 0; i < adminSituations.length; i += batchSize) {
+    const batch = adminSituations.slice(i, i + batchSize);
+    
+    for (const situation of batch) {
+      const [cod_etu, cod_anu, cod_etp, lib_etp, lic_etp, cod_vrs_vet, eta_iae, 
+             tem_iae_prm, dat_cre_iae, dat_mod_iae, nbr_ins_cyc, nbr_ins_etp, 
+             nbr_ins_dip, tem_dip_iae, cod_uti, lib_dip] = situation;
+      
+      // Check if record exists
+      const existingRecord = await pgClient.query(
+        'SELECT id FROM administrative_situation WHERE cod_etu = $1 AND cod_anu = $2 AND cod_etp = $3', 
+        [cod_etu, cod_anu, cod_etp]
+      );
+      
+      const isUpdate = existingRecord.rows.length > 0;
+      
+      // Upsert record
+      await pgClient.query(`
+        INSERT INTO administrative_situation (
+          cod_etu, cod_anu, cod_etp, lib_etp, lic_etp, cod_vrs_vet, eta_iae,
+          tem_iae_prm, dat_cre_iae, dat_mod_iae, nbr_ins_cyc, nbr_ins_etp,
+          nbr_ins_dip, tem_dip_iae, cod_uti, lib_dip, last_sync
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (cod_etu, cod_anu, cod_etp) DO UPDATE SET
+          lib_etp = EXCLUDED.lib_etp,
+          lic_etp = EXCLUDED.lic_etp,
+          cod_vrs_vet = EXCLUDED.cod_vrs_vet,
+          eta_iae = EXCLUDED.eta_iae,
+          tem_iae_prm = EXCLUDED.tem_iae_prm,
+          dat_cre_iae = EXCLUDED.dat_cre_iae,
+          dat_mod_iae = EXCLUDED.dat_mod_iae,
+          nbr_ins_cyc = EXCLUDED.nbr_ins_cyc,
+          nbr_ins_etp = EXCLUDED.nbr_ins_etp,
+          nbr_ins_dip = EXCLUDED.nbr_ins_dip,
+          tem_dip_iae = EXCLUDED.tem_dip_iae,
+          cod_uti = EXCLUDED.cod_uti,
+          lib_dip = EXCLUDED.lib_dip,
+          last_sync = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      `, [cod_etu, cod_anu, cod_etp, lib_etp, lic_etp, cod_vrs_vet, eta_iae,
+          tem_iae_prm, dat_cre_iae, dat_mod_iae, nbr_ins_cyc, nbr_ins_etp,
+          nbr_ins_dip, tem_dip_iae, cod_uti, lib_dip]);
+      
+      if (isUpdate) {
+        updatedCount++;
+      } else {
+        insertedCount++;
+      }
+      
+      processedCount++;
+    }
+    
+    const progress = Math.round((i + batch.length) / adminSituations.length * 100);
+    logger.info(`Administrative Situation Progress: ${progress}% (${processedCount}/${adminSituations.length})`);
+  }
+  
+  await pgClient.query('COMMIT');
+  
+  // Log success
+  await pgClient.query(`
+    INSERT INTO sync_log (sync_type, records_processed, sync_status, error_message)
+    VALUES ('administrative_situation', $1, 'success', $2)
+  `, [processedCount, `Total: ${processedCount}, New: ${insertedCount}, Updated: ${updatedCount}`]);
+  
+  logger.info(`✓ Administrative situation sync completed: ${processedCount} total, ${insertedCount} new, ${updatedCount} updated`);
+}
+
+
 // Also add a separate query for all students (including returning students)
 const ORACLE_QUERY_ALL_STUDENTS = `
 SELECT DISTINCT
@@ -229,8 +386,8 @@ async function syncStudents() {
     oracleConnection = await oracledb.getConnection(oracleConfig);
     logger.info('✓ Oracle connection successful');
     
-    // Sync element pedagogi first
-    await syncElementPedagogi(oracleConnection, pgClient);
+    // // Sync element pedagogi first
+    // await syncElementPedagogi(oracleConnection, pgClient);
     
     // Sync element hierarchy
     await syncElementHierarchy(oracleConnection, pgClient);
@@ -271,202 +428,202 @@ async function syncStudents() {
   }
 }
 
-async function syncElementPedagogi(oracleConnection, pgClient) {
-  logger.info('Syncing element pedagogi data...');
+// async function syncElementPedagogi(oracleConnection, pgClient) {
+//   logger.info('Syncing element pedagogi data...');
   
-  // Create table if not exists
-  await pgClient.query(`
-    CREATE TABLE IF NOT EXISTS element_pedagogi (
-      id SERIAL PRIMARY KEY,
-      cod_elp VARCHAR(20) UNIQUE NOT NULL,
-      cod_cmp VARCHAR(20),
-      cod_nel VARCHAR(20),
-      cod_pel VARCHAR(20),
-      lib_elp VARCHAR(200),
-      lic_elp VARCHAR(200),
-      lib_elp_arb VARCHAR(200),
-      element_type VARCHAR(10), -- 'SEMESTRE', 'MODULE', 'MATIERE', 'ANNEE'
-      semester_number INTEGER, -- 1,2,3,4,5,6 for semesters
-      year_level INTEGER, -- 1,2,3,4,5 for academic years
-      last_sync TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-  await pgClient.query(`
-  ALTER TABLE element_pedagogi 
-  ADD COLUMN IF NOT EXISTS year_level INTEGER; -- 1,2,3,4,5 for academic years
-`);
+//   // Create table if not exists
+//   await pgClient.query(`
+//     CREATE TABLE IF NOT EXISTS element_pedagogi (
+//       id SERIAL PRIMARY KEY,
+//       cod_elp VARCHAR(20) UNIQUE NOT NULL,
+//       cod_cmp VARCHAR(20),
+//       cod_nel VARCHAR(20),
+//       cod_pel VARCHAR(20),
+//       lib_elp VARCHAR(200),
+//       lic_elp VARCHAR(200),
+//       lib_elp_arb VARCHAR(200),
+//       element_type VARCHAR(10), -- 'SEMESTRE', 'MODULE', 'MATIERE', 'ANNEE'
+//       semester_number INTEGER, -- 1,2,3,4,5,6 for semesters
+//       year_level INTEGER, -- 1,2,3,4,5 for academic years
+//       last_sync TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+//       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+//       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+//     )
+//   `);
+//   await pgClient.query(`
+//   ALTER TABLE element_pedagogi 
+//   ADD COLUMN IF NOT EXISTS year_level INTEGER; -- 1,2,3,4,5 for academic years
+// `);
   
-  // Add indexes for better performance
-  await pgClient.query(`
-    CREATE INDEX IF NOT EXISTS idx_element_pedagogi_year_level 
-    ON element_pedagogi(year_level);
+//   // Add indexes for better performance
+//   await pgClient.query(`
+//     CREATE INDEX IF NOT EXISTS idx_element_pedagogi_year_level 
+//     ON element_pedagogi(year_level);
     
-    CREATE INDEX IF NOT EXISTS idx_element_pedagogi_element_type 
-    ON element_pedagogi(element_type);
+//     CREATE INDEX IF NOT EXISTS idx_element_pedagogi_element_type 
+//     ON element_pedagogi(element_type);
     
-    CREATE INDEX IF NOT EXISTS idx_element_pedagogi_semester_number 
-    ON element_pedagogi(semester_number);
-  `);
+//     CREATE INDEX IF NOT EXISTS idx_element_pedagogi_semester_number 
+//     ON element_pedagogi(semester_number);
+//   `);
   
-  // Fetch data from Oracle
-  const result = await oracleConnection.execute(ELEMENT_PEDAGOGI_QUERY);
-  const elements = result.rows;
+//   // Fetch data from Oracle
+//   const result = await oracleConnection.execute(ELEMENT_PEDAGOGI_QUERY);
+//   const elements = result.rows;
   
-  logger.info(`✓ Fetched ${elements.length} elements from Oracle`);
+//   logger.info(`✓ Fetched ${elements.length} elements from Oracle`);
   
-  if (elements.length === 0) {
-    logger.warn('No elements found in Oracle database');
-    return;
-  }
+//   if (elements.length === 0) {
+//     logger.warn('No elements found in Oracle database');
+//     return;
+//   }
   
-  // Begin transaction
-  await pgClient.query('BEGIN');
+//   // Begin transaction
+//   await pgClient.query('BEGIN');
   
-  let processedCount = 0;
-  let updatedCount = 0;
-  let insertedCount = 0;
-  let yearlyElementsCount = 0;
-  let semesterElementsCount = 0;
+//   let processedCount = 0;
+//   let updatedCount = 0;
+//   let insertedCount = 0;
+//   let yearlyElementsCount = 0;
+//   let semesterElementsCount = 0;
   
-  // Process elements in batches
-  const batchSize = 100;
-  for (let i = 0; i < elements.length; i += batchSize) {
-    const batch = elements.slice(i, i + batchSize);
+//   // Process elements in batches
+//   const batchSize = 100;
+//   for (let i = 0; i < elements.length; i += batchSize) {
+//     const batch = elements.slice(i, i + batchSize);
     
-    for (const element of batch) {
-      const [cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb] = element;
+//     for (const element of batch) {
+//       const [cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb] = element;
       
-      let elementType = 'MATIERE'; // default
-      let semesterNumber = null;
-      let yearLevel = null;
+//       let elementType = 'MATIERE'; // default
+//       let semesterNumber = null;
+//       let yearLevel = null;
       
-      // Prepare text for analysis
-      const libElpLower = (lib_elp || '').toLowerCase();
-      const codElpUpper = (cod_elp || '').toUpperCase();
+//       // Prepare text for analysis
+//       const libElpLower = (lib_elp || '').toLowerCase();
+//       const codElpUpper = (cod_elp || '').toUpperCase();
       
-      // STEP 1: First check for yearly elements patterns (highest priority)
-      if (libElpLower.includes('premiere année') || libElpLower.includes('1ère année') || 
-          libElpLower.includes('première année') || codElpUpper.includes('1A') || 
-          codElpUpper.includes('0A1') || libElpLower.includes('first year')) {
-        elementType = 'ANNEE';
-        semesterNumber = null;
-        yearLevel = 1;
-        yearlyElementsCount++;
-      } else if (libElpLower.includes('deuxième année') || libElpLower.includes('2ème année') || 
-                 libElpLower.includes('second year') || codElpUpper.includes('2A') || 
-                 codElpUpper.includes('0A2')) {
-        elementType = 'ANNEE';
-        semesterNumber = null;
-        yearLevel = 2;
-        yearlyElementsCount++;
-      } else if (libElpLower.includes('troisième année') || libElpLower.includes('3ème année') || 
-                 libElpLower.includes('third year') || codElpUpper.includes('3A') || 
-                 codElpUpper.includes('0A3')) {
-        elementType = 'ANNEE';
-        semesterNumber = null;
-        yearLevel = 3;
-        yearlyElementsCount++;
-      } else if (libElpLower.includes('quatrième année') || libElpLower.includes('4ème année') || 
-                 libElpLower.includes('fourth year') || codElpUpper.includes('4A') || 
-                 codElpUpper.includes('0A4')) {
-        elementType = 'ANNEE';
-        semesterNumber = null;
-        yearLevel = 4;
-        yearlyElementsCount++;
-      } else if (libElpLower.includes('cinquième année') || libElpLower.includes('5ème année') || 
-                 libElpLower.includes('fifth year') || codElpUpper.includes('5A') || 
-                 codElpUpper.includes('0A5')) {
-        elementType = 'ANNEE';
-        semesterNumber = null;
-        yearLevel = 5;
-        yearlyElementsCount++;
-      }
-      // STEP 2: If not yearly, check for semester patterns
-      else if (cod_nel && (cod_nel.startsWith('S') || cod_nel.includes('SM'))) {
-        elementType = 'SEMESTRE';
-        const semMatch = (cod_nel || '').match(/S?(\d+)/);
-        if (semMatch) {
-          semesterNumber = parseInt(semMatch[1]);
-        }
-        semesterElementsCount++;
-      } else if (cod_pel && (cod_pel.startsWith('S') || cod_pel.includes('SM'))) {
-        elementType = 'SEMESTRE';
-        const semMatch = (cod_pel || '').match(/S?(\d+)/);
-        if (semMatch) {
-          semesterNumber = parseInt(semMatch[1]);
-        }
-        semesterElementsCount++;
-      }
-      // STEP 3: Check for module patterns
-      else if (cod_nel && cod_nel === 'MOD') {
-        elementType = 'MODULE';
-      }
-      // STEP 4: If still no classification, try to infer from COD_ELP patterns
-      else {
-        const semesterMatch = (cod_elp || '').match(/S(\d+)/);
-        if (semesterMatch) {
-          semesterNumber = parseInt(semesterMatch[1]);
-          elementType = 'SEMESTRE';
-          semesterElementsCount++;
-        }
-      }
+//       // STEP 1: First check for yearly elements patterns (highest priority)
+//       if (libElpLower.includes('premiere année') || libElpLower.includes('1ère année') || 
+//           libElpLower.includes('première année') || codElpUpper.includes('1A') || 
+//           codElpUpper.includes('0A1') || libElpLower.includes('first year')) {
+//         elementType = 'ANNEE';
+//         semesterNumber = null;
+//         yearLevel = 1;
+//         yearlyElementsCount++;
+//       } else if (libElpLower.includes('deuxième année') || libElpLower.includes('2ème année') || 
+//                  libElpLower.includes('second year') || codElpUpper.includes('2A') || 
+//                  codElpUpper.includes('0A2')) {
+//         elementType = 'ANNEE';
+//         semesterNumber = null;
+//         yearLevel = 2;
+//         yearlyElementsCount++;
+//       } else if (libElpLower.includes('troisième année') || libElpLower.includes('3ème année') || 
+//                  libElpLower.includes('third year') || codElpUpper.includes('3A') || 
+//                  codElpUpper.includes('0A3')) {
+//         elementType = 'ANNEE';
+//         semesterNumber = null;
+//         yearLevel = 3;
+//         yearlyElementsCount++;
+//       } else if (libElpLower.includes('quatrième année') || libElpLower.includes('4ème année') || 
+//                  libElpLower.includes('fourth year') || codElpUpper.includes('4A') || 
+//                  codElpUpper.includes('0A4')) {
+//         elementType = 'ANNEE';
+//         semesterNumber = null;
+//         yearLevel = 4;
+//         yearlyElementsCount++;
+//       } else if (libElpLower.includes('cinquième année') || libElpLower.includes('5ème année') || 
+//                  libElpLower.includes('fifth year') || codElpUpper.includes('5A') || 
+//                  codElpUpper.includes('0A5')) {
+//         elementType = 'ANNEE';
+//         semesterNumber = null;
+//         yearLevel = 5;
+//         yearlyElementsCount++;
+//       }
+//       // STEP 2: If not yearly, check for semester patterns
+//       else if (cod_nel && (cod_nel.startsWith('S') || cod_nel.includes('SM'))) {
+//         elementType = 'SEMESTRE';
+//         const semMatch = (cod_nel || '').match(/S?(\d+)/);
+//         if (semMatch) {
+//           semesterNumber = parseInt(semMatch[1]);
+//         }
+//         semesterElementsCount++;
+//       } else if (cod_pel && (cod_pel.startsWith('S') || cod_pel.includes('SM'))) {
+//         elementType = 'SEMESTRE';
+//         const semMatch = (cod_pel || '').match(/S?(\d+)/);
+//         if (semMatch) {
+//           semesterNumber = parseInt(semMatch[1]);
+//         }
+//         semesterElementsCount++;
+//       }
+//       // STEP 3: Check for module patterns
+//       else if (cod_nel && cod_nel === 'MOD') {
+//         elementType = 'MODULE';
+//       }
+//       // STEP 4: If still no classification, try to infer from COD_ELP patterns
+//       else {
+//         const semesterMatch = (cod_elp || '').match(/S(\d+)/);
+//         if (semesterMatch) {
+//           semesterNumber = parseInt(semesterMatch[1]);
+//           elementType = 'SEMESTRE';
+//           semesterElementsCount++;
+//         }
+//       }
       
-      // Check if element exists
-      const existingElement = await pgClient.query(
-        'SELECT id FROM element_pedagogi WHERE cod_elp = $1', 
-        [cod_elp]
-      );
+//       // Check if element exists
+//       const existingElement = await pgClient.query(
+//         'SELECT id FROM element_pedagogi WHERE cod_elp = $1', 
+//         [cod_elp]
+//       );
       
-      const isUpdate = existingElement.rows.length > 0;
+//       const isUpdate = existingElement.rows.length > 0;
       
-      // Upsert element with new year_level field
-      await pgClient.query(`
-        INSERT INTO element_pedagogi (
-          cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb, 
-          element_type, semester_number, year_level, last_sync
-        ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP
-        )
-        ON CONFLICT (cod_elp) DO UPDATE SET
-          cod_cmp = EXCLUDED.cod_cmp,
-          cod_nel = EXCLUDED.cod_nel,
-          cod_pel = EXCLUDED.cod_pel,
-          lib_elp = EXCLUDED.lib_elp,
-          lic_elp = EXCLUDED.lic_elp,
-          lib_elp_arb = EXCLUDED.lib_elp_arb,
-          element_type = EXCLUDED.element_type,
-          semester_number = EXCLUDED.semester_number,
-          year_level = EXCLUDED.year_level,
-          last_sync = CURRENT_TIMESTAMP,
-          updated_at = CURRENT_TIMESTAMP
-      `, [cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb, elementType, semesterNumber, yearLevel]);
+//       // Upsert element with new year_level field
+//       await pgClient.query(`
+//         INSERT INTO element_pedagogi (
+//           cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb, 
+//           element_type, semester_number, year_level, last_sync
+//         ) VALUES (
+//           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP
+//         )
+//         ON CONFLICT (cod_elp) DO UPDATE SET
+//           cod_cmp = EXCLUDED.cod_cmp,
+//           cod_nel = EXCLUDED.cod_nel,
+//           cod_pel = EXCLUDED.cod_pel,
+//           lib_elp = EXCLUDED.lib_elp,
+//           lic_elp = EXCLUDED.lic_elp,
+//           lib_elp_arb = EXCLUDED.lib_elp_arb,
+//           element_type = EXCLUDED.element_type,
+//           semester_number = EXCLUDED.semester_number,
+//           year_level = EXCLUDED.year_level,
+//           last_sync = CURRENT_TIMESTAMP,
+//           updated_at = CURRENT_TIMESTAMP
+//       `, [cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb, elementType, semesterNumber, yearLevel]);
       
-      if (isUpdate) {
-        updatedCount++;
-      } else {
-        insertedCount++;
-      }
+//       if (isUpdate) {
+//         updatedCount++;
+//       } else {
+//         insertedCount++;
+//       }
       
-      processedCount++;
-    }
+//       processedCount++;
+//     }
     
-    const progress = Math.round((i + batch.length) / elements.length * 100);
-    logger.info(`Elements Progress: ${progress}% (${processedCount}/${elements.length})`);
-  }
+//     const progress = Math.round((i + batch.length) / elements.length * 100);
+//     logger.info(`Elements Progress: ${progress}% (${processedCount}/${elements.length})`);
+//   }
   
-  await pgClient.query('COMMIT');
+//   await pgClient.query('COMMIT');
   
-  // Log sync success with detailed breakdown
-  await pgClient.query(`
-    INSERT INTO sync_log (sync_type, records_processed, sync_status, error_message)
-    VALUES ('element_pedagogi', $1, 'success', $2)
-  `, [processedCount, `Yearly elements: ${yearlyElementsCount}, Semester elements: ${semesterElementsCount}, Total: ${processedCount}, New: ${insertedCount}, Updated: ${updatedCount}`]);
+//   // Log sync success with detailed breakdown
+//   await pgClient.query(`
+//     INSERT INTO sync_log (sync_type, records_processed, sync_status, error_message)
+//     VALUES ('element_pedagogi', $1, 'success', $2)
+//   `, [processedCount, `Yearly elements: ${yearlyElementsCount}, Semester elements: ${semesterElementsCount}, Total: ${processedCount}, New: ${insertedCount}, Updated: ${updatedCount}`]);
   
-  logger.info(`✓ Element pedagogi sync completed: ${processedCount} total, ${insertedCount} new, ${updatedCount} updated`);
-  logger.info(`📊 Classification: ${yearlyElementsCount} yearly elements, ${semesterElementsCount} semester elements`);
-}
+//   logger.info(`✓ Element pedagogi sync completed: ${processedCount} total, ${insertedCount} new, ${updatedCount} updated`);
+//   logger.info(`📊 Classification: ${yearlyElementsCount} yearly elements, ${semesterElementsCount} semester elements`);
+// }
 
 async function syncElementHierarchy(oracleConnection, pgClient) {
   logger.info('Syncing element hierarchy...');
@@ -965,7 +1122,7 @@ async function syncOfficialDocuments(oracleConnection, pgClient) {
   logger.info(`✓ Official documents sync completed: ${processedCount} total, ${insertedCount} new, ${updatedCount} updated, ${skippedCount} skipped`);
   logger.info(`📚 Specializations found: ${specializationsList.length} different specializations`);
   if (specializationsList.length > 0) {
-    
+
     logger.info(`📚 Sample specializations: ${specializationsList.slice(0, 3).join(', ')}`);
   }
 }
@@ -1255,9 +1412,10 @@ async function syncStudents() {
     logger.info('✓ Oracle connection successful');
     
     // Sync element pedagogi first
-    await syncElementPedagogi(oracleConnection, pgClient);
+    // await syncElementPedagogi(oracleConnection, pgClient);
     
     // Sync element hierarchy
+    await syncAdministrativeSituation(oracleConnection, pgClient);
     await syncElementHierarchy(oracleConnection, pgClient);
     
     // Sync students
@@ -1270,7 +1428,7 @@ async function syncStudents() {
 
     // NEW: Sync pedagogical situation
     await syncPedagogicalSituation(oracleConnection, pgClient);
-    
+    await syncAdministrativeSituation(oracleConnection, pgClient);
     const endTime = Date.now();
     const duration = Math.round((endTime - startTime) / 1000);
     

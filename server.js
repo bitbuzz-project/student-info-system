@@ -1559,6 +1559,138 @@ app.post('/api/store-document-signature', authenticateToken, async (req, res) =>
   }
 });
 
+
+// Add these endpoints to server.js
+
+// Get administrative situation
+app.get('/student/administrative-situation', authenticateToken, async (req, res) => {
+  try {
+    const { year } = req.query;
+
+    let query = `
+      SELECT
+        as_table.cod_etu,
+        as_table.cod_anu,
+        as_table.cod_etp,
+        as_table.lib_etp,
+        as_table.lic_etp,
+        as_table.cod_vrs_vet,
+        as_table.eta_iae,
+        as_table.tem_iae_prm,
+        as_table.dat_cre_iae,
+        as_table.dat_mod_iae,
+        as_table.nbr_ins_cyc,
+        as_table.nbr_ins_etp,
+        as_table.nbr_ins_dip,
+        as_table.tem_dip_iae,
+        as_table.cod_uti,
+        as_table.lib_dip,
+        as_table.last_sync
+      FROM administrative_situation as_table
+      WHERE as_table.cod_etu = (
+        SELECT cod_etu FROM students WHERE id = $1
+      )
+    `;
+
+    let params = [req.user.studentId];
+    let paramIndex = 2;
+
+    if (year) {
+      query += ` AND as_table.cod_anu = $${paramIndex}`;
+      params.push(year);
+      paramIndex++;
+    }
+
+    query += ` ORDER BY as_table.cod_anu DESC, as_table.dat_cre_iae DESC`;
+
+    const result = await pool.query(query, params);
+
+    // Organize data by year
+    const organizedData = {};
+    let availableYears = new Set();
+
+    result.rows.forEach(row => {
+      const year = row.cod_anu;
+      availableYears.add(year);
+
+      if (!organizedData[year]) {
+        organizedData[year] = [];
+      }
+
+      organizedData[year].push({
+        cod_etp: row.cod_etp,
+        lib_etp: row.lib_etp,
+        lic_etp: row.lic_etp,
+        cod_vrs_vet: row.cod_vrs_vet,
+        eta_iae: row.eta_iae,
+        tem_iae_prm: row.tem_iae_prm,
+        dat_cre_iae: row.dat_cre_iae,
+        dat_mod_iae: row.dat_mod_iae,
+        nbr_ins_cyc: row.nbr_ins_cyc,
+        nbr_ins_etp: row.nbr_ins_etp,
+        nbr_ins_dip: row.nbr_ins_dip,
+        tem_dip_iae: row.tem_dip_iae,
+        cod_uti: row.cod_uti,
+        lib_dip: row.lib_dip,
+        last_sync: row.last_sync
+      });
+    });
+
+    res.json({
+      administrative_situation: organizedData,
+      available_years: Array.from(availableYears).sort((a, b) => b - a),
+      total_records: result.rows.length
+    });
+
+  } catch (error) {
+    console.error('Get administrative situation error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get administrative situation statistics
+app.get('/student/administrative-stats', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        as_table.cod_anu,
+        COUNT(*) as total_registrations,
+        COUNT(CASE WHEN as_table.eta_iae = 'E' THEN 1 END) as active_registrations,
+        COUNT(CASE WHEN as_table.eta_iae = 'D' THEN 1 END) as deactivated_registrations,
+        COUNT(CASE WHEN as_table.tem_iae_prm = 'O' THEN 1 END) as primary_registrations,
+        COUNT(DISTINCT as_table.cod_etp) as unique_programs,
+        MAX(as_table.nbr_ins_cyc) as max_cycle_inscriptions,
+        MAX(as_table.nbr_ins_etp) as max_program_inscriptions,
+        MAX(as_table.nbr_ins_dip) as max_diploma_inscriptions
+      FROM administrative_situation as_table
+      WHERE as_table.cod_etu = (
+        SELECT cod_etu FROM students WHERE id = $1
+      )
+      GROUP BY as_table.cod_anu
+      ORDER BY as_table.cod_anu DESC
+    `, [req.user.studentId]);
+
+    res.json({
+      statistics: result.rows.map(stat => ({
+        year: stat.cod_anu,
+        total_registrations: parseInt(stat.total_registrations),
+        active_registrations: parseInt(stat.active_registrations),
+        deactivated_registrations: parseInt(stat.deactivated_registrations),
+        primary_registrations: parseInt(stat.primary_registrations),
+        unique_programs: parseInt(stat.unique_programs),
+        max_cycle_inscriptions: parseInt(stat.max_cycle_inscriptions),
+        max_program_inscriptions: parseInt(stat.max_program_inscriptions),
+        max_diploma_inscriptions: parseInt(stat.max_diploma_inscriptions)
+      }))
+    });
+
+  } catch (error) {
+    console.error('Get administrative stats error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+
 // Get official documents/transcripts from RESULTAT_ELP (final consolidated grades)
 // Add this new endpoint specifically for raw signature verification
 // Replace your current /api/verify-signature endpoint with this

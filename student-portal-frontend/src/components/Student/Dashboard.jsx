@@ -45,7 +45,8 @@ import StudentGrades from './StudentGrades';
 import StudentStats from './StudentStats';
 import PedagogicalSituation from './PedagogicalSituation';
 import StudentRequests from './StudentRequests'; // 1. Import the new component
-
+import AdministrativeSituation from './AdministrativeSituation';
+import { AdminPanelSettings as AdminPanelSettingsIcon } from '@mui/icons-material';
 const DRAWER_WIDTH = 280;
 
 const Dashboard = () => {
@@ -100,6 +101,12 @@ const Dashboard = () => {
       icon: <PersonIcon />,
       color: '#2ecc71'
     },
+    {
+  id: 'administrative',
+  label: 'الوضعية الإدارية',
+  icon: <AdminPanelSettingsIcon />, // Make sure to import this
+  color: '#8e44ad'
+},
       {
     id: 'pedagogical',
     label: 'الوضعية البيداغوجية',
@@ -140,6 +147,8 @@ const Dashboard = () => {
         return <DashboardHome onNavigate={handlePageChange} />;
       case 'profile':
         return <StudentProfile />;
+        case 'administrative':
+  return <AdministrativeSituation />;
       case 'pedagogical':
       return <PedagogicalSituation />;
        case 'documents':
