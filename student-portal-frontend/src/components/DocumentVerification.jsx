@@ -414,18 +414,28 @@ const DocumentVerification = () => {
                       : manualVerificationResult.error || 'La signature numérique ne correspond à aucun document valide'
                     }
                   </Typography>
-                  {manualVerificationResult.valid && manualVerificationResult.student_id && (
-                    <Box sx={{ mt: 2 }}>
-                      <Typography variant="body2">
-                        <strong>Code Étudiant:</strong> {manualVerificationResult.student_id}
-                      </Typography>
-                      {manualVerificationResult.student_name && (
-                        <Typography variant="body2">
-                          <strong>Nom:</strong> {manualVerificationResult.student_name}
-                        </Typography>
-                      )}
-                    </Box>
-                  )}
+          // In DocumentVerification.jsx, update to handle different document types
+{manualVerificationResult.valid && manualVerificationResult.student_id && (
+  <Box sx={{ mt: 2 }}>
+    <Typography variant="body2">
+      <strong>Code Étudiant:</strong> {manualVerificationResult.student_id}
+    </Typography>
+    {manualVerificationResult.student_name && (
+      <Typography variant="body2">
+        <strong>Nom:</strong> {manualVerificationResult.student_name}
+      </Typography>
+    )}
+    {manualVerificationResult.semester && (
+      <Typography variant="body2">
+        <strong>Document:</strong> {
+          manualVerificationResult.semester.startsWith('ADMIN_') 
+            ? `Situation Administrative ${manualVerificationResult.semester.replace('ADMIN_', '')}`
+            : `Semestre ${manualVerificationResult.semester}`
+        }
+      </Typography>
+    )}
+  </Box>
+)}
                 </Alert>
               </Box>
             )}

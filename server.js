@@ -1560,6 +1560,28 @@ app.post('/api/store-document-signature', authenticateToken, async (req, res) =>
 });
 
 
+// In your AdministrativeSituation.jsx or wherever you generate the PDF
+
+const downloadEnrollmentCertificate = async () => {
+  try {
+    const token = localStorage.getItem('authToken');
+    const response = await fetch('http://localhost:3000/student/enrollment-certificate/pdf', {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    
+    if (response.ok) {
+      const html = await response.text();
+      const printWindow = window.open('', '_blank');
+      printWindow.document.write(html);
+      printWindow.document.close();
+    }
+  } catch (error) {
+    console.error('Error generating certificate:', error);
+  }
+};
+
 // Add these endpoints to server.js
 
 // Get administrative situation
