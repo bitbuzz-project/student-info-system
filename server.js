@@ -1750,11 +1750,20 @@ app.post('/api/verify-signature', async (req, res) => {
         ? `${doc.lib_nom_pat_ind} ${doc.lib_pr1_ind}` 
         : null;
       
+      // Handle different document types
+      let documentType = 'Relevé de Notes';
+      if (doc.semester && doc.semester.startsWith('ADMIN_')) {
+        documentType = 'Situation Administrative';
+      } else if (doc.semester && doc.semester.startsWith('YEAR_')) {
+        documentType = 'Certificat de Scolarité';
+      }
+      
       res.json({
         valid: true,
         student_id: doc.cod_etu,
         student_name: studentName,
         semester: doc.semester,
+        document_type: documentType,
         verified_at: new Date().toISOString()
       });
     } else {
@@ -1969,24 +1978,13 @@ app.get('/verify-document/:token', async (req, res) => {
 // Add these endpoints to your server.js
 
 // Simple API endpoint for JSON response
+// Add these endpoints to your server.js - replace existing ones
 app.get('/api/verify-document/:token', async (req, res) => {
   try {
     const { token } = req.params;
     
-    // For testing, let's first check if this endpoint is even being hit
     console.log('API Verification attempt for token:', token.substring(0, 20) + '...');
     
-    if (token === 'test') {
-      // Test response
-      return res.json({
-        valid: true,
-        student_id: 'TEST-123',
-        semester: 'S1',
-        timestamp: new Date().toISOString(),
-        verified_at: new Date().toISOString()
-      });
-    }
-
     const CryptoJS = require('crypto-js');
     const SIGNATURE_SECRET = process.env.DOC_SIGNATURE_SECRET || '228QYTXF26w4XAUNQ7GQ7Nj5Grat7fSD';
     
@@ -1996,26 +1994,73 @@ app.get('/api/verify-document/:token', async (req, res) => {
     
     console.log('Decrypted document info:', documentInfo);
     
-    // Verify document exists in database
-    const verificationQuery = `
-      SELECT 
-        COUNT(*) as count,
-        MIN(od.cod_anu) as year,
-        MIN(s.lib_nom_pat_ind || ' ' || s.lib_pr1_ind) as student_name
-      FROM official_documents od
-      LEFT JOIN element_pedagogi ep ON od.cod_elp = ep.cod_elp
-      LEFT JOIN students s ON od.cod_etu = s.cod_etu
-      WHERE od.cod_etu = $1 
-        AND (ep.semester_number = $2 OR ep.year_level = $2)
-        AND s.cod_etu IS NOT NULL
-    `;
+    // Determine verification query based on semester format
+    let verificationQuery;
+    let queryParams;
     
-    const semesterNum = documentInfo.semester.replace('S', '').replace('A', '');
-    const result = await pool.query(verificationQuery, [documentInfo.studentId, semesterNum]);
+    if (documentInfo.semester && documentInfo.semester.startsWith('YEAR_')) {
+      // This is an enrollment certificate
+      const year = documentInfo.semester.replace('YEAR_', '');
+      console.log('Verifying enrollment certificate for year:', year);
+      
+      verificationQuery = `
+        SELECT 
+          COUNT(*) as count,
+          MIN(ad.cod_anu) as year,
+          MIN(s.lib_nom_pat_ind || ' ' || s.lib_pr1_ind) as student_name
+        FROM administrative_situation ad
+        LEFT JOIN students s ON ad.cod_etu = s.cod_etu
+        WHERE ad.cod_etu = $1 
+          AND ad.cod_anu = $2
+          AND ad.eta_iae = 'E'
+          AND s.cod_etu IS NOT NULL
+      `;
+      queryParams = [documentInfo.studentId, year];
+      
+    } else if (documentInfo.semester && documentInfo.semester.startsWith('ADMIN_')) {
+      // This is an administrative situation document
+      const year = documentInfo.semester.replace('ADMIN_', '');
+      console.log('Verifying administrative situation for year:', year);
+      
+      verificationQuery = `
+        SELECT 
+          COUNT(*) as count,
+          MIN(ad.cod_anu) as year,
+          MIN(s.lib_nom_pat_ind || ' ' || s.lib_pr1_ind) as student_name
+        FROM administrative_situation ad
+        LEFT JOIN students s ON ad.cod_etu = s.cod_etu
+        WHERE ad.cod_etu = $1 
+          AND ad.cod_anu = $2
+          AND s.cod_etu IS NOT NULL
+      `;
+      queryParams = [documentInfo.studentId, year];
+      
+    } else {
+      // This is a regular transcript (S1, S2, etc.)
+      const semesterNum = (documentInfo.semester || '').replace('S', '').replace('A', '');
+      console.log('Verifying transcript for semester:', semesterNum);
+      
+      verificationQuery = `
+        SELECT 
+          COUNT(*) as count,
+          MIN(od.cod_anu) as year,
+          MIN(s.lib_nom_pat_ind || ' ' || s.lib_pr1_ind) as student_name
+        FROM official_documents od
+        LEFT JOIN element_pedagogi ep ON od.cod_elp = ep.cod_elp
+        LEFT JOIN students s ON od.cod_etu = s.cod_etu
+        WHERE od.cod_etu = $1 
+          AND (ep.semester_number = $2 OR ep.year_level = $2)
+          AND s.cod_etu IS NOT NULL
+      `;
+      queryParams = [documentInfo.studentId, semesterNum];
+    }
     
-    const isValid = result.rows[0].count > 0;
+    console.log('Executing query with params:', queryParams);
+    const result = await pool.query(verificationQuery, queryParams);
     
-    console.log('Database check result:', { isValid, count: result.rows[0].count });
+    const isValid = result.rows[0] && parseInt(result.rows[0].count) > 0;
+    
+    console.log('Verification result:', { isValid, count: result.rows[0]?.count });
     
     res.json({
       valid: isValid,
@@ -2036,7 +2081,6 @@ app.get('/api/verify-document/:token', async (req, res) => {
     });
   }
 });
-
 // HTML verification endpoint (fallback)
 app.get('/verify-document/:token', async (req, res) => {
   try {

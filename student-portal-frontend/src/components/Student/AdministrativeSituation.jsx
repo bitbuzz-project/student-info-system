@@ -441,29 +441,20 @@ const generateEnrollmentCertificate = async (year, registrations) => {
       }
     }
 
-    // ===== GENERATE SECURITY FEATURES =====
+    // ===== GENERATE SECURITY FEATURES - MATCH OfficialDocuments EXACTLY =====
     const documentData = {
       studentId: user?.cod_etu,
-      year: year,
-      documentType: 'enrollment_certificate',
+      semester: `YEAR_${year}`,  // ← Changed to match the format used in storage
       timestamp: new Date().toISOString(),
-      registrations: registrations
+      registrations: registrations.map(r => ({
+        cod_etp: r.cod_etp,
+        lib_etp: r.lib_etp
+      }))
     };
 
-    // Generate signature directly
-    let signature = '';
-    try {
-      const CryptoJS = (await import('crypto-js')).default;
-      const dataString = JSON.stringify(documentData);
-      const SECRET = '228QYTXF26w4XAUNQ7GQ7Nj5Grat7fSD';
-      signature = CryptoJS.HmacSHA256(dataString, SECRET).toString();
-      console.log('Generated signature:', signature.substring(0, 20) + '...');
-    } catch (cryptoError) {
-      console.error('Failed to generate signature:', cryptoError);
-      signature = `CERT${user?.cod_etu}${year}${Date.now()}`.substring(0, 64);
-    }
-
     const verificationUrl = DocumentSecurity.generateVerificationUrl(documentData);
+    const signature = DocumentSecurity.generateSignature(documentData);
+    const qrCodeDataUrl = await DocumentSecurity.generateQRCode(verificationUrl);
 
     // ===== FOOTER SECTION =====
     const footerStartY = 180;
@@ -491,7 +482,6 @@ const generateEnrollmentCertificate = async (year, registrations) => {
     const qrSize = 35;
 
     try {
-      const qrCodeDataUrl = await DocumentSecurity.generateQRCode(verificationUrl);
       if (qrCodeDataUrl) {
         doc.setDrawColor(52, 152, 219);
         doc.setLineWidth(0.5);
@@ -508,44 +498,28 @@ const generateEnrollmentCertificate = async (year, registrations) => {
       console.warn('QR code generation failed:', qrError);
     }
 
-    // ===== DIGITAL SIGNATURE BOX (CENTER - WIDER AND LOWER, ONE LINE) =====
+    // ===== DIGITAL SIGNATURE BOX (CENTER) =====
     const sigX = 60;
     const sigY = footerStartY + 10;
     const sigWidth = 90;
     const sigHeight = 18;
 
-    // Box border
     doc.setDrawColor(220, 220, 220);
     doc.setLineWidth(0.3);
     doc.rect(sigX, sigY, sigWidth, sigHeight);
 
-    // Header labels
     doc.setFontSize(7);
     doc.setFont('Amiri', 'bold');
-    doc.text('التوقيع الرقمي', sigX + (sigWidth / 2), sigY + 4, { align: 'center' });
+
     doc.text('Signature Numérique', sigX + (sigWidth / 2), sigY + 8, { align: 'center' });
 
-    // Display signature hash IN ONE LINE
     if (signature && signature.length > 0) {
       doc.setFont('Courier', 'normal');
       doc.setFontSize(6);
-      
-      // Display full signature in one line
       doc.text(signature, sigX + (sigWidth / 2), sigY + 13, { align: 'center' });
-      
-      console.log('Signature displayed in PDF (one line):', signature);
-    } else {
-      doc.setFont('Amiri', 'normal');
-      doc.setFontSize(6);
-      doc.text('[Signature Error]', sigX + (sigWidth / 2), sigY + 13, { align: 'center' });
     }
 
-    // Verification status
-    doc.setFont('Amiri', 'normal');
-    doc.setFontSize(6.5);
-    doc.setTextColor(39, 174, 96);
-    doc.text('Signature Vérifiée', sigX + (sigWidth / 2), sigY + 16.5, { align: 'center' });
-    doc.setTextColor(0, 0, 0);
+
 
     // ===== UNIVERSITY FOOTER =====
     const bottomY = pageHeight - 20;
@@ -564,7 +538,7 @@ const generateEnrollmentCertificate = async (year, registrations) => {
     doc.text('16005333', pageWidth - 15, bottomY + 10, { align: 'right' });
     doc.setTextColor(0, 0, 0);
 
-    // ===== STORE SIGNATURE IN DATABASE =====
+    // ===== STORE SIGNATURE IN DATABASE - MATCH OfficialDocuments EXACTLY =====
     try {
       await fetch(`${BACKEND_URL}/api/store-document-signature`, {
         method: 'POST',
@@ -575,11 +549,11 @@ const generateEnrollmentCertificate = async (year, registrations) => {
         body: JSON.stringify({
           signature: signature,
           studentId: user?.cod_etu,
-          semester: `YEAR_${year}`,
-          documentData: documentData
+          semester: `YEAR_${year}`,  // ← Same format as documentData
+          documentData: documentData  // ← Exact same structure
         })
       });
-      console.log('Signature stored in database');
+      console.log('Enrollment certificate signature stored successfully');
     } catch (err) {
       console.warn('Failed to store signature:', err);
     }

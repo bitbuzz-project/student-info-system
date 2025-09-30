@@ -12,16 +12,27 @@ export class DocumentSecurity {
   // Generate document signature
   static generateSignature(documentData) {
     try {
-      const dataString = JSON.stringify({
+      // Create a clean, serializable version of the data
+      const cleanData = {
         studentId: documentData.studentId,
         semester: documentData.semester,
         timestamp: documentData.timestamp,
-        modules: documentData.modules.length
-      });
+        // Handle different data structures
+        itemCount: documentData.modules?.length || 
+                   documentData.registrations?.length || 
+                   documentData.subjects?.length || 0
+      };
       
-      return CryptoJS.HmacSHA256(dataString, CONFIG.SIGNATURE_SECRET).toString();
+      const dataString = JSON.stringify(cleanData);
+      console.log('Generating signature for:', dataString);
+      
+      const signature = CryptoJS.HmacSHA256(dataString, CONFIG.SIGNATURE_SECRET).toString();
+      console.log('Generated signature:', signature.substring(0, 20) + '...');
+      
+      return signature;
     } catch (error) {
       console.error('Error generating signature:', error);
+      console.error('Document data that caused error:', documentData);
       return 'signature-error';
     }
   }
@@ -30,14 +41,24 @@ export class DocumentSecurity {
   static generateVerificationUrl(documentData) {
     try {
       const signature = this.generateSignature(documentData);
-      const verificationToken = CryptoJS.AES.encrypt(JSON.stringify({
+      
+      // Create a clean token with only essential data
+      const tokenData = {
         studentId: documentData.studentId,
         semester: documentData.semester,
         timestamp: documentData.timestamp,
         signature: signature
-      }), CONFIG.SIGNATURE_SECRET).toString();
+      };
       
-      return `${CONFIG.APP_DOMAIN}/verify-document/${encodeURIComponent(verificationToken)}`;
+      const verificationToken = CryptoJS.AES.encrypt(
+        JSON.stringify(tokenData), 
+        CONFIG.SIGNATURE_SECRET
+      ).toString();
+      
+      const url = `${CONFIG.APP_DOMAIN}/verify-document/${encodeURIComponent(verificationToken)}`;
+      console.log('Generated verification URL length:', url.length);
+      
+      return url;
     } catch (error) {
       console.error('Error generating verification URL:', error);
       return `${CONFIG.APP_DOMAIN}/verify-error`;
@@ -47,14 +68,22 @@ export class DocumentSecurity {
   // Generate QR code
   static async generateQRCode(verificationUrl) {
     try {
+      // Check URL length - QR codes have limits
+      if (verificationUrl.length > 500) {
+        console.warn('URL is very long for QR code:', verificationUrl.length, 'characters');
+      }
+      
       const qrCodeDataUrl = await QRCode.toDataURL(verificationUrl, {
         width: 150,
         margin: 2,
+        errorCorrectionLevel: 'M', // Medium error correction
         color: {
           dark: '#000000',
           light: '#FFFFFF'
         }
       });
+      
+      console.log('QR code generated successfully');
       return qrCodeDataUrl;
     } catch (error) {
       console.error('Error generating QR code:', error);
@@ -94,9 +123,10 @@ export class DocumentSecurity {
     
     console.log('Test Results:', {
       signature: signature.substring(0, 16) + '...',
-      url: url.substring(0, 50) + '...'
+      url: url.substring(0, 50) + '...',
+      signatureValid: signature !== 'signature-error'
     });
     
-    return true;
+    return signature !== 'signature-error';
   }
 }
