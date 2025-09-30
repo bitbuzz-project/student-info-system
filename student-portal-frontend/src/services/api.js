@@ -84,6 +84,11 @@ export const studentAPI = {
     const response = await api.get('/student/request/student-card/status');
     return response.data;
   },
+
+    getValidatedModules: async () => {
+    const response = await api.get('/student/validated-modules');
+    return response.data;
+  },
     getPedagogicalSituation: async (filters = {}) => {
       const params = new URLSearchParams();
       if (filters.year) params.append('year', filters.year);

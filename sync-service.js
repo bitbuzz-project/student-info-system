@@ -624,6 +624,159 @@ async function syncElementPedagogi(oracleConnection, pgClient) {
   logger.info(`✓ Element pedagogi sync completed: ${processedCount} total, ${insertedCount} new, ${updatedCount} updated`);
   logger.info(`📊 Classification: ${yearlyElementsCount} yearly elements, ${semesterElementsCount} semester elements`);
 }
+// Add this query constant near the top with other queries
+const VALIDATED_MODULES_QUERY = `
+WITH EFFECTIVE_NEL AS (
+  SELECT COD_ELP, COD_NEL,
+    TO_NUMBER(SUBSTR(COD_NEL, 3,2)) + CASE WHEN SUBSTR(COD_ELP,1,2) IN ('AI', 'EI', 'GG', 'GL') THEN 4 ELSE 0 END EFCTV_NEL
+  FROM ELEMENT_PEDAGOGI
+  WHERE COD_NEL LIKE 'SM%'
+)
+SELECT DISTINCT 
+  COD_ETU, 
+  COD_NNE_IND,
+  LIB_NOM_PAT_IND, 
+  LIB_PR1_IND,
+  LIC_TPD,
+  IAE.COD_DIP,
+  EFN.EFCTV_NEL,
+  COUNT(DISTINCT DECODE(TRM.COD_NEG_TRE, 1, REM.COD_ELP, NULL)) OVER (PARTITION BY REM.COD_IND, ELPS.COD_ELP) AS MODULES
+FROM INS_ADM_ETP IAE
+  JOIN INDIVIDU I ON(I.COD_IND=IAE.COD_IND)
+  JOIN ADRESSE A ON(A.COD_IND=IAE.COD_IND)
+  JOIN VDI_FRACTIONNER_VET VFV ON(VFV.COD_DIP=IAE.COD_DIP)
+  JOIN VET_REGROUPE_LSE VRL ON(VRL.COD_ETP=VFV.COD_ETP AND VRL.COD_VRS_VET=VFV.COD_VRS_VET)
+  JOIN LSE_REGROUPE_ELP LRE ON(LRE.COD_LSE=VRL.COD_LSE)
+  JOIN ELP_REGROUPE_ELP ERES ON(ERES.COD_ELP_PERE=LRE.COD_ELP AND ERES.DATE_FERMETURE_LIEN IS NULL)
+  JOIN ELEMENT_PEDAGOGI ELPS ON(ELPS.COD_ELP=ERES.COD_ELP_FILS OR ELPS.COD_ELP=LRE.COD_ELP)
+  JOIN ELP_REGROUPE_ELP EREM ON(EREM.COD_ELP_PERE=ELPS.COD_ELP AND EREM.DATE_FERMETURE_LIEN IS NULL)
+  JOIN RESULTAT_ELP REM ON(REM.COD_IND=IAE.COD_IND AND REM.COD_ELP=EREM.COD_ELP_FILS
+     AND REM.COD_ANU <= IAE.COD_ANU AND ELPS.COD_NEL LIKE 'SM%')
+  JOIN TYP_RESULTAT TRM ON(TRM.COD_TRE=REM.COD_TRE)
+  JOIN DIPLOME D ON(D.COD_DIP=IAE.COD_DIP)
+  JOIN TYP_DIPLOME TPD ON(TPD.COD_TPD_ETB=D.COD_TPD_ETB)
+  LEFT JOIN EFFECTIVE_NEL EFN ON(EFN.COD_ELP=ELPS.COD_ELP)
+WHERE IAE.ETA_IAE='E'
+  AND IAE.COD_ANU IN (2023, 2024, 2025)
+  AND IAE.COD_DIP LIKE 'JL%'
+  AND IAE.COD_DIP NOT IN ('JLDII')
+ORDER BY COD_ETU, EFN.EFCTV_NEL
+`;
+
+// Add this sync function
+async function syncValidatedModules(oracleConnection, pgClient) {
+  logger.info('Syncing validated modules per semester data...');
+  
+  // Create table if not exists
+  await pgClient.query(`
+    CREATE TABLE IF NOT EXISTS validated_modules_per_semester (
+      id SERIAL PRIMARY KEY,
+      cod_etu VARCHAR(20) NOT NULL,
+      cod_nne_ind VARCHAR(50),
+      lib_nom_pat_ind VARCHAR(100),
+      lib_pr1_ind VARCHAR(100),
+      lic_tpd VARCHAR(100),
+      cod_dip VARCHAR(20),
+      semester_number INTEGER,
+      validated_modules_count INTEGER DEFAULT 0,
+      last_sync TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(cod_etu, semester_number)
+    )
+  `);
+  
+  // Add indexes
+  await pgClient.query(`
+    CREATE INDEX IF NOT EXISTS idx_validated_modules_cod_etu ON validated_modules_per_semester(cod_etu);
+    CREATE INDEX IF NOT EXISTS idx_validated_modules_semester ON validated_modules_per_semester(semester_number);
+  `);
+  
+  // Fetch data from Oracle
+  const result = await oracleConnection.execute(VALIDATED_MODULES_QUERY);
+  const validatedModules = result.rows;
+  
+  logger.info(`✓ Fetched ${validatedModules.length} validated module records from Oracle`);
+  
+  if (validatedModules.length === 0) {
+    logger.warn('No validated modules data found in Oracle database');
+    return;
+  }
+  
+  // Begin transaction
+  await pgClient.query('BEGIN');
+  
+  let processedCount = 0;
+  let insertedCount = 0;
+  let updatedCount = 0;
+  
+  // Process in batches
+  const batchSize = 100;
+  for (let i = 0; i < validatedModules.length; i += batchSize) {
+    const batch = validatedModules.slice(i, i + batchSize);
+    
+    for (const record of batch) {
+      const [
+        cod_etu, cod_nne_ind, lib_nom_pat_ind, lib_pr1_ind, 
+        lic_tpd, cod_dip, efctv_nel, modules_count
+      ] = record;
+      
+      // Skip if no semester number
+      if (!efctv_nel) continue;
+      
+      // Check if record exists
+      const existingRecord = await pgClient.query(
+        'SELECT id FROM validated_modules_per_semester WHERE cod_etu = $1 AND semester_number = $2', 
+        [cod_etu, efctv_nel]
+      );
+      
+      const isUpdate = existingRecord.rows.length > 0;
+      
+      // Upsert record
+      await pgClient.query(`
+        INSERT INTO validated_modules_per_semester (
+          cod_etu, cod_nne_ind, lib_nom_pat_ind, lib_pr1_ind,
+          lic_tpd, cod_dip, semester_number, validated_modules_count, last_sync
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (cod_etu, semester_number) DO UPDATE SET
+          cod_nne_ind = EXCLUDED.cod_nne_ind,
+          lib_nom_pat_ind = EXCLUDED.lib_nom_pat_ind,
+          lib_pr1_ind = EXCLUDED.lib_pr1_ind,
+          lic_tpd = EXCLUDED.lic_tpd,
+          cod_dip = EXCLUDED.cod_dip,
+          validated_modules_count = EXCLUDED.validated_modules_count,
+          last_sync = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      `, [
+        cod_etu, cod_nne_ind, lib_nom_pat_ind, lib_pr1_ind,
+        lic_tpd, cod_dip, efctv_nel, modules_count || 0
+      ]);
+      
+      if (isUpdate) {
+        updatedCount++;
+      } else {
+        insertedCount++;
+      }
+      
+      processedCount++;
+    }
+    
+    const progress = Math.round((i + batch.length) / validatedModules.length * 100);
+    logger.info(`Validated Modules Progress: ${progress}% (${processedCount}/${validatedModules.length})`);
+  }
+  
+  await pgClient.query('COMMIT');
+  
+  // Log sync success
+  await pgClient.query(`
+    INSERT INTO sync_log (sync_type, records_processed, sync_status, error_message)
+    VALUES ('validated_modules', $1, 'success', $2)
+  `, [processedCount, `Total: ${processedCount}, New: ${insertedCount}, Updated: ${updatedCount}`]);
+  
+  logger.info(`✓ Validated modules sync completed: ${processedCount} total, ${insertedCount} new, ${updatedCount} updated`);
+}
 
 async function syncElementHierarchy(oracleConnection, pgClient) {
   logger.info('Syncing element hierarchy...');
@@ -1410,6 +1563,10 @@ async function syncStudents() {
     logger.info('Testing Oracle connection...');
     oracleConnection = await oracledb.getConnection(oracleConfig);
     logger.info('✓ Oracle connection successful');
+    
+    // NEW: Sync validated modules per semester
+    await syncValidatedModules(oracleConnection, pgClient);
+    
     
     // Sync element pedagogi first
     await syncElementPedagogi(oracleConnection, pgClient);

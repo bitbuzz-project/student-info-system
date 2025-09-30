@@ -1974,6 +1974,86 @@ app.get('/verify-document/:token', async (req, res) => {
   }
 });
 
+
+// Get student validated modules per semester from synced table
+// Get student validated modules per semester - ONLY from synced table
+app.get('/student/validated-modules', authenticateToken, async (req, res) => {
+  try {
+    const studentResult = await pool.query(
+      'SELECT cod_etu FROM students WHERE id = $1',
+      [req.user.studentId]
+    );
+
+    if (studentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+
+    const cod_etu = studentResult.rows[0].cod_etu;
+    
+    console.log('Fetching validated modules for student:', cod_etu);
+    
+    // Get ONLY synced data - no calculations, no joins
+    const syncedData = await pool.query(`
+      SELECT 
+        semester_number,
+        validated_modules_count,
+        last_sync
+      FROM validated_modules_per_semester 
+      WHERE cod_etu = $1
+      ORDER BY semester_number
+    `, [cod_etu]);
+    
+    console.log('Raw synced data:', syncedData.rows);
+    
+    if (syncedData.rows.length === 0) {
+      return res.json({
+        by_semester: [],
+        overall: {
+          total_modules: 0,
+          validated_modules: 0,
+          not_validated_modules: 0,
+          validation_rate: 0
+        },
+        student_code: cod_etu
+      });
+    }
+    
+    // Transform to expected format - NO additional queries
+    const bySemester = syncedData.rows.map(row => ({
+      semester_number: row.semester_number,
+      total_modules: 0, // We don't have total in the synced table
+      validated_modules: row.validated_modules_count,
+      not_validated_modules: 0, // Can't calculate without total
+      modules_detail: [], // No details - only counts
+      last_sync: row.last_sync
+    }));
+    
+    // Overall stats from synced data only
+    const totalValidated = syncedData.rows.reduce((sum, row) => sum + row.validated_modules_count, 0);
+    
+    const overall = {
+      total_modules: 0, // Unknown
+      validated_modules: totalValidated,
+      not_validated_modules: 0, // Unknown
+      validation_rate: 0 // Can't calculate without total
+    };
+    
+    console.log('Returning:', { bySemester, overall });
+    
+    res.json({
+      by_semester: bySemester,
+      overall: overall,
+      student_code: cod_etu
+    });
+
+  } catch (error) {
+    console.error('Get validated modules error:', error);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      details: error.message 
+    });
+  }
+});
 // Simple API endpoint for JSON response
 // Add these endpoints to your server.js
 
