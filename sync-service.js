@@ -150,7 +150,7 @@ FROM INS_ADM_ETP i
 JOIN INDIVIDU ind ON i.COD_IND = ind.COD_IND
 JOIN ETAPE e ON i.COD_ETP = e.COD_ETP
 WHERE i.ETA_IAE = 'E'
-  AND i.COD_ANU IN (2020, 2021, 2022, 2023, 2024, 2025)
+  AND i.COD_ANU IN (2020, 2021, 2022, 2023, 2024, 2025, 2026)
   AND i.COD_CMP = 'FJP'
   AND i.TEM_IAE_PRM = 'O'
   AND i.NBR_INS_CYC = 1  -- ADDED: Only new registrations (first cycle)
@@ -182,7 +182,7 @@ JOIN INDIVIDU i ON iae.COD_IND = i.COD_IND
 JOIN ETAPE e ON iae.COD_ETP = e.COD_ETP
 LEFT JOIN DIPLOME d ON iae.COD_DIP = d.COD_DIP
 WHERE iae.COD_CMP = 'FJP'
-  AND iae.COD_ANU IN (2020, 2021, 2022, 2023, 2024, 2025)
+  AND iae.COD_ANU IN (2020, 2021, 2022, 2023, 2024, 2025, 2026)
 ORDER BY i.COD_ETU, iae.COD_ANU DESC
 `;
 
@@ -428,10 +428,12 @@ async function syncStudents() {
   }
 }
 
+// Replace the syncElementPedagogi function in sync-service.js
+
 async function syncElementPedagogi(oracleConnection, pgClient) {
-  logger.info('Syncing element pedagogi data...');
+  logger.info('Syncing element pedagogi data with improved semester detection...');
   
-  // Create table if not exists
+  // Create table with enhanced structure
   await pgClient.query(`
     CREATE TABLE IF NOT EXISTS element_pedagogi (
       id SERIAL PRIMARY KEY,
@@ -443,35 +445,55 @@ async function syncElementPedagogi(oracleConnection, pgClient) {
       lic_elp VARCHAR(200),
       lib_elp_arb VARCHAR(200),
       element_type VARCHAR(10), -- 'SEMESTRE', 'MODULE', 'MATIERE', 'ANNEE'
-      semester_number INTEGER, -- 1,2,3,4,5,6 for semesters
-      year_level INTEGER, -- 1,2,3,4,5 for academic years
+      semester_number INTEGER, -- Effective semester number (1-12)
+      year_level INTEGER, -- Academic year (1-6)
+      effective_nel INTEGER, -- Calculated from COD_NEL pattern
       last_sync TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // Add new column if it doesn't exist
   await pgClient.query(`
-  ALTER TABLE element_pedagogi 
-  ADD COLUMN IF NOT EXISTS year_level INTEGER; -- 1,2,3,4,5 for academic years
-`);
-  
-  // Add indexes for better performance
-  await pgClient.query(`
-    CREATE INDEX IF NOT EXISTS idx_element_pedagogi_year_level 
-    ON element_pedagogi(year_level);
-    
-    CREATE INDEX IF NOT EXISTS idx_element_pedagogi_element_type 
-    ON element_pedagogi(element_type);
-    
-    CREATE INDEX IF NOT EXISTS idx_element_pedagogi_semester_number 
-    ON element_pedagogi(semester_number);
+    ALTER TABLE element_pedagogi 
+    ADD COLUMN IF NOT EXISTS effective_nel INTEGER;
   `);
   
+  // Enhanced query to get elements with calculated effective NEL
+  const ENHANCED_ELEMENT_QUERY = `
+    WITH EFFECTIVE_NEL AS (
+      SELECT 
+        COD_ELP, 
+        COD_NEL,
+        TO_NUMBER(SUBSTR(COD_NEL, 3, 2)) + 
+          CASE 
+            WHEN SUBSTR(COD_ELP, 1, 2) IN ('AI', 'EI', 'GG', 'GL') THEN 4 
+            ELSE 0 
+          END AS EFCTV_NEL
+      FROM ELEMENT_PEDAGOGI
+      WHERE COD_NEL LIKE 'SM%'
+    )
+    SELECT 
+      e.COD_ELP, 
+      e.COD_CMP, 
+      e.COD_NEL, 
+      e.COD_PEL, 
+      e.LIB_ELP, 
+      e.LIC_ELP, 
+      fix_encoding(e.LIB_ELP_ARB) AS LIB_ELP_ARB,
+      efn.EFCTV_NEL
+    FROM ELEMENT_PEDAGOGI e 
+    LEFT JOIN EFFECTIVE_NEL efn ON e.COD_ELP = efn.COD_ELP
+    WHERE e.COD_CMP = 'FJP'
+    ORDER BY e.COD_PEL, e.COD_NEL, e.COD_ELP
+  `;
+  
   // Fetch data from Oracle
-  const result = await oracleConnection.execute(ELEMENT_PEDAGOGI_QUERY);
+  const result = await oracleConnection.execute(ENHANCED_ELEMENT_QUERY);
   const elements = result.rows;
   
-  logger.info(`✓ Fetched ${elements.length} elements from Oracle`);
+  logger.info(`✓ Fetched ${elements.length} elements from Oracle with effective NEL`);
   
   if (elements.length === 0) {
     logger.warn('No elements found in Oracle database');
@@ -493,79 +515,75 @@ async function syncElementPedagogi(oracleConnection, pgClient) {
     const batch = elements.slice(i, i + batchSize);
     
     for (const element of batch) {
-      const [cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb] = element;
+      const [cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb, efctv_nel] = element;
       
       let elementType = 'MATIERE'; // default
       let semesterNumber = null;
       let yearLevel = null;
+      let effectiveNel = efctv_nel;
       
-      // Prepare text for analysis
       const libElpLower = (lib_elp || '').toLowerCase();
       const codElpUpper = (cod_elp || '').toUpperCase();
       
-      // STEP 1: First check for yearly elements patterns (highest priority)
-      if (libElpLower.includes('premiere année') || libElpLower.includes('1ère année') || 
-          libElpLower.includes('première année') || codElpUpper.includes('1A') || 
-          codElpUpper.includes('0A1') || libElpLower.includes('first year')) {
+      // PRIORITY 1: Use effective NEL if available (from COD_NEL pattern SM__)
+      if (effectiveNel && effectiveNel >= 1 && effectiveNel <= 12) {
+        semesterNumber = effectiveNel;
+        elementType = cod_nel === 'MOD' ? 'MODULE' : 
+                     cod_nel && cod_nel.startsWith('SM') ? 'SEMESTRE' : 'MATIERE';
+        semesterElementsCount++;
+      }
+      // PRIORITY 2: Check for yearly elements
+      else if (libElpLower.includes('premiere année') || libElpLower.includes('1ère année') || 
+               codElpUpper.includes('1A') || codElpUpper.includes('0A1')) {
         elementType = 'ANNEE';
-        semesterNumber = null;
         yearLevel = 1;
         yearlyElementsCount++;
       } else if (libElpLower.includes('deuxième année') || libElpLower.includes('2ème année') || 
-                 libElpLower.includes('second year') || codElpUpper.includes('2A') || 
-                 codElpUpper.includes('0A2')) {
+                 codElpUpper.includes('2A') || codElpUpper.includes('0A2')) {
         elementType = 'ANNEE';
-        semesterNumber = null;
         yearLevel = 2;
         yearlyElementsCount++;
       } else if (libElpLower.includes('troisième année') || libElpLower.includes('3ème année') || 
-                 libElpLower.includes('third year') || codElpUpper.includes('3A') || 
-                 codElpUpper.includes('0A3')) {
+                 codElpUpper.includes('3A') || codElpUpper.includes('0A3')) {
         elementType = 'ANNEE';
-        semesterNumber = null;
         yearLevel = 3;
         yearlyElementsCount++;
       } else if (libElpLower.includes('quatrième année') || libElpLower.includes('4ème année') || 
-                 libElpLower.includes('fourth year') || codElpUpper.includes('4A') || 
-                 codElpUpper.includes('0A4')) {
+                 codElpUpper.includes('4A') || codElpUpper.includes('0A4')) {
         elementType = 'ANNEE';
-        semesterNumber = null;
         yearLevel = 4;
         yearlyElementsCount++;
       } else if (libElpLower.includes('cinquième année') || libElpLower.includes('5ème année') || 
-                 libElpLower.includes('fifth year') || codElpUpper.includes('5A') || 
-                 codElpUpper.includes('0A5')) {
+                 codElpUpper.includes('5A') || codElpUpper.includes('0A5')) {
         elementType = 'ANNEE';
-        semesterNumber = null;
         yearLevel = 5;
         yearlyElementsCount++;
       }
-      // STEP 2: If not yearly, check for semester patterns
-      else if (cod_nel && (cod_nel.startsWith('S') || cod_nel.includes('SM'))) {
-        elementType = 'SEMESTRE';
-        const semMatch = (cod_nel || '').match(/S?(\d+)/);
-        if (semMatch) {
-          semesterNumber = parseInt(semMatch[1]);
-        }
-        semesterElementsCount++;
-      } else if (cod_pel && (cod_pel.startsWith('S') || cod_pel.includes('SM'))) {
-        elementType = 'SEMESTRE';
-        const semMatch = (cod_pel || '').match(/S?(\d+)/);
-        if (semMatch) {
-          semesterNumber = parseInt(semMatch[1]);
-        }
-        semesterElementsCount++;
-      }
-      // STEP 3: Check for module patterns
-      else if (cod_nel && cod_nel === 'MOD') {
-        elementType = 'MODULE';
-      }
-      // STEP 4: If still no classification, try to infer from COD_ELP patterns
-      else {
-        const semesterMatch = (cod_elp || '').match(/S(\d+)/);
-        if (semesterMatch) {
-          semesterNumber = parseInt(semesterMatch[1]);
+      // PRIORITY 3: Try to extract from COD_NEL or COD_PEL
+      else if (cod_nel && cod_nel.startsWith('SM')) {
+        const nelMatch = cod_nel.match(/SM(\d{1,2})/);
+        if (nelMatch) {
+          semesterNumber = parseInt(nelMatch[1]);
           elementType = 'SEMESTRE';
+          effectiveNel = semesterNumber;
+          semesterElementsCount++;
+        }
+      } else if (cod_pel && cod_pel.startsWith('S')) {
+        const pelMatch = cod_pel.match(/S(\d{1,2})/);
+        if (pelMatch) {
+          semesterNumber = parseInt(pelMatch[1]);
+          elementType = 'MODULE';
+          effectiveNel = semesterNumber;
+          semesterElementsCount++;
+        }
+      }
+      // PRIORITY 4: Extract from COD_ELP itself
+      else {
+        const elpMatch = codElpUpper.match(/S(\d{1,2})/);
+        if (elpMatch) {
+          semesterNumber = parseInt(elpMatch[1]);
+          elementType = 'MODULE';
+          effectiveNel = semesterNumber;
           semesterElementsCount++;
         }
       }
@@ -578,13 +596,13 @@ async function syncElementPedagogi(oracleConnection, pgClient) {
       
       const isUpdate = existingElement.rows.length > 0;
       
-      // Upsert element with new year_level field
+      // Upsert with effective_nel
       await pgClient.query(`
         INSERT INTO element_pedagogi (
           cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb, 
-          element_type, semester_number, year_level, last_sync
+          element_type, semester_number, year_level, effective_nel, last_sync
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP
         )
         ON CONFLICT (cod_elp) DO UPDATE SET
           cod_cmp = EXCLUDED.cod_cmp,
@@ -596,9 +614,11 @@ async function syncElementPedagogi(oracleConnection, pgClient) {
           element_type = EXCLUDED.element_type,
           semester_number = EXCLUDED.semester_number,
           year_level = EXCLUDED.year_level,
+          effective_nel = EXCLUDED.effective_nel,
           last_sync = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
-      `, [cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb, elementType, semesterNumber, yearLevel]);
+      `, [cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb, 
+          elementType, semesterNumber, yearLevel, effectiveNel]);
       
       if (isUpdate) {
         updatedCount++;
@@ -614,12 +634,6 @@ async function syncElementPedagogi(oracleConnection, pgClient) {
   }
   
   await pgClient.query('COMMIT');
-  
-  // Log sync success with detailed breakdown
-  await pgClient.query(`
-    INSERT INTO sync_log (sync_type, records_processed, sync_status, error_message)
-    VALUES ('element_pedagogi', $1, 'success', $2)
-  `, [processedCount, `Yearly elements: ${yearlyElementsCount}, Semester elements: ${semesterElementsCount}, Total: ${processedCount}, New: ${insertedCount}, Updated: ${updatedCount}`]);
   
   logger.info(`✓ Element pedagogi sync completed: ${processedCount} total, ${insertedCount} new, ${updatedCount} updated`);
   logger.info(`📊 Classification: ${yearlyElementsCount} yearly elements, ${semesterElementsCount} semester elements`);
@@ -1317,6 +1331,223 @@ WHERE TEM_PRC_ICE = 'N'
 ORDER BY COD_ETU, COD_ELP
 `;
 
+
+// This syncs ALL elements that appear in grades, even if not in standard ELEMENT_PEDAGOGI
+
+async function syncElementsFromGrades(oracleConnection, pgClient) {
+  logger.info('🔍 Syncing elements from RESULTAT_EPR to fix missing elements...');
+  
+  // Query to get ALL unique elements from grades that students actually have
+  const ELEMENTS_FROM_GRADES_QUERY = `
+    SELECT DISTINCT
+      r.COD_EPR,
+      ep.COD_ELP,
+      ep.COD_CMP,
+      ep.COD_NEL,
+      ep.COD_PEL,
+      ep.LIB_ELP,
+      ep.LIC_ELP,
+      fix_encoding(ep.LIB_ELP_ARB) AS LIB_ELP_ARB
+    FROM RESULTAT_EPR r
+    JOIN INS_ADM_ETP iae ON r.COD_IND = iae.COD_IND AND r.COD_ANU = iae.COD_ANU
+    LEFT JOIN ELEMENT_PEDAGOGI ep ON r.COD_EPR = ep.COD_ELP
+    WHERE r.COD_ADM = 1 
+      AND r.COD_ANU IN (2023, 2024, 2025)
+      AND iae.COD_CMP = 'FJP'
+      AND iae.ETA_IAE = 'E'
+      AND iae.TEM_IAE_PRM = 'O'
+    ORDER BY r.COD_EPR
+  `;
+  
+  const result = await oracleConnection.execute(ELEMENTS_FROM_GRADES_QUERY);
+  const elementsFromGrades = result.rows;
+  
+  logger.info(`✓ Found ${elementsFromGrades.length} unique elements used in grades`);
+  
+  if (elementsFromGrades.length === 0) {
+    logger.warn('No elements found in grades');
+    return;
+  }
+  
+  await pgClient.query('BEGIN');
+  
+  let processedCount = 0;
+  let insertedCount = 0;
+  let updatedCount = 0;
+  let missingInOracleCount = 0;
+  
+  const batchSize = 100;
+  for (let i = 0; i < elementsFromGrades.length; i += batchSize) {
+    const batch = elementsFromGrades.slice(i, i + batchSize);
+    
+    for (const element of batch) {
+      const [cod_epr, cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb] = element;
+      
+      // If element doesn't exist in ELEMENT_PEDAGOGI in Oracle, we'll create a placeholder
+      if (!cod_elp && !lib_elp) {
+        missingInOracleCount++;
+        
+        // Create a synthetic entry using COD_EPR
+        const syntheticElp = cod_epr;
+        const syntheticLibElp = `Element ${cod_epr} (from grades)`;
+        
+        // Try to determine semester from code pattern
+        let semesterNumber = null;
+        let effectiveNel = null;
+        
+        // Try to extract semester from COD_EPR pattern
+        const semMatch = cod_epr.match(/S(\d{1,2})/);
+        if (semMatch) {
+          semesterNumber = parseInt(semMatch[1]);
+          effectiveNel = semesterNumber;
+        }
+        
+        // Also try SM pattern
+        const smMatch = cod_epr.match(/SM(\d{1,2})/);
+        if (smMatch) {
+          semesterNumber = parseInt(smMatch[1]);
+          effectiveNel = semesterNumber;
+        }
+        
+        // Check if already exists
+        const existingElement = await pgClient.query(
+          'SELECT id FROM element_pedagogi WHERE cod_elp = $1', 
+          [syntheticElp]
+        );
+        
+        const isUpdate = existingElement.rows.length > 0;
+        
+        await pgClient.query(`
+          INSERT INTO element_pedagogi (
+            cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb,
+            element_type, semester_number, effective_nel, last_sync
+          ) VALUES (
+            $1, 'FJP', NULL, NULL, $2, $2, $2, 'MATIERE', $3, $4, CURRENT_TIMESTAMP
+          )
+          ON CONFLICT (cod_elp) DO UPDATE SET
+            lib_elp = EXCLUDED.lib_elp,
+            semester_number = EXCLUDED.semester_number,
+            effective_nel = EXCLUDED.effective_nel,
+            last_sync = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        `, [syntheticElp, syntheticLibElp, semesterNumber, effectiveNel]);
+        
+        if (isUpdate) {
+          updatedCount++;
+        } else {
+          insertedCount++;
+        }
+      } else {
+        // Element exists in Oracle, use normal sync
+        const targetElp = cod_elp || cod_epr;
+        
+        // Calculate effective NEL and semester
+        let semesterNumber = null;
+        let effectiveNel = null;
+        let elementType = 'MATIERE';
+        
+        if (cod_nel && cod_nel.startsWith('SM')) {
+          const nelMatch = cod_nel.match(/SM(\d{1,2})/);
+          if (nelMatch) {
+            const baseNel = parseInt(nelMatch[1]);
+            // Apply offset for special programs
+            const elpPrefix = targetElp.substring(0, 2);
+            const offset = ['AI', 'EI', 'GG', 'GL'].includes(elpPrefix) ? 4 : 0;
+            effectiveNel = baseNel + offset;
+            semesterNumber = effectiveNel;
+            elementType = cod_nel === 'MOD' ? 'MODULE' : 'SEMESTRE';
+          }
+        }
+        
+        // Fallback: try to extract from COD_PEL
+        if (!semesterNumber && cod_pel && cod_pel.startsWith('S')) {
+          const pelMatch = cod_pel.match(/S(\d{1,2})/);
+          if (pelMatch) {
+            semesterNumber = parseInt(pelMatch[1]);
+            effectiveNel = semesterNumber;
+            elementType = 'MODULE';
+          }
+        }
+        
+        // Check if exists
+        const existingElement = await pgClient.query(
+          'SELECT id FROM element_pedagogi WHERE cod_elp = $1', 
+          [targetElp]
+        );
+        
+        const isUpdate = existingElement.rows.length > 0;
+        
+        await pgClient.query(`
+          INSERT INTO element_pedagogi (
+            cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb,
+            element_type, semester_number, effective_nel, last_sync
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP
+          )
+          ON CONFLICT (cod_elp) DO UPDATE SET
+            cod_cmp = EXCLUDED.cod_cmp,
+            cod_nel = EXCLUDED.cod_nel,
+            cod_pel = EXCLUDED.cod_pel,
+            lib_elp = EXCLUDED.lib_elp,
+            lic_elp = EXCLUDED.lic_elp,
+            lib_elp_arb = EXCLUDED.lib_elp_arb,
+            element_type = EXCLUDED.element_type,
+            semester_number = EXCLUDED.semester_number,
+            effective_nel = EXCLUDED.effective_nel,
+            last_sync = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        `, [targetElp, cod_cmp || 'FJP', cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb,
+            elementType, semesterNumber, effectiveNel]);
+        
+        if (isUpdate) {
+          updatedCount++;
+        } else {
+          insertedCount++;
+        }
+      }
+      
+      processedCount++;
+    }
+    
+    const progress = Math.round((i + batch.length) / elementsFromGrades.length * 100);
+    logger.info(`Elements from Grades Progress: ${progress}% (${processedCount}/${elementsFromGrades.length})`);
+  }
+  
+  await pgClient.query('COMMIT');
+  
+  // Log results
+  await pgClient.query(`
+    INSERT INTO sync_log (sync_type, records_processed, sync_status, error_message)
+    VALUES ('elements_from_grades', $1, 'success', $2)
+  `, [processedCount, `Total: ${processedCount}, New: ${insertedCount}, Updated: ${updatedCount}, Missing in Oracle: ${missingInOracleCount}`]);
+  
+  logger.info(`✓ Elements from grades sync completed:`);
+  logger.info(`  - Total processed: ${processedCount}`);
+  logger.info(`  - New elements: ${insertedCount}`);
+  logger.info(`  - Updated: ${updatedCount}`);
+  logger.info(`  - Missing in Oracle ELEMENT_PEDAGOGI: ${missingInOracleCount}`);
+  
+  // Now verify the fix
+  const verifyQuery = await pgClient.query(`
+    SELECT COUNT(*) as missing_count
+    FROM grades g
+    LEFT JOIN element_pedagogi ep ON g.cod_elp = ep.cod_elp
+    WHERE ep.cod_elp IS NULL
+  `);
+  
+  const stillMissing = parseInt(verifyQuery.rows[0].missing_count);
+  
+  if (stillMissing > 0) {
+    logger.warn(`⚠️  Still ${stillMissing} grades without element info after sync`);
+    logger.warn(`   This may indicate COD_EPR → COD_ELP conversion issues`);
+  } else {
+    logger.info(`✅ All grades now have corresponding element info!`);
+  }
+  
+  return stillMissing;
+}
+
+
 // Replace the existing syncPedagogicalSituation function in sync-service.js with this:
 
 async function syncPedagogicalSituation(oracleConnection, pgClient) {
@@ -1567,10 +1798,16 @@ async function syncStudents() {
     // NEW: Sync validated modules per semester
     await syncValidatedModules(oracleConnection, pgClient);
     
-    
+    await syncAdministrativeSituation(oracleConnection, pgClient);
+
     // Sync element pedagogi first
     await syncElementPedagogi(oracleConnection, pgClient);
     
+    // 5. **NEW: Fix missing elements by syncing from grades**
+    logger.info('');
+    logger.info('🔧 FIXING MISSING ELEMENTS...');
+    const stillMissing = await syncElementsFromGrades(oracleConnection, pgClient);
+
     // Sync element hierarchy
     await syncElementHierarchy(oracleConnection, pgClient);
     
@@ -1584,7 +1821,8 @@ async function syncStudents() {
 
     // NEW: Sync pedagogical situation
     await syncPedagogicalSituation(oracleConnection, pgClient);
-    await syncAdministrativeSituation(oracleConnection, pgClient);
+
+
     const endTime = Date.now();
     const duration = Math.round((endTime - startTime) / 1000);
     
@@ -1594,7 +1832,11 @@ async function syncStudents() {
     logger.info('✓ Data available for 2023 and 2024');
     logger.info('✓ Pedagogical situation data synced');
     logger.info('=====================================');
-    
+     if (stillMissing === 0) {
+      logger.info('✅ All missing elements have been fixed!');
+    } else {
+      logger.warn(`⚠️  ${stillMissing} elements still missing - manual review needed`);
+    }
   } catch (error) {
     logger.error('=====================================');
     logger.error('✗ SYNC FAILED!');

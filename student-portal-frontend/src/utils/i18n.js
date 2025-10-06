@@ -8,6 +8,7 @@ const resources = {
 
       // Common
       'dashboard': 'الرئيسية',
+      'Profile': 'ملفي الشخصي',
       'loading': 'جاري التحميل...',
       'error': 'خطأ',
       'success': 'نجح',
@@ -16,7 +17,7 @@ const resources = {
       'cancel': 'إلغاء',
       'save': 'حفظ',
       'close': 'إغلاق',
-      
+      'N Apogee': 'رقم الطالب "أبوجي"',
       'officialDocuments': 'كشوفات النقط',
 'transcripts': 'كشوف النقط',
 'generateTranscript': 'إنشاء كشف النقط',
@@ -42,7 +43,7 @@ const resources = {
       'welcome': 'مرحباً بك',
       'studentSystem': '  منصة وضعيتي',
       'enterCin': 'أدخل رقم بطاقة التعريف الوطنية',
-      'enterPassword': 'أدخل كلمة المرور',
+      'enterPassword': 'أدخل رقم أبوجي',
       'cinLabel': 'رقم بطاقة التعريف الوطنية',
       'passwordLabel': 'كلمة المرور',
       'loginButton': 'تسجيل الدخول',
@@ -119,7 +120,7 @@ const resources = {
       'welcome': 'Bienvenue',
       'studentSystem': 'Système d\'Information des Étudiants',
       'enterCin': 'Entrez votre numéro CIN',
-      'enterPassword': 'Entrez votre mot de passe',
+      'enterPassword': 'Entrez votre APOGEE',
       'cinLabel': 'Numéro CIN',
       'passwordLabel': 'Mot de passe',
       'loginButton': 'Se connecter',

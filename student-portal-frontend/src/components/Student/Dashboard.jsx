@@ -97,7 +97,7 @@ const Dashboard = () => {
     },
     {
       id: 'profile',
-      label: ' بياناتي الشخصية ',
+      label: t('Profile'),
       icon: <PersonIcon />,
       color: '#2ecc71'
     },

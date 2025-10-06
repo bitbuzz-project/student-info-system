@@ -1370,7 +1370,8 @@ app.get('/student/me', authenticateToken, async (req, res) => {
   }
 });
 // Get current student grades with ELEMENT_PEDAGOGI integration
-// Get current student grades from RESULTAT_EPR (current year grades)
+// Replace the getGrades endpoint in server.js
+
 app.get('/student/grades', authenticateToken, async (req, res) => {
   try {
     const { year, session } = req.query;
@@ -1379,7 +1380,21 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
     const table = session === '1' ? 'official_documents' : 'grades';
     const alias = session === '1' ? 'od' : 'g';
 
+    // Enhanced query with proper semester resolution using hierarchy
     let query = `
+      WITH module_hierarchy AS (
+        -- Get parent modules with their effective semester numbers
+        SELECT DISTINCT
+          eh.cod_elp_fils,
+          ep_parent.cod_elp as parent_code,
+          ep_parent.lib_elp as parent_name,
+          COALESCE(ep_parent.effective_nel, ep_parent.semester_number) as parent_semester,
+          ep_parent.element_type as parent_type
+        FROM element_hierarchy eh
+        JOIN element_pedagogi ep_parent ON eh.cod_elp_pere = ep_parent.cod_elp
+        WHERE ep_parent.cod_nel LIKE 'SM%' 
+           OR ep_parent.element_type = 'SEMESTRE'
+      )
       SELECT 
         ${alias}.cod_anu,
         ${alias}.cod_ses,
@@ -1392,15 +1407,24 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
         ep.lic_elp,
         ep.lib_elp_arb,
         ep.element_type,
-        ep.semester_number,
-        eh.cod_elp_pere,
-        parent_ep.lib_elp as parent_lib_elp,
-        parent_ep.cod_pel as parent_cod_pel,
-        parent_ep.semester_number as parent_semester_number
+        -- Use effective_nel first, then fall back to semester_number
+        COALESCE(ep.effective_nel, ep.semester_number) as semester_number,
+        ep.year_level,
+        -- Get parent info from hierarchy
+        mh.parent_code as cod_elp_pere,
+        mh.parent_name as parent_lib_elp,
+        mh.parent_semester,
+        -- If no parent found, try to extract from cod_pel
+        CASE 
+          WHEN mh.parent_semester IS NOT NULL THEN mh.parent_semester
+          WHEN ep.effective_nel IS NOT NULL THEN ep.effective_nel
+          WHEN ep.semester_number IS NOT NULL THEN ep.semester_number
+          WHEN ep.cod_pel LIKE 'S%' THEN CAST(SUBSTRING(ep.cod_pel FROM 2 FOR 2) AS INTEGER)
+          ELSE NULL
+        END as final_semester
       FROM ${table} ${alias}
       LEFT JOIN element_pedagogi ep ON ${alias}.cod_elp = ep.cod_elp
-      LEFT JOIN element_hierarchy eh ON ${alias}.cod_elp = eh.cod_elp_fils
-      LEFT JOIN element_pedagogi parent_ep ON eh.cod_elp_pere = parent_ep.cod_elp
+      LEFT JOIN module_hierarchy mh ON ${alias}.cod_elp = mh.cod_elp_fils
       WHERE ${alias}.cod_etu = (
         SELECT cod_etu FROM students WHERE id = $1
       )
@@ -1416,18 +1440,16 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
     }
 
     if (session === '2' && req.query.module_code) {
-    query += ` AND ${alias}.cod_elp ILIKE '%' || $${paramIndex} || '%' `;
-    params.push(req.query.module_code);
-    paramIndex++;
-}
+      query += ` AND ${alias}.cod_elp ILIKE '%' || $${paramIndex} || '%'`;
+      params.push(req.query.module_code);
+      paramIndex++;
+    }
 
-    query += ` ORDER BY ${alias}.cod_anu DESC, ${alias}.cod_ses, ep.semester_number, ep.lib_elp`;
+    query += ` ORDER BY ${alias}.cod_anu DESC, ${alias}.cod_ses, final_semester NULLS LAST, ep.lib_elp`;
 
     const result = await pool.query(query, params);
 
-    // --------------------
-    // Existing Logic (unchanged)
-    // --------------------
+    // Process results with improved semester detection
     const getSessionType = (semesterNumber) => {
       if (!semesterNumber) return 'unknown';
       return (semesterNumber % 2 === 1) ? 'automne' : 'printemps';
@@ -1444,18 +1466,19 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
     result.rows.forEach(grade => {
       const studyYear = grade.cod_anu;
       const sessionCode = grade.cod_ses;
-      let semesterNumber = grade.semester_number || grade.parent_semester_number;
-
-      if (!semesterNumber) {
-        const semMatch = (grade.cod_pel || grade.parent_cod_pel || grade.cod_elp || '').match(/S(\d+)/);
-        if (semMatch) {
-          semesterNumber = parseInt(semMatch[1]);
-        }
-      }
+      
+      // Use the final_semester calculated in the query
+      let semesterNumber = grade.final_semester;
 
       if (!semesterNumber) {
         console.warn(`Cannot determine semester for grade: ${grade.cod_elp} - ${grade.lib_elp}`);
-        return;
+        // Try one more fallback - look at validated modules
+        const semMatch = (grade.cod_elp || '').match(/S(\d+)/);
+        if (semMatch) {
+          semesterNumber = parseInt(semMatch[1]);
+        } else {
+          return; // Skip this grade if we can't determine semester
+        }
       }
 
       const sessionType = getSessionType(semesterNumber);
@@ -1466,17 +1489,20 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
         hasArabicNames = true;
       }
 
+      // Build nested structure
       if (!gradesByStructure[studyYear]) gradesByStructure[studyYear] = {};
       if (!gradesByStructure[studyYear][sessionCode]) gradesByStructure[studyYear][sessionCode] = {};
       if (!gradesByStructure[studyYear][sessionCode][sessionType]) gradesByStructure[studyYear][sessionCode][sessionType] = {};
       if (!gradesByStructure[studyYear][sessionCode][sessionType][academicYear]) gradesByStructure[studyYear][sessionCode][sessionType][academicYear] = {};
-      if (!gradesByStructure[studyYear][sessionCode][sessionType][academicYear][semesterCode]) gradesByStructure[studyYear][sessionCode][sessionType][academicYear][semesterCode] = [];
+      if (!gradesByStructure[studyYear][sessionCode][sessionType][academicYear][semesterCode]) {
+        gradesByStructure[studyYear][sessionCode][sessionType][academicYear][semesterCode] = [];
+      }
 
       const isModule = grade.element_type === 'MODULE' || grade.cod_nel === 'MOD';
       const parentInfo = grade.parent_lib_elp ? {
         cod_elp: grade.cod_elp_pere,
         lib_elp: grade.parent_lib_elp,
-        cod_pel: grade.parent_cod_pel
+        semester: grade.parent_semester
       } : null;
 
       gradesByStructure[studyYear][sessionCode][sessionType][academicYear][semesterCode].push({
@@ -1493,7 +1519,8 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
         parent_info: parentInfo,
         semester_number: semesterNumber,
         session_type: sessionType,
-        academic_year: academicYear
+        academic_year: academicYear,
+        effective_nel: grade.effective_nel // Include for debugging
       });
     });
 
@@ -1514,6 +1541,169 @@ app.get('/student/grades', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+
+// Add this diagnostic endpoint to server.js for debugging
+
+// app.get('/admin/diagnose-semesters', authenticateAdmin, async (req, res) => {
+//   try {
+//     // Get elements with their semester assignments
+//     const elementsQuery = `
+//       SELECT 
+//         ep.cod_elp,
+//         ep.lib_elp,
+//         ep.cod_nel,
+//         ep.cod_pel,
+//         ep.element_type,
+//         ep.semester_number,
+//         ep.effective_nel,
+//         ep.year_level,
+//         COUNT(g.id) as grades_count,
+//         STRING_AGG(DISTINCT CAST(g.cod_anu AS VARCHAR), ', ') as years_with_grades
+//       FROM element_pedagogi ep
+//       LEFT JOIN grades g ON ep.cod_elp = g.cod_elp
+//       WHERE ep.cod_cmp = 'FJP'
+//       GROUP BY ep.cod_elp, ep.lib_elp, ep.cod_nel, ep.cod_pel, 
+//                ep.element_type, ep.semester_number, ep.effective_nel, ep.year_level
+//       ORDER BY ep.element_type, ep.effective_nel NULLS LAST, ep.semester_number NULLS LAST, ep.cod_elp
+//     `;
+    
+//     const elements = await pool.query(elementsQuery);
+    
+//     // Get elements without semester assignment that have grades
+//     const problematicQuery = `
+//       SELECT 
+//         ep.cod_elp,
+//         ep.lib_elp,
+//         ep.cod_nel,
+//         ep.cod_pel,
+//         ep.element_type,
+//         COUNT(g.id) as grades_count
+//       FROM element_pedagogi ep
+//       INNER JOIN grades g ON ep.cod_elp = g.cod_elp
+//       WHERE ep.cod_cmp = 'FJP'
+//         AND ep.semester_number IS NULL 
+//         AND ep.effective_nel IS NULL
+//         AND ep.year_level IS NULL
+//       GROUP BY ep.cod_elp, ep.lib_elp, ep.cod_nel, ep.cod_pel, ep.element_type
+//       ORDER BY grades_count DESC
+//       LIMIT 50
+//     `;
+    
+//     const problematic = await pool.query(problematicQuery);
+    
+//     // Get hierarchy information
+//     const hierarchyQuery = `
+//       SELECT 
+//         eh.cod_elp_fils,
+//         eh.cod_elp_pere,
+//         ep_parent.lib_elp as parent_name,
+//         ep_parent.effective_nel as parent_semester,
+//         ep_parent.element_type as parent_type,
+//         ep_child.lib_elp as child_name,
+//         ep_child.element_type as child_type
+//       FROM element_hierarchy eh
+//       JOIN element_pedagogi ep_parent ON eh.cod_elp_pere = ep_parent.cod_elp
+//       JOIN element_pedagogi ep_child ON eh.cod_elp_fils = ep_child.cod_elp
+//       WHERE ep_parent.cod_nel LIKE 'SM%' OR ep_parent.element_type = 'SEMESTRE'
+//       ORDER BY ep_parent.effective_nel, eh.cod_elp_fils
+//       LIMIT 100
+//     `;
+    
+//     const hierarchy = await pool.query(hierarchyQuery);
+    
+//     // Statistics
+//     const statsQuery = `
+//       SELECT 
+//         element_type,
+//         COUNT(*) as total,
+//         COUNT(semester_number) as with_semester_number,
+//         COUNT(effective_nel) as with_effective_nel,
+//         COUNT(year_level) as with_year_level
+//       FROM element_pedagogi
+//       WHERE cod_cmp = 'FJP'
+//       GROUP BY element_type
+//     `;
+    
+//     const stats = await pool.query(statsQuery);
+    
+//     res.json({
+//       summary: {
+//         total_elements: elements.rows.length,
+//         problematic_elements: problematic.rows.length,
+//         hierarchy_links: hierarchy.rows.length
+//       },
+//       statistics: stats.rows,
+//       all_elements: elements.rows,
+//       problematic_elements: problematic.rows,
+//       hierarchy_sample: hierarchy.rows,
+//       recommendations: generateRecommendations(elements.rows, problematic.rows)
+//     });
+    
+//   } catch (error) {
+//     console.error('Diagnose semesters error:', error);
+//     res.status(500).json({ error: 'Internal server error' });
+//   }
+// });
+
+function generateRecommendations(elements, problematic) {
+  const recommendations = [];
+  
+  // Check for elements with grades but no semester
+  if (problematic.length > 0) {
+    recommendations.push({
+      priority: 'HIGH',
+      issue: `${problematic.length} elements have grades but no semester assignment`,
+      action: 'Review COD_NEL and COD_PEL patterns, or check hierarchy links',
+      examples: problematic.slice(0, 5).map(p => ({
+        code: p.cod_elp,
+        name: p.lib_elp,
+        cod_nel: p.cod_nel,
+        cod_pel: p.cod_pel,
+        grades: p.grades_count
+      }))
+    });
+  }
+  
+  // Check for inconsistent semester assignments
+  const semesterInconsistencies = elements.filter(e => 
+    e.semester_number && e.effective_nel && e.semester_number !== e.effective_nel
+  );
+  
+  if (semesterInconsistencies.length > 0) {
+    recommendations.push({
+      priority: 'MEDIUM',
+      issue: `${semesterInconsistencies.length} elements have inconsistent semester_number vs effective_nel`,
+      action: 'Verify which calculation is correct and standardize',
+      examples: semesterInconsistencies.slice(0, 5).map(e => ({
+        code: e.cod_elp,
+        semester_number: e.semester_number,
+        effective_nel: e.effective_nel,
+        cod_nel: e.cod_nel
+      }))
+    });
+  }
+  
+  // Check for elements without any semester info
+  const noSemesterInfo = elements.filter(e => 
+    !e.semester_number && !e.effective_nel && !e.year_level && e.grades_count > 0
+  );
+  
+  if (noSemesterInfo.length > 0) {
+    recommendations.push({
+      priority: 'HIGH',
+      issue: `${noSemesterInfo.length} elements with grades have no semester information`,
+      action: 'Add hierarchy links or update COD_NEL patterns in Oracle',
+      examples: noSemesterInfo.slice(0, 5).map(e => ({
+        code: e.cod_elp,
+        name: e.lib_elp,
+        grades: e.grades_count
+      }))
+    });
+  }
+  
+  return recommendations;
+}
 // Add this endpoint to your server.js file
 app.post('/api/store-document-signature', authenticateToken, async (req, res) => {
   try {

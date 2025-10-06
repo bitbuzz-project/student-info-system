@@ -121,7 +121,7 @@ const LoginForm = () => {
           {/* Login Form */}
           <form onSubmit={handleSubmit}>
             <Stack spacing={3}>
-              <TextField
+         <TextField
                 fullWidth
                 label={t('cinLabel')}
                 placeholder={t('enterCin')}
@@ -131,6 +131,9 @@ const LoginForm = () => {
                 disabled={isLoading}
                 InputProps={{
                   startAdornment: <PersonIcon sx={{ mr: 1, color: 'primary.main' }} />
+                }}
+                inputProps={{
+                  style: { textTransform: 'uppercase' }
                 }}
                 sx={{
                   '& .MuiOutlinedInput-root': {
@@ -191,8 +194,8 @@ const LoginForm = () => {
           <Box sx={{ mt: 4, textAlign: 'center' }}>
             <Typography variant="body2" color="text.secondary">
               {i18n.language === 'ar' 
-                ? 'استخدم رقم بطاقة التعريف الوطنية ورقم الطالب لتسجيل الدخول'
-                : 'Utilisez votre CIN et code étudiant pour vous connecter'
+                ? 'استخدم رقم بطاقة التعريف الوطنية ورقم الطالب أبوجي لتسجيل الدخول'
+                : 'Utilisez votre CIN et code étudiant Apogee pour vous connecter'
               }
             </Typography>
           </Box>

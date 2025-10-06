@@ -389,7 +389,9 @@ const generateEnrollmentCertificate = async (year, registrations) => {
 
     // Student name
     doc.setFont('Amiri', 'bold');
-    const studentTitle = user?.cod_sex_etu === 'F' ? 'Mademoiselle' : 'Monsieur';
+        console.log('Gender code:', user?.cod_sex_etu, 'Type:', typeof user?.cod_sex_etu);
+
+    const studentTitle = user?.cod_sex_etu === 'f' ? 'Mademoiselle' : 'Monsieur';
     doc.text(`${studentTitle} ${user?.nom_complet || 'N/A'}`, 20, 100);
 
     // Student details

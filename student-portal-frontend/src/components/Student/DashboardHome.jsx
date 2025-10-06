@@ -258,7 +258,7 @@ const DashboardHome = ({ onNavigate }) => {
           <Grid item xs={12} sm={6} md={3}>
             <QuickActionCard
               title=" بياناتي"
-              description="عرض وإدارة معلوماتك الشخصية والجامعية"
+              description="عرض  معلوماتك الشخصية والجامعية"
               icon={<PersonIcon sx={{ fontSize: 30 }} />}
               color="#3498db"
               onClick={() => onNavigate('profile')}
@@ -273,10 +273,20 @@ const DashboardHome = ({ onNavigate }) => {
             onClick={() => onNavigate('pedagogical')}
           />
         </Grid>
+
+            <Grid item xs={12} sm={6} md={3}>
+          <QuickActionCard
+            title="الوضعية الادارية"
+            description="عرض التسجيل الإداري عبر السنوات الجامعية"
+            icon={<AssignmentIcon sx={{ fontSize: 30 }} />}
+            color="#2340e2"
+            onClick={() => onNavigate('administrative')}
+          />
+        </Grid>
           <Grid item xs={12} sm={6} md={3}>
             <QuickActionCard
               title="نقطي"
-              description="عرض جميع نقطك مفصلة حسب السنة والفصل"
+              description="عرض جميع نقطك مفصلة حسب السنوات"
               icon={<GradeIcon sx={{ fontSize: 30 }} />}
               color="#e74c3c"
               onClick={() => onNavigate('grades')}
@@ -284,10 +294,10 @@ const DashboardHome = ({ onNavigate }) => {
           </Grid>
           <Grid item xs={12} sm={6} md={3}>
             <QuickActionCard
-              title="تحديث البيانات"
-              description="تحديث معلوماتك من قاعدة البيانات"
+              title=" البرمجة الزمنية"
+              description="  عرض البرمجة الزمنية الخاصة بالدورة  "
               icon={<TimeIcon sx={{ fontSize: 30 }} />}
-              color="#f39c12"
+              color="#12f3ce"
               onClick={loadQuickStats}
             />
           </Grid>
@@ -300,7 +310,7 @@ const DashboardHome = ({ onNavigate }) => {
           <Card sx={{ borderRadius: 3 }}>
             <CardContent sx={{ p: 3 }}>
               <Typography variant="h6" fontWeight="600" gutterBottom color="primary">
-                📋 ملخص المعلومات - Information Summary
+                📋 ملخص المعلومات 
               </Typography>
               <Divider sx={{ mb: 3 }} />
               
@@ -308,7 +318,7 @@ const DashboardHome = ({ onNavigate }) => {
                 <Grid item xs={12} sm={6}>
                   <Box sx={{ mb: 2 }}>
                     <Typography variant="body2" color="text.secondary">
-                      رقم الطالب - Student Code
+                     {t('N Apogee')}
                     </Typography>
                     <Typography variant="body1" fontWeight="600">
                       {user?.cod_etu || '-'}
@@ -316,7 +326,7 @@ const DashboardHome = ({ onNavigate }) => {
                   </Box>
                   <Box sx={{ mb: 2 }}>
                     <Typography variant="body2" color="text.secondary">
-                      التخصص - Specialization
+                      التخصص
                     </Typography>
                     <Typography variant="body1" fontWeight="600">
                       {user?.etape || '-'}
@@ -334,7 +344,7 @@ const DashboardHome = ({ onNavigate }) => {
                   </Box>
                   <Box sx={{ mb: 2 }}>
                     <Typography variant="body2" color="text.secondary">
-                      آخر تحديث - Last Update
+                      آخر تحديث
                     </Typography>
                     <Typography variant="body1" fontWeight="600">
                       {formatDate(user?.derniere_mise_a_jour)}
