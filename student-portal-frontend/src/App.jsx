@@ -14,7 +14,7 @@ import AdminLogin from './components/Admin/AdminLogin';
 import AdminDashboard from './components/Admin/AdminDashboard';
 import AdminProtectedRoute from './components/Admin/AdminProtectedRoute';
 import StudentCardRequests from './components/Admin/StudentCardRequests';
-
+import LaureatManagement from './components/Admin/LaureatManagement'; // <--- ADD THIS IMPORT
 function App() {
   const { isLoading } = useAuth();
   const location = useLocation();
@@ -61,6 +61,11 @@ function App() {
           </AdminProtectedRoute>
         } 
       />
+      <Route path="/admin/laureats" element={
+  <AdminProtectedRoute>
+    <LaureatManagement />
+  </AdminProtectedRoute>
+} />
       <Route 
         path="/admin/student-card-requests" 
         element={

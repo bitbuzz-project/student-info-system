@@ -133,12 +133,12 @@ const PedagogicalSituation = () => {
 
   const getAcademicLevelLabel = (level) => {
     const labels = {
-      '1A': 'السنة الأولى - First Year',
-      '2A': 'السنة الثانية - Second Year',
-      '3A': 'السنة الثالثة - Third Year',
-      '4A': 'السنة الرابعة - Fourth Year',
-      '5A': 'السنة الخامسة - Fifth Year',
-      'Unknown': 'غير محدد - Unknown'
+      '1A': 'السنة الأولى',
+      '2A': 'السنة الثانية',
+      '3A': 'السنة الثالثة',
+      '4A': 'السنة الرابعة',
+      '5A': 'السنة الخامسة',
+      'Unknown': 'غير محدد'
     };
     return labels[level] || level;
   };
@@ -177,9 +177,7 @@ const PedagogicalSituation = () => {
                   <Typography variant="h6" fontWeight="600">
                     {academicLevel} - {getAcademicLevelLabel(academicLevel)}
                   </Typography>
-                  <Typography variant="body2" sx={{ opacity: 0.9 }}>
-                    {modules.length} وحدة/مادة - {modules.length} modules/subjects
-                  </Typography>
+                
                 </Box>
                 
                 <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
@@ -213,7 +211,7 @@ const PedagogicalSituation = () => {
                           </TableCell>
                           <TableCell>
                             <Chip
-                              label="عنصر سنوي - Yearly Element"
+                              label="سنة جامعية"
                               color="secondary"
                               size="small"
                             />
@@ -244,7 +242,7 @@ const PedagogicalSituation = () => {
         <Box sx={{ textAlign: 'center', py: 4 }}>
           <TimelineIcon sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} />
           <Typography variant="h6" color="text.secondary">
-            لا توجد عناصر فصلية
+            لا توجد  فصول
           </Typography>
           <Typography variant="body2" color="text.secondary">
             No semester elements found
@@ -283,7 +281,7 @@ const PedagogicalSituation = () => {
                       }
                     </Typography>
                     <Typography variant="body2" sx={{ opacity: 0.9 }}>
-                      {modules.length} وحدة/مادة - {modules.length} modules/subjects
+                      {modules.length} وحدة/مادة 
                     </Typography>
                   </Box>
 
@@ -366,7 +364,7 @@ const PedagogicalSituation = () => {
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
         <AssignmentIcon sx={{ mr: 2, color: 'primary.main', fontSize: 32 }} />
         <Typography variant="h4" fontWeight="600" color="primary">
-          📚 الوضعية البيداغوجية - Pedagogical Situation
+          📚 الوضعية البيداغوجية
         </Typography>
         <Button
           startIcon={<RefreshIcon />}
@@ -389,19 +387,19 @@ const PedagogicalSituation = () => {
       <Card sx={{ mb: 3, borderRadius: 3 }}>
         <CardContent>
           <FormControl fullWidth sx={{ maxWidth: 400 }}>
-            <InputLabel>السنة الجامعية - Academic Year</InputLabel>
+            <InputLabel>السنة الجامعية</InputLabel>
             <Select
               value={selectedYear}
               onChange={handleYearChange}
-              label="السنة الجامعية - Academic Year"
+              label="السنة الجامعية"
             >
-              <MenuItem value="">جميع السنوات - All Years</MenuItem>
+              <MenuItem value="">جميع السنوات</MenuItem>
               {availableYears.map((year) => (
                 <MenuItem key={year} value={year}>
                   {year} - {parseInt(year) + 1}
                 </MenuItem>
               ))}
-            </Select>
+            </Select>  
           </FormControl>
         </CardContent>
       </Card>
@@ -410,12 +408,8 @@ const PedagogicalSituation = () => {
       <Alert severity="info" sx={{ mb: 3, borderRadius: 2 }}>
         <Typography variant="body2">
           💡 <strong>الوضعية البيداغوجية:</strong> تعرض جميع الوحدات والمواد المسجل بها الطالب.
-          العناصر السنوية تمثل برامج كاملة (مثل السنة الأولى، الثانية، إلخ)، بينما العناصر الفصلية تمثل مواد محددة في سداسي معين.
-        </Typography>
-        <Typography variant="body2" sx={{ mt: 1 }}>
-          <strong>Pedagogical Situation:</strong> Shows all modules and subjects the student is registered for.
-          Yearly elements represent complete programs (like First Year, Second Year, etc.), while semester elements represent specific subjects in a particular semester.
-        </Typography>
+حسب كل سنة جامعية         </Typography>
+ 
       </Alert>
 
       {/* Pedagogical Situation Display */}
@@ -441,11 +435,11 @@ const PedagogicalSituation = () => {
                 <Box sx={{ width: '100%' }}>
                   <Tabs value={tabValue} onChange={handleTabChange} sx={{ mb: 3 }}>
                     <Tab 
-                      label={`العناصر السنوية (${Object.keys(yearData.yearly_elements || {}).length})`} 
+                      label={`السنوات  (${Object.keys(yearData.yearly_elements || {}).length})`} 
                       icon={<CalendarIcon />}
                     />
                     <Tab 
-                      label={`العناصر الفصلية (${Object.keys(yearData.semester_elements || {}).length})`} 
+                      label={`السداسيات(${Object.keys(yearData.semester_elements || {}).length})`} 
                       icon={<TimelineIcon />}
                     />
                   </Tabs>
@@ -475,10 +469,7 @@ const PedagogicalSituation = () => {
       {/* Footer Info */}
       <Paper sx={{ p: 3, mt: 3, borderRadius: 3, bgcolor: '#f8f9fa' }}>
         <Typography variant="body2" color="text.secondary" textAlign="center">
-          💡 ملاحظة: الوضعية البيداغوجية محدثة لتمييز بين العناصر السنوية والفصلية.
-          العناصر السنوية تمثل برامج كاملة، بينما العناصر الفصلية تمثل مواد محددة في سداسي معين.<br/>
-          Note: The pedagogical situation has been updated to distinguish between yearly and semester elements.
-          Yearly elements represent complete programs, while semester elements represent specific subjects in a particular semester.
+    
         </Typography>
       </Paper>
     </Box>

@@ -114,11 +114,11 @@ const AdministrativeSituation = () => {
   const getStatusLabel = (status) => {
     switch (status) {
       case 'E':
-        return 'نشط - Active';
+        return 'نشط';
       case 'D':
-        return 'غير نشط - Inactive';
+        return 'غير نشط';
       default:
-        return status || 'غير محدد - Unknown';
+        return status || 'غير محدد';
     }
   };
 
@@ -584,7 +584,7 @@ const generateEnrollmentCertificate = async (year, registrations) => {
   };
 
   if (isLoading) {
-    return <Loading message="جاري تحميل الوضعية الإدارية... Loading administrative situation..." />;
+    return <Loading message="جاري تحميل الوضعية الإدارية..." />;
   }
 
   return (
@@ -593,7 +593,7 @@ const generateEnrollmentCertificate = async (year, registrations) => {
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
         <AdminIcon sx={{ mr: 2, color: 'primary.main', fontSize: 32 }} />
         <Typography variant="h4" fontWeight="600" color="primary">
-          📋 الوضعية الإدارية - Administrative Situation
+          📋 الوضعية الإدارية 
         </Typography>
         <Button
           startIcon={<RefreshIcon />}
@@ -616,13 +616,13 @@ const generateEnrollmentCertificate = async (year, registrations) => {
       <Card sx={{ mb: 3, borderRadius: 3 }}>
         <CardContent>
           <FormControl fullWidth sx={{ maxWidth: 400 }}>
-            <InputLabel>السنة الجامعية - Academic Year</InputLabel>
+            <InputLabel>السنة الجامعية</InputLabel>
             <Select
               value={selectedYear}
               onChange={handleYearChange}
-              label="السنة الجامعية - Academic Year"
+              label="السنة الجامعية"
             >
-              <MenuItem value="">جميع السنوات - All Years</MenuItem>
+              <MenuItem value="">جميع السنوات</MenuItem>
               {availableYears.map((year) => (
                 <MenuItem key={year} value={year}>
                   {year} - {parseInt(year) + 1}
@@ -636,13 +636,9 @@ const generateEnrollmentCertificate = async (year, registrations) => {
       {/* Instructions */}
       <Alert severity="info" sx={{ mb: 3, borderRadius: 2 }}>
         <Typography variant="body2">
-          💡 <strong>الوضعية الإدارية:</strong> تعرض جميع تسجيلاتك الإدارية عبر السنوات الجامعية.
-          تتضمن معلومات حول حالة التسجيل والتخصص. يمكنك تحميل شهادة مدرسية لكل سنة.
+          💡 <strong>الوضعية الإدارية:</strong> هذه الصفحة خاصة بعرض وضعيتك الإدارية في الكلية، وذلك حسب المواسم الجامعية
         </Typography>
-        <Typography variant="body2" sx={{ mt: 1 }}>
-          <strong>Administrative Situation:</strong> Shows all your administrative registrations across academic years.
-          Includes information about registration status and specialization. You can download an enrollment certificate for each year.
-        </Typography>
+
       </Alert>
 
       {/* Statistics Summary */}
@@ -651,7 +647,7 @@ const generateEnrollmentCertificate = async (year, registrations) => {
           <CardContent>
             <Typography variant="h6" gutterBottom color="primary" sx={{ display: 'flex', alignItems: 'center' }}>
               <CalendarIcon sx={{ mr: 1 }} />
-              إحصائيات التسجيل - Registration Statistics
+              التسجيلات الإدارية
             </Typography>
             <Grid container spacing={2} sx={{ mt: 1 }}>
               {statsData.map((stat) => (
@@ -829,8 +825,7 @@ const generateEnrollmentCertificate = async (year, registrations) => {
       {/* Footer Info */}
       <Paper sx={{ p: 3, mt: 3, borderRadius: 3, bgcolor: '#f8f9fa' }}>
         <Typography variant="body2" color="text.secondary" textAlign="center">
-          📜 الوضعية الإدارية تظهر جميع تسجيلاتك الجامعية مع إمكانية تحميل شهادة مدرسية لكل سنة.<br/>
-          Administrative situation shows all your university registrations with the ability to download an enrollment certificate for each year.
+          📜 الوضعية الإدارية تظهر جميع تسجيلاتك الجامعية مع إمكانية تحميل شهادة التسجيل الجامعية لكل سنة.<br/>
         </Typography>
       </Paper>
     </Box>

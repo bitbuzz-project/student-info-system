@@ -29,6 +29,7 @@ import {
   Sync as SyncIcon,
   Assessment as AssessmentIcon,
   Settings as SettingsIcon,
+  School as SchoolIcon, // <--- ADD THIS ICON
   Menu as MenuIcon,
   MoreVert as MoreVertIcon,
   CreditCard as CreditCardIcon, // Icon for card requests
@@ -39,7 +40,7 @@ import { useAdmin } from '../../contexts/AdminContext';
 import { useNavigate } from 'react-router-dom';
 import ModuleManagement from './ModuleManagement';
 import StudentCardRequests from './StudentCardRequests';
-
+import EmployeeManagement from './EmployeeManagement';
 
 // Import admin page components (we'll create these next)
 import AdminOverview from './AdminOverview';
@@ -47,7 +48,7 @@ import StudentManagement from './StudentManagement';
 import SyncManagement from './SyncManagement';
 import SystemHealth from './SystemHealth';
 import StudentRegistrations from './StudentRegistrations';
-
+import LaureatManagement from './LaureatManagement'; // <--- ADD THIS IMPORT
 const DRAWER_WIDTH = 280;
 
 const AdminDashboard = () => {
@@ -109,6 +110,18 @@ const AdminDashboard = () => {
     icon: <SettingsIcon />,
     color: '#f39c12'
   },
+  {
+      id: 'laureats',
+      label: 'Gestion des Lauréats',
+      icon: <SchoolIcon />,
+      color: '#8e44ad'
+    },
+    {
+      id: 'hr', // ID for HR
+      label: 'Ressources Humaines',
+      icon: <PeopleIcon />, // You can reuse PeopleIcon or import BadgeIcon
+      color: '#ff9800' // Orange color
+    },
     {
       id: 'sync',
       label: 'Data Synchronization',
@@ -139,10 +152,14 @@ const AdminDashboard = () => {
         return <StudentManagement />;
             case 'modules':  // ← ADD THIS CASE
       return <ModuleManagement />;
+      case 'hr':
+    return <EmployeeManagement />;
       case 'sync':
         return <SyncManagement />;
       case 'system':
         return <SystemHealth />;
+        case 'laureats':                 // <--- ADD THIS CASE
+        return <LaureatManagement />;
       case 'card-requests':
         return <StudentCardRequests />;
       default:

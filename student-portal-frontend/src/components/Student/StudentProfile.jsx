@@ -153,7 +153,7 @@ const StudentProfile = () => {
       {/* Page Header */}
       <Box sx={{ mb: 4 }}>
         <Typography variant="h4" fontWeight="600" color="primary" gutterBottom>
-          👤 المعلومات الشخصية - Personal Information
+          👤 المعلومات الشخصية 
         </Typography>
         <Typography variant="body1" color="text.secondary">
           عرض جميع المعلومات الشخصية والجامعية الخاصة بك
@@ -310,7 +310,7 @@ const StudentProfile = () => {
                 />
                 <InfoRow
                   icon={<BadgeIcon />}
-                  label="رخصة التخصص / License"
+                  label="رخصة التخصص"
                   value={studentData.licence_etape}
                 />
                 <InfoRow
@@ -320,7 +320,7 @@ const StudentProfile = () => {
                 />
                 <InfoRow
                   icon={<DateIcon />}
-                  label="آخر تحديث / Last Update"
+                  label="آخر تحديث"
                   value={formatDate(studentData.derniere_mise_a_jour)}
                 />
               </Stack>
@@ -329,58 +329,7 @@ const StudentProfile = () => {
         </Grid>
       </Grid>
 
-      {/* Additional Info Card */}
-      <Card sx={{ mt: 3, borderRadius: 3 }}>
-        <CardContent sx={{ p: 3 }}>
-          <Typography variant="h6" gutterBottom fontWeight="600" color="primary">
-            معلومات إضافية / Additional Information
-          </Typography>
-          <Divider sx={{ mb: 3 }} />
-          
-          <Grid container spacing={3}>
-            <Grid item xs={12} sm={6} md={3}>
-              <Box sx={{ textAlign: 'center', p: 2 }}>
-                <Typography variant="body2" color="text.secondary" gutterBottom>
-                  تسجيلات الدورة
-                </Typography>
-                <Typography variant="h5" fontWeight="bold" color="primary">
-                  {studentData.nombre_inscriptions_cycle || 0}
-                </Typography>
-              </Box>
-            </Grid>
-            <Grid item xs={12} sm={6} md={3}>
-              <Box sx={{ textAlign: 'center', p: 2 }}>
-                <Typography variant="body2" color="text.secondary" gutterBottom>
-                  تسجيلات المرحلة
-                </Typography>
-                <Typography variant="h5" fontWeight="bold" color="success.main">
-                  {studentData.nombre_inscriptions_etape || 0}
-                </Typography>
-              </Box>
-            </Grid>
-            <Grid item xs={12} sm={6} md={3}>
-              <Box sx={{ textAlign: 'center', p: 2 }}>
-                <Typography variant="body2" color="text.secondary" gutterBottom>
-                  تسجيلات الدبلوم
-                </Typography>
-                <Typography variant="h5" fontWeight="bold" color="warning.main">
-                  {studentData.nombre_inscriptions_diplome || 0}
-                </Typography>
-              </Box>
-            </Grid>
-            <Grid item xs={12} sm={6} md={3}>
-              <Box sx={{ textAlign: 'center', p: 2 }}>
-                <Typography variant="body2" color="text.secondary" gutterBottom>
-                  السنة الجامعية
-                </Typography>
-                <Typography variant="h5" fontWeight="bold" color="secondary.main">
-                  {studentData.annee_universitaire || '2024'}
-                </Typography>
-              </Box>
-            </Grid>
-          </Grid>
-        </CardContent>
-      </Card>
+    
     </Box>
   );
 };

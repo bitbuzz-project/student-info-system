@@ -1,5 +1,4 @@
-// Updated ModuleManagement.jsx - Fixed dialog close issue
-
+// Updated ModuleManagement.jsx - Added Export Excel Option
 import React, { useState, useEffect } from 'react';
 import {
   Box,
@@ -47,7 +46,8 @@ import {
   Cancel as CancelIcon,
   ExpandMore as ExpandMoreIcon,
   Settings as SettingsIcon,
-  FilterList as FilterListIcon
+  FilterList as FilterListIcon,
+  FileDownload as FileDownloadIcon // Added Import
 } from '@mui/icons-material';
 import { adminAPI } from '../../services/api';
 
@@ -711,6 +711,77 @@ const ModuleManagement = () => {
     }
   };
 
+  // ===== NEW: Handle Export to Excel (CSV) =====
+  const handleExportExcel = async () => {
+    try {
+      setIsLoading(true);
+      
+      // Fetch all modules that match the current filter (bypass pagination with high limit)
+      // Assuming existing getModules supports limit
+      const response = await adminAPI.getModules({ ...filters, page: 1, limit: 10000 });
+      const data = response.modules;
+
+      if (!data || data.length === 0) {
+        setError('No data available to export');
+        setIsLoading(false);
+        return;
+      }
+
+      // Define CSV headers
+      const headers = [
+        'Module Code', 
+        'Name (FR)', 
+        'Name (AR)', 
+        'Element Type', 
+        'Semester', 
+        'Academic Year', 
+        'Parent Code', 
+        'COD_NEL', 
+        'COD_PEL'
+      ];
+      
+      // Convert data to CSV format
+      const csvContent = [
+        headers.join(','),
+        ...data.map(item => [
+          item.cod_elp,
+          item.lib_elp,
+          item.lib_elp_arb,
+          item.element_type,
+          item.semester_number,
+          item.year_level,
+          item.parent_code,
+          item.cod_nel,
+          item.cod_pel
+        ].map(field => {
+          // Escape quotes and wrap in quotes for CSV safety
+          const stringVal = (field === null || field === undefined) ? '' : String(field);
+          return `"${stringVal.replace(/"/g, '""')}"`;
+        }).join(','))
+      ].join('\n');
+
+      // Create blob with BOM for UTF-8 support (important for Arabic)
+      const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+      
+      // Trigger download
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `modules_export_${new Date().toISOString().split('T')[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      setSuccess(`Successfully exported ${data.length} modules to Excel (CSV)`);
+      
+    } catch (err) {
+      setError('Failed to export data');
+      console.error('Export error:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Handle module selection for bulk operations
   const handleModuleSelect = (moduleId, isSelected) => {
     if (isSelected) {
@@ -792,15 +863,28 @@ const ModuleManagement = () => {
         <Typography variant="h4" fontWeight="600" color="primary">
           🔧 Module Management
         </Typography>
-        <Button
-          startIcon={<RefreshIcon />}
-          onClick={() => loadModules()}
-          sx={{ ml: 'auto' }}
-          variant="outlined"
-          disabled={isLoading}
-        >
-          Refresh
-        </Button>
+        
+        <Box sx={{ ml: 'auto', display: 'flex', gap: 2 }}>
+          {/* New Export Button */}
+          <Button
+            startIcon={<FileDownloadIcon />}
+            onClick={handleExportExcel}
+            variant="contained"
+            color="success"
+            disabled={isLoading}
+          >
+            Export Excel
+          </Button>
+
+          <Button
+            startIcon={<RefreshIcon />}
+            onClick={() => loadModules()}
+            variant="outlined"
+            disabled={isLoading}
+          >
+            Refresh
+          </Button>
+        </Box>
       </Box>
 
       {/* Alert Messages */}

@@ -1,9 +1,11 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt'); // Added bcrypt for secure password comparison
 const { Pool } = require('pg');
 const router = express.Router();
+require('dotenv').config(); // Ensure env vars are loaded
 
-// PostgreSQL connection (using same config as your server.js)
+// PostgreSQL connection
 const pool = new Pool({
   host: process.env.PG_HOST,
   port: process.env.PG_PORT,
@@ -12,11 +14,87 @@ const pool = new Pool({
   password: process.env.PG_PASSWORD,
 });
 
-// Admin credentials (you can change these in your .env file)
+// Admin credentials (fallback if DB fails or for initial setup - though we prefer DB now)
 const ADMIN_CREDENTIALS = {
   username: process.env.ADMIN_USERNAME || 'admin',
   password: process.env.ADMIN_PASSWORD || 'admin123'
 };
+
+// ==========================================
+// 1. AUTO-INITIALIZATION (Run on server start)
+// ==========================================
+async function initHRDatabase() {
+  try {
+    // A. Create ADMINS table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS admins (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(50) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        full_name VARCHAR(100),
+        role VARCHAR(20) NOT NULL, -- 'SUPER_ADMIN' or 'RH_MANAGER'
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // B. Create EMPLOYEES table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS employees (
+        id SERIAL PRIMARY KEY,
+        cin VARCHAR(20) UNIQUE NOT NULL,
+        nom VARCHAR(50) NOT NULL,
+        prenom VARCHAR(50) NOT NULL,
+        email VARCHAR(100),
+        phone VARCHAR(20),
+        type VARCHAR(20) NOT NULL,
+        department VARCHAR(100),
+        grade VARCHAR(50),
+        status VARCHAR(20) DEFAULT 'ACTIF',
+        date_embauche DATE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // C. Create Default Accounts
+    const saltRounds = 10;
+    
+    // 1. Super Admin (Default: admin / admin123)
+    // Only insert if 'admin' doesn't exist
+    const adminExists = await pool.query("SELECT 1 FROM admins WHERE username = 'admin'");
+    if (adminExists.rows.length === 0) {
+        const adminHash = await bcrypt.hash('admin123', saltRounds);
+        await pool.query(`
+        INSERT INTO admins (username, password_hash, full_name, role)
+        VALUES ('admin', $1, 'Administrateur Principal', 'SUPER_ADMIN')
+        `, [adminHash]);
+        console.log('✅ Default Super Admin created (admin/admin123)');
+    }
+
+    // 2. RH Manager (Default: rh / rh123)
+    const rhExists = await pool.query("SELECT 1 FROM admins WHERE username = 'rh'");
+    if (rhExists.rows.length === 0) {
+        const rhHash = await bcrypt.hash('rh123', saltRounds);
+        await pool.query(`
+        INSERT INTO admins (username, password_hash, full_name, role)
+        VALUES ('rh', $1, 'Responsable RH', 'RH_MANAGER')
+        `, [rhHash]);
+        console.log('✅ Default RH Manager created (rh/rh123)');
+    }
+
+    console.log('✅ HR Database initialized.');
+
+  } catch (error) {
+    console.error('❌ Error initializing HR database:', error);
+  }
+}
+
+// Run initialization immediately
+initHRDatabase();
+
+
+// ==========================================
+// 2. MIDDLEWARE
+// ==========================================
 
 // Admin authentication middleware
 const authenticateAdmin = (req, res, next) => {
@@ -27,16 +105,37 @@ const authenticateAdmin = (req, res, next) => {
     return res.status(401).json({ error: 'Admin access token required' });
   }
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, admin) => {
-    if (err || !admin.isAdmin) {
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) {
       return res.status(403).json({ error: 'Invalid admin token' });
     }
-    req.admin = admin;
+    // Attach the whole decoded token payload to req.admin
+    // Payload contains: { id, username, role, isAdmin, loginTime }
+    req.admin = decoded;
     next();
   });
 };
 
-// ===== AUTHENTICATION ROUTES =====
+// Middleware: Allows BOTH 'SUPER_ADMIN' and 'RH_MANAGER'
+const requireRH = (req, res, next) => {
+  const role = req.admin?.role;
+  // If role is missing (e.g. old token), deny or default to basic admin (safe to deny for HR features)
+  if (role === 'SUPER_ADMIN' || role === 'RH_MANAGER') {
+    next();
+  } else {
+    // If logged in via hardcoded credentials (no role in DB), maybe allow? 
+    // But better to enforce DB roles now.
+    // However, if you are using the fallback ADMIN_CREDENTIALS login logic below, 
+    // that logic needs to issue a token with role='SUPER_ADMIN' to pass this check.
+    // See the updated login route below.
+    res.status(403).json({ error: 'Access denied: HR privileges required' });
+  }
+};
+
+
+// ==========================================
+// 3. AUTHENTICATION ROUTES
+// ==========================================
 
 // Admin login
 router.post('/login', async (req, res) => {
@@ -47,10 +146,47 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Username and password are required' });
     }
     
+    // STRATEGY: Try Database Login First
+    const dbResult = await pool.query('SELECT * FROM admins WHERE username = $1', [username]);
+    
+    if (dbResult.rows.length > 0) {
+        // Found in DB
+        const admin = dbResult.rows[0];
+        const match = await bcrypt.compare(password, admin.password_hash);
+        
+        if (match) {
+            const adminToken = jwt.sign(
+                { 
+                  id: admin.id,
+                  username: admin.username,
+                  role: admin.role, // Important!
+                  isAdmin: true,
+                  loginTime: new Date().toISOString()
+                },
+                process.env.JWT_SECRET,
+                { expiresIn: '12h' }
+            );
+            
+            console.log(`DB Admin login: ${username} (${admin.role})`);
+            
+            return res.json({
+                success: true,
+                token: adminToken,
+                user: {
+                  username: admin.username,
+                  role: admin.role,
+                  fullName: admin.full_name
+                }
+            });
+        }
+    }
+
+    // FALLBACK: Hardcoded Credentials (for backward compatibility if needed)
     if (username === ADMIN_CREDENTIALS.username && password === ADMIN_CREDENTIALS.password) {
       const adminToken = jwt.sign(
         { 
           username: username,
+          role: 'SUPER_ADMIN', // Grant super admin role to hardcoded user
           isAdmin: true,
           loginTime: new Date().toISOString()
         },
@@ -58,24 +194,21 @@ router.post('/login', async (req, res) => {
         { expiresIn: '8h' }
       );
       
-      console.log(`Admin login: ${username} at ${new Date().toISOString()}`);
+      console.log(`Hardcoded Admin login: ${username}`);
       
-      res.json({
+      return res.json({
         success: true,
         token: adminToken,
-        message: 'Admin login successful',
-        expiresIn: '8h',
         user: {
           username: username,
-          role: 'admin'
+          role: 'SUPER_ADMIN'
         }
       });
-    } else {
-      console.log(`Failed admin login attempt: ${username} at ${new Date().toISOString()}`);
-      res.status(401).json({ 
-        error: 'Invalid admin credentials'
-      });
     }
+
+    // If both fail
+    res.status(401).json({ error: 'Invalid admin credentials' });
+
   } catch (error) {
     console.error('Admin login error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -84,7 +217,7 @@ router.post('/login', async (req, res) => {
 
 // Admin logout
 router.post('/logout', authenticateAdmin, (req, res) => {
-  console.log(`Admin logout: ${req.admin.username} at ${new Date().toISOString()}`);
+  console.log(`Admin logout: ${req.admin.username}`);
   res.json({ success: true, message: 'Logged out successfully' });
 });
 
@@ -94,13 +227,16 @@ router.get('/verify', authenticateAdmin, (req, res) => {
     valid: true, 
     admin: {
       username: req.admin.username,
-      loginTime: req.admin.loginTime,
-      role: 'admin'
+      role: req.admin.role || 'admin', // Default if missing
+      loginTime: req.admin.loginTime
     }
   });
 });
 
-// ===== DASHBOARD & STATS ROUTES =====
+
+// ==========================================
+// 4. DASHBOARD & STATS ROUTES
+// ==========================================
 
 // Get main dashboard statistics
 router.get('/dashboard/stats', authenticateAdmin, async (req, res) => {
@@ -189,7 +325,10 @@ router.get('/dashboard/overview', authenticateAdmin, async (req, res) => {
   }
 });
 
-// ===== STUDENT MANAGEMENT ROUTES =====
+
+// ==========================================
+// 5. STUDENT MANAGEMENT ROUTES
+// ==========================================
 
 // Search students with pagination
 router.get('/students/search', authenticateAdmin, async (req, res) => {
@@ -335,7 +474,10 @@ router.get('/students/:id', authenticateAdmin, async (req, res) => {
   }
 });
 
-// ===== SYNC MANAGEMENT ROUTES =====
+
+// ==========================================
+// 6. SYNC MANAGEMENT ROUTES
+// ==========================================
 
 // Get sync status and history
 router.get('/sync/status', authenticateAdmin, async (req, res) => {
@@ -383,191 +525,66 @@ router.get('/sync/status', authenticateAdmin, async (req, res) => {
 // Trigger manual sync
 router.post('/sync/manual', authenticateAdmin, async (req, res) => {
   try {
-    // Import the sync function
     const { syncStudents } = require('./sync-service');
     
-    console.log(`Manual sync requested by admin: ${req.admin.username} at ${new Date().toISOString()}`);
+    console.log(`Manual sync requested by admin: ${req.admin.username}`);
     
-    // Log the sync request
     await pool.query(`
       INSERT INTO sync_log (sync_type, records_processed, sync_status, error_message)
       VALUES ('manual_trigger', 0, 'started', $1)
     `, [`Manual sync initiated by admin: ${req.admin.username}`]);
     
-    // Run sync asynchronously
     syncStudents()
-      .then(() => {
-        console.log(`Manual sync completed successfully (initiated by ${req.admin.username})`);
-      })
+      .then(() => console.log(`Manual sync completed successfully`))
       .catch((error) => {
         console.error('Manual sync failed:', error);
         pool.query(`
           INSERT INTO sync_log (sync_type, records_processed, sync_status, error_message)
           VALUES ('manual_sync', 0, 'error', $1)
-        `, [`Sync failed (initiated by ${req.admin.username}): ${error.message}`]);
+        `, [`Sync failed: ${error.message}`]);
       });
     
     res.json({ 
       success: true, 
-      message: 'Manual sync started. Check sync logs for progress.',
+      message: 'Manual sync started.',
       initiated_by: req.admin.username
     });
     
   } catch (error) {
     console.error('Error starting manual sync:', error);
-    
-    await pool.query(`
-      INSERT INTO sync_log (sync_type, records_processed, sync_status, error_message)
-      VALUES ('manual_sync', 0, 'error', $1)
-    `, [`Failed to start sync (by ${req.admin.username}): ${error.message}`]);
-    
     res.status(500).json({ error: 'Failed to start manual sync' });
   }
 });
 
-// ===== SYSTEM HEALTH ROUTES =====
 
-// Database health check
+// ==========================================
+// 7. SYSTEM HEALTH & REQUESTS ROUTES
+// ==========================================
+
 router.get('/system/health', authenticateAdmin, async (req, res) => {
   try {
+    await pool.query('SELECT 1');
     const healthChecks = {
-      database: {
-        postgresql: false,
-        tables_exist: false,
-        recent_activity: false
-      },
-      data_integrity: {
-        orphaned_grades: 0,
-        missing_elements: 0,
-        duplicate_students: 0
-      },
-      sync_health: {
-        last_sync: null,
-        sync_frequency: 'unknown'
-      }
+      database: { postgresql: true },
+      sync_health: { last_sync: null }
     };
     
-    // Check PostgreSQL connection
-    try {
-      await pool.query('SELECT 1');
-      healthChecks.database.postgresql = true;
-    } catch (error) {
-      console.error('PostgreSQL health check failed:', error);
-    }
-    
-    // Check if main tables exist and have data
-    try {
-      const tables = await pool.query(`
-        SELECT table_name, 
-               (SELECT COUNT(*) FROM information_schema.tables t2 
-                WHERE t2.table_name = tables.table_name) as exists,
-               CASE tables.table_name
-                 WHEN 'students' THEN (SELECT COUNT(*) FROM students)
-                 WHEN 'grades' THEN (SELECT COUNT(*) FROM grades)
-                 WHEN 'element_pedagogi' THEN (SELECT COUNT(*) FROM element_pedagogi)
-                 WHEN 'sync_log' THEN (SELECT COUNT(*) FROM sync_log)
-               END as record_count
-        FROM (VALUES ('students'), ('grades'), ('element_pedagogi'), ('sync_log')) as tables(table_name)
-      `);
-      
-      healthChecks.database.tables_exist = tables.rows.every(row => 
-        row.exists > 0 && row.record_count > 0
-      );
-    } catch (error) {
-      console.error('Table check failed:', error);
-    }
-    
-    // Check recent activity
-    try {
-      const recentActivity = await pool.query(`
-        SELECT COUNT(*) as recent_updates
-        FROM students 
-        WHERE last_sync >= NOW() - INTERVAL '7 days'
-      `);
-      healthChecks.database.recent_activity = 
-        parseInt(recentActivity.rows[0].recent_updates) > 0;
-    } catch (error) {
-      console.error('Recent activity check failed:', error);
-    }
-    
-    // Check data integrity
-    try {
-      const integrityChecks = await Promise.all([
-        // Orphaned grades
-        pool.query(`
-          SELECT COUNT(*) FROM grades g
-          LEFT JOIN students s ON g.cod_etu = s.cod_etu
-          WHERE s.cod_etu IS NULL
-        `),
-        // Missing elements
-        pool.query(`
-          SELECT COUNT(*) FROM grades g
-          LEFT JOIN element_pedagogi ep ON g.cod_elp = ep.cod_elp
-          WHERE ep.cod_elp IS NULL
-        `),
-        // Duplicate students
-        pool.query(`
-          SELECT COUNT(*) FROM (
-            SELECT cod_etu, COUNT(*) 
-            FROM students 
-            GROUP BY cod_etu 
-            HAVING COUNT(*) > 1
-          ) duplicates
-        `)
-      ]);
-      
-      healthChecks.data_integrity.orphaned_grades = 
-        parseInt(integrityChecks[0].rows[0].count);
-      healthChecks.data_integrity.missing_elements = 
-        parseInt(integrityChecks[1].rows[0].count);
-      healthChecks.data_integrity.duplicate_students = 
-        parseInt(integrityChecks[2].rows[0].count);
-    } catch (error) {
-      console.error('Data integrity check failed:', error);
-    }
-    
-    // Check sync health
-    try {
-      const syncInfo = await pool.query(`
-        SELECT 
-          sync_timestamp,
-          sync_status,
-          EXTRACT(EPOCH FROM (NOW() - sync_timestamp))/3600 as hours_since_sync
-        FROM sync_log 
-        WHERE sync_type IN ('students', 'grades')
-        ORDER BY sync_timestamp DESC 
-        LIMIT 1
-      `);
-      
-      if (syncInfo.rows.length > 0) {
-        const lastSync = syncInfo.rows[0];
-        healthChecks.sync_health.last_sync = lastSync.sync_timestamp;
-        
-        const hoursSince = parseFloat(lastSync.hours_since_sync);
-        if (hoursSince < 24) {
-          healthChecks.sync_health.sync_frequency = 'daily';
-        } else if (hoursSince < 168) {
-          healthChecks.sync_health.sync_frequency = 'weekly';
-        } else {
-          healthChecks.sync_health.sync_frequency = 'outdated';
-        }
-      }
-    } catch (error) {
-      console.error('Sync health check failed:', error);
+    const syncInfo = await pool.query(`SELECT sync_timestamp FROM sync_log ORDER BY sync_timestamp DESC LIMIT 1`);
+    if(syncInfo.rows.length > 0) {
+      healthChecks.sync_health.last_sync = syncInfo.rows[0].sync_timestamp;
     }
     
     res.json({
       status: 'completed',
       timestamp: new Date().toISOString(),
-      checked_by: req.admin.username,
       health_checks: healthChecks
     });
-    
   } catch (error) {
     console.error('Error performing health check:', error);
     res.status(500).json({ error: 'Health check failed' });
   }
 });
+
 router.get('/student-card-requests', authenticateAdmin, async (req, res) => {
   try {
     const result = await pool.query(`
@@ -593,52 +610,259 @@ router.get('/student-card-requests', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-// Get system statistics
+
 router.get('/system/stats', authenticateAdmin, async (req, res) => {
   try {
-    const { period = 30 } = req.query; // days
+    const { period = 30 } = req.query;
     
-    // Get sync statistics for the period
     const syncStats = await pool.query(`
       SELECT 
         DATE(sync_timestamp) as sync_date,
         sync_type,
         COUNT(*) as sync_count,
-        SUM(records_processed) as total_records,
-        COUNT(CASE WHEN sync_status = 'success' THEN 1 END) as successful_syncs,
-        COUNT(CASE WHEN sync_status = 'error' THEN 1 END) as failed_syncs
+        SUM(records_processed) as total_records
       FROM sync_log
       WHERE sync_timestamp >= NOW() - INTERVAL '${period} days'
       GROUP BY DATE(sync_timestamp), sync_type
       ORDER BY sync_date DESC, sync_type
     `);
     
-    // Get performance metrics
-    const performanceStats = await pool.query(`
-      SELECT 
-        sync_type,
-        AVG(records_processed) as avg_records_per_sync,
-        MAX(records_processed) as max_records_per_sync,
-        MIN(records_processed) as min_records_per_sync,
-        COUNT(*) as total_syncs
-      FROM sync_log
-      WHERE sync_status = 'success' 
-        AND sync_timestamp >= NOW() - INTERVAL '${period} days'
-        AND records_processed > 0
-      GROUP BY sync_type
-    `);
-    
     res.json({
       sync_history: syncStats.rows,
-      performance_metrics: performanceStats.rows.map(row => ({
-        ...row,
-        avg_records_per_sync: parseFloat(row.avg_records_per_sync).toFixed(2)
-      })),
       period_days: parseInt(period)
     });
     
   } catch (error) {
     console.error('Error getting system statistics:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+
+// ==========================================
+// 8. LAUREAT MANAGEMENT ROUTES
+// ==========================================
+
+router.get('/laureats', authenticateAdmin, async (req, res) => {
+  try {
+    const { year, diploma, search, multiDiploma, page = 1, limit = 50 } = req.query;
+    const offset = (page - 1) * limit;
+
+    let query = `SELECT * FROM laureats WHERE 1=1`;
+    let params = [];
+    let paramIndex = 1;
+
+    if (year) {
+      query += ` AND cod_anu = $${paramIndex}`;
+      params.push(year);
+      paramIndex++;
+    }
+
+    if (diploma) {
+      query += ` AND cod_dip = $${paramIndex}`;
+      params.push(diploma);
+      paramIndex++;
+    }
+
+    if (search) {
+      query += ` AND (
+        cod_etu ILIKE $${paramIndex} OR 
+        cin_ind ILIKE $${paramIndex} OR 
+        nom_pat_ind ILIKE $${paramIndex} OR 
+        prenom_ind ILIKE $${paramIndex}
+      )`;
+      params.push(`%${search}%`);
+      paramIndex++;
+    }
+
+    if (multiDiploma === 'true') {
+      query += ` AND cod_etu IN (
+        SELECT cod_etu 
+        FROM laureats 
+        GROUP BY cod_etu 
+        HAVING COUNT(DISTINCT cod_dip) > 1
+      )`;
+    }
+
+    const countQuery = query.replace('SELECT *', 'SELECT COUNT(*)');
+    const countResult = await pool.query(countQuery, params);
+    
+    query += ` ORDER BY cod_anu DESC, nom_pat_ind LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    params.push(limit, offset);
+    
+    const result = await pool.query(query, params);
+
+    res.json({
+      laureats: result.rows,
+      total: parseInt(countResult.rows[0].count),
+      page: parseInt(page),
+      totalPages: Math.ceil(parseInt(countResult.rows[0].count) / limit)
+    });
+
+  } catch (error) {
+    console.error('Get laureats error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.get('/laureats/stats', authenticateAdmin, async (req, res) => {
+  try {
+    const byYear = await pool.query(`
+      SELECT cod_anu, COUNT(*) as count 
+      FROM laureats 
+      GROUP BY cod_anu 
+      ORDER BY cod_anu DESC
+    `);
+
+    const byDiploma = await pool.query(`
+      SELECT cod_dip, MIN(lib_dip) as lib_dip, COUNT(*) as count 
+      FROM laureats 
+      GROUP BY cod_dip 
+      ORDER BY count DESC
+    `);
+
+    const multiDiploma = await pool.query(`
+      SELECT COUNT(*) as count FROM (
+        SELECT cod_etu 
+        FROM laureats 
+        GROUP BY cod_etu 
+        HAVING COUNT(DISTINCT cod_dip) > 1
+      ) as multi
+    `);
+
+    res.json({
+      byYear: byYear.rows,
+      byDiploma: byDiploma.rows,
+      multiDiplomaCount: parseInt(multiDiploma.rows[0].count)
+    });
+  } catch (error) {
+    console.error('Get laureats stats error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.get('/laureats/student/:codEtu', authenticateAdmin, async (req, res) => {
+  try {
+    const { codEtu } = req.params;
+    const result = await pool.query(`
+      SELECT * FROM laureats
+      WHERE cod_etu = $1
+      ORDER BY cod_anu DESC
+    `, [codEtu]);
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Get laureat details error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/laureats/sync', authenticateAdmin, async (req, res) => {
+  try {
+    const { syncLaureats } = require('./sync-service');
+    syncLaureats([2024, 2023, 2022, 2021]).then(r => console.log('Sync Laureats Done'));
+    res.json({ message: 'Sync started' });
+  } catch (error) {
+    res.status(500).json({ error: 'Sync failed' });
+  }
+});
+
+
+// ==========================================
+// 9. RH MANAGEMENT ROUTES (Local Database)
+// ==========================================
+
+// GET ALL EMPLOYEES
+router.get('/employees', authenticateAdmin, requireRH, async (req, res) => {
+  try {
+    const { type, search } = req.query;
+    let query = 'SELECT * FROM employees WHERE 1=1';
+    let params = [];
+    let paramIndex = 1;
+
+    if (type) {
+      query += ` AND type = $${paramIndex}`;
+      params.push(type);
+      paramIndex++;
+    }
+
+    if (search) {
+      query += ` AND (nom ILIKE $${paramIndex} OR prenom ILIKE $${paramIndex} OR cin ILIKE $${paramIndex})`;
+      params.push(`%${search}%`);
+      paramIndex++;
+    }
+
+    query += ' ORDER BY created_at DESC';
+
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Get employees error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ADD NEW EMPLOYEE
+router.post('/employees', authenticateAdmin, requireRH, async (req, res) => {
+  try {
+    const { cin, nom, prenom, email, phone, type, department, grade, date_embauche, status } = req.body;
+
+    if (!cin || !nom || !prenom || !type) {
+      return res.status(400).json({ error: 'Champs obligatoires manquants' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO employees 
+       (cin, nom, prenom, email, phone, type, department, grade, date_embauche, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING *`,
+      [cin, nom, prenom, email, phone, type, department, grade, date_embauche, status || 'ACTIF']
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    if (error.code === '23505') {
+      return res.status(400).json({ error: 'Ce CIN existe déjà.' });
+    }
+    console.error('Add employee error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// UPDATE EMPLOYEE
+router.put('/employees/:id', authenticateAdmin, requireRH, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nom, prenom, email, phone, type, department, grade, status, date_embauche } = req.body;
+
+    const result = await pool.query(
+      `UPDATE employees 
+       SET nom = $1, prenom = $2, email = $3, phone = $4, type = $5, 
+           department = $6, grade = $7, status = $8, date_embauche = $9
+       WHERE id = $10
+       RETURNING *`,
+      [nom, prenom, email, phone, type, department, grade, status, date_embauche, id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Employé non trouvé' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Update employee error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// DELETE EMPLOYEE
+router.delete('/employees/:id', authenticateAdmin, requireRH, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await pool.query('DELETE FROM employees WHERE id = $1', [id]);
+    res.json({ message: 'Employé supprimé avec succès' });
+  } catch (error) {
+    console.error('Delete employee error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -49,7 +49,65 @@ const authenticateToken = (req, res, next) => {
 // This is a temporary solution that uses the existing grades table
 
 // Replace the existing official documents endpoint in server.js with this updated version
+// Helper to fix Windows-1256 characters displayed as Latin-1
+function fixOracleEncoding(str) {
+  if (!str) return str;
+  
+  // Mapping of Latin-1 chars (0xC0-0xFF) to their Windows-1256 Arabic equivalents
+  const cp1256map = {
+    // Letters
+    '\u00C1': '\u0621', // ء
+    '\u00C2': '\u0622', // آ
+    '\u00C3': '\u0623', // أ
+    '\u00C4': '\u0624', // ؤ
+    '\u00C5': '\u0625', // إ
+    '\u00C6': '\u0626', // ئ
+    '\u00C7': '\u0627', // ا
+    '\u00C8': '\u0628', // ب
+    '\u00C9': '\u0629', // ة
+    '\u00CA': '\u062A', // ت
+    '\u00CB': '\u062B', // ث
+    '\u00CC': '\u062C', // ج
+    '\u00CD': '\u062D', // ح
+    '\u00CE': '\u062E', // خ
+    '\u00CF': '\u062F', // د
+    '\u00D0': '\u0630', // ذ
+    '\u00D1': '\u0631', // ر
+    '\u00D2': '\u0632', // ز
+    '\u00D3': '\u0633', // س
+    '\u00D4': '\u0634', // ش
+    '\u00D5': '\u0635', // ص
+    '\u00D6': '\u0636', // ض
+    '\u00D7': '\u00D7', // × (Multiplication sign, same)
+    '\u00D8': '\u0637', // ط
+    '\u00D9': '\u0638', // ظ
+    '\u00DA': '\u0639', // ع
+    '\u00DB': '\u063A', // غ
+    '\u00E0': '\u0640', // ـ (Tatweel)
+    '\u00E1': '\u0641', // ف
+    '\u00E2': '\u0642', // ق
+    '\u00E3': '\u0643', // ك
+    '\u00E4': '\u0644', // ل
+    '\u00E5': '\u0645', // م
+    '\u00E6': '\u0646', // ن
+    '\u00E7': '\u0647', // ه
+    '\u00E8': '\u0648', // و
+    '\u00E9': '\u0649', // ى
+    '\u00EA': '\u064A', // ي
+    '\u00EB': '\u064B', // ً  (Fathatan)
+    '\u00EC': '\u064C', // ٌ  (Dammatan)
+    '\u00ED': '\u064D', // ٍ  (Kasratan)
+    '\u00EE': '\u064E', // َ  (Fatha)
+    '\u00EF': '\u064F', // ُ  (Damma)
+    '\u00F0': '\u0650', // ِ  (Kasra)
+    '\u00F1': '\u0651', // ّ  (Shadda)
+    '\u00F2': '\u0652', // ْ  (Sukun)
+    // Common misinterpretation range
+    '\u00BF': '\u061F'  // ؟
+  };
 
+  return str.split('').map(char => cp1256map[char] || char).join('');
+}
 app.get('/student/official-documents', authenticateToken, async (req, res) => {
   try {
     const { semester } = req.query;
