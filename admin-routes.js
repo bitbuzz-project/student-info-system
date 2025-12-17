@@ -1,9 +1,14 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcrypt'); // Added bcrypt for secure password comparison
+const bcrypt = require('bcrypt');
 const { Pool } = require('pg');
+const multer = require('multer'); // Required for file upload
+const fs = require('fs'); // Required for file reading
 const router = express.Router();
-require('dotenv').config(); // Ensure env vars are loaded
+require('dotenv').config();
+
+// Configure upload
+const upload = multer({ dest: 'uploads/' });
 
 // PostgreSQL connection
 const pool = new Pool({
@@ -14,14 +19,14 @@ const pool = new Pool({
   password: process.env.PG_PASSWORD,
 });
 
-// Admin credentials (fallback if DB fails or for initial setup - though we prefer DB now)
+// Admin credentials (fallback)
 const ADMIN_CREDENTIALS = {
   username: process.env.ADMIN_USERNAME || 'admin',
   password: process.env.ADMIN_PASSWORD || 'admin123'
 };
 
 // ==========================================
-// 1. AUTO-INITIALIZATION (Run on server start)
+// 1. AUTO-INITIALIZATION
 // ==========================================
 async function initHRDatabase() {
   try {
@@ -37,20 +42,29 @@ async function initHRDatabase() {
       )
     `);
 
-    // B. Create EMPLOYEES table
+    // B. Create EMPLOYEES table (Matches your CSV structure)
+    // Note: If you ran reset-db.js, this table already exists with the correct columns.
     await pool.query(`
       CREATE TABLE IF NOT EXISTS employees (
         id SERIAL PRIMARY KEY,
-        cin VARCHAR(20) UNIQUE NOT NULL,
-        nom VARCHAR(50) NOT NULL,
-        prenom VARCHAR(50) NOT NULL,
+        ppr VARCHAR(50) UNIQUE,           -- Main ID
+        etablissement VARCHAR(50),
+        nom VARCHAR(100),
+        prenom VARCHAR(100),
+        sexe VARCHAR(10),
+        date_naissance DATE,
+        lieu_naissance VARCHAR(100),
         email VARCHAR(100),
-        phone VARCHAR(20),
-        type VARCHAR(20) NOT NULL,
-        department VARCHAR(100),
-        grade VARCHAR(50),
+        grade VARCHAR(100),
+        type VARCHAR(50),
+        date_recrutement DATE,
+        date_mise_en_service DATE,
+        departement VARCHAR(100),
+        diplome VARCHAR(200),
+        specialite VARCHAR(200),
+        cin VARCHAR(20),
+        phone VARCHAR(50),
         status VARCHAR(20) DEFAULT 'ACTIF',
-        date_embauche DATE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -58,8 +72,7 @@ async function initHRDatabase() {
     // C. Create Default Accounts
     const saltRounds = 10;
     
-    // 1. Super Admin (Default: admin / admin123)
-    // Only insert if 'admin' doesn't exist
+    // Super Admin
     const adminExists = await pool.query("SELECT 1 FROM admins WHERE username = 'admin'");
     if (adminExists.rows.length === 0) {
         const adminHash = await bcrypt.hash('admin123', saltRounds);
@@ -70,7 +83,7 @@ async function initHRDatabase() {
         console.log('✅ Default Super Admin created (admin/admin123)');
     }
 
-    // 2. RH Manager (Default: rh / rh123)
+    // RH Manager
     const rhExists = await pool.query("SELECT 1 FROM admins WHERE username = 'rh'");
     if (rhExists.rows.length === 0) {
         const rhHash = await bcrypt.hash('rh123', saltRounds);
@@ -109,8 +122,6 @@ const authenticateAdmin = (req, res, next) => {
     if (err) {
       return res.status(403).json({ error: 'Invalid admin token' });
     }
-    // Attach the whole decoded token payload to req.admin
-    // Payload contains: { id, username, role, isAdmin, loginTime }
     req.admin = decoded;
     next();
   });
@@ -119,15 +130,9 @@ const authenticateAdmin = (req, res, next) => {
 // Middleware: Allows BOTH 'SUPER_ADMIN' and 'RH_MANAGER'
 const requireRH = (req, res, next) => {
   const role = req.admin?.role;
-  // If role is missing (e.g. old token), deny or default to basic admin (safe to deny for HR features)
   if (role === 'SUPER_ADMIN' || role === 'RH_MANAGER') {
     next();
   } else {
-    // If logged in via hardcoded credentials (no role in DB), maybe allow? 
-    // But better to enforce DB roles now.
-    // However, if you are using the fallback ADMIN_CREDENTIALS login logic below, 
-    // that logic needs to issue a token with role='SUPER_ADMIN' to pass this check.
-    // See the updated login route below.
     res.status(403).json({ error: 'Access denied: HR privileges required' });
   }
 };
@@ -181,12 +186,12 @@ router.post('/login', async (req, res) => {
         }
     }
 
-    // FALLBACK: Hardcoded Credentials (for backward compatibility if needed)
+    // FALLBACK: Hardcoded Credentials
     if (username === ADMIN_CREDENTIALS.username && password === ADMIN_CREDENTIALS.password) {
       const adminToken = jwt.sign(
         { 
           username: username,
-          role: 'SUPER_ADMIN', // Grant super admin role to hardcoded user
+          role: 'SUPER_ADMIN',
           isAdmin: true,
           loginTime: new Date().toISOString()
         },
@@ -206,7 +211,6 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // If both fail
     res.status(401).json({ error: 'Invalid admin credentials' });
 
   } catch (error) {
@@ -227,7 +231,7 @@ router.get('/verify', authenticateAdmin, (req, res) => {
     valid: true, 
     admin: {
       username: req.admin.username,
-      role: req.admin.role || 'admin', // Default if missing
+      role: req.admin.role || 'admin',
       loginTime: req.admin.loginTime
     }
   });
@@ -238,7 +242,6 @@ router.get('/verify', authenticateAdmin, (req, res) => {
 // 4. DASHBOARD & STATS ROUTES
 // ==========================================
 
-// Get main dashboard statistics
 router.get('/dashboard/stats', authenticateAdmin, async (req, res) => {
   try {
     const stats = await Promise.all([
@@ -288,7 +291,6 @@ router.get('/dashboard/stats', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Get data overview by year and program
 router.get('/dashboard/overview', authenticateAdmin, async (req, res) => {
   try {
     const [studentsByYear, studentsByProgram, gradesByYear] = await Promise.all([
@@ -330,7 +332,6 @@ router.get('/dashboard/overview', authenticateAdmin, async (req, res) => {
 // 5. STUDENT MANAGEMENT ROUTES
 // ==========================================
 
-// Search students with pagination
 router.get('/students/search', authenticateAdmin, async (req, res) => {
   try {
     const { 
@@ -374,12 +375,10 @@ router.get('/students/search', authenticateAdmin, async (req, res) => {
       ? `WHERE ${whereConditions.join(' AND ')}`
       : '';
     
-    // Get total count
     const countQuery = `SELECT COUNT(*) FROM students ${whereClause}`;
     const countResult = await pool.query(countQuery, params);
     const totalCount = parseInt(countResult.rows[0].count);
     
-    // Get paginated results
     const dataQuery = `
       SELECT 
         id, cod_etu, 
@@ -416,12 +415,10 @@ router.get('/students/search', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Get detailed student information
 router.get('/students/:id', authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Get student info
     const studentResult = await pool.query(`
       SELECT * FROM students WHERE id = $1
     `, [id]);
@@ -432,7 +429,6 @@ router.get('/students/:id', authenticateAdmin, async (req, res) => {
     
     const student = studentResult.rows[0];
     
-    // Get student grades with element info
     const gradesResult = await pool.query(`
       SELECT 
         g.cod_anu, g.cod_ses, g.cod_elp, g.not_elp, g.cod_tre,
@@ -444,7 +440,6 @@ router.get('/students/:id', authenticateAdmin, async (req, res) => {
       ORDER BY g.cod_anu DESC, g.cod_ses, ep.semester_number, ep.lib_elp
     `, [student.cod_etu]);
     
-    // Get grade statistics
     const statsResult = await pool.query(`
       SELECT 
         cod_anu, cod_ses,
@@ -479,7 +474,6 @@ router.get('/students/:id', authenticateAdmin, async (req, res) => {
 // 6. SYNC MANAGEMENT ROUTES
 // ==========================================
 
-// Get sync status and history
 router.get('/sync/status', authenticateAdmin, async (req, res) => {
   try {
     const { limit = 10 } = req.query;
@@ -496,7 +490,6 @@ router.get('/sync/status', authenticateAdmin, async (req, res) => {
     const lastSync = result.rows[0] || null;
     const recentSyncs = result.rows;
     
-    // Get sync statistics
     const syncStats = await pool.query(`
       SELECT 
         sync_type,
@@ -522,7 +515,6 @@ router.get('/sync/status', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Trigger manual sync
 router.post('/sync/manual', authenticateAdmin, async (req, res) => {
   try {
     const { syncStudents } = require('./sync-service');
@@ -769,8 +761,162 @@ router.post('/laureats/sync', authenticateAdmin, async (req, res) => {
 
 
 // ==========================================
-// 9. RH MANAGEMENT ROUTES (Local Database)
+// 9. RH MANAGEMENT ROUTES (Fully Updated)
 // ==========================================
+
+// Helper: Parse Date smartly (US vs FR vs ISO)
+const parseDate = (dateStr) => {
+  if (!dateStr) return null;
+  let s = dateStr.trim().replace(/"/g, ''); 
+  
+  // Reject non-date text
+  if (!/^[\d\/\-\.]+$/.test(s)) return null;
+
+  // 1. ISO Format (YYYY-MM-DD)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+  // 2. Year only
+  if (/^\d{4}$/.test(s)) return `${s}-01-01`;
+
+  // 3. Complex formats (DD/MM/YYYY or MM/DD/YYYY)
+  const parts = s.split(/[\/\-\.]/);
+  if (parts.length === 3) {
+      const p0 = parseInt(parts[0], 10);
+      const p1 = parseInt(parts[1], 10);
+      const p2 = parseInt(parts[2], 10);
+
+      let year, month, day;
+
+      // Identify Year (usually > 1900)
+      if (p2 > 1900) { 
+          // Format XX/XX/YYYY
+          year = p2;
+          // Disambiguate Month/Day
+          if (p1 > 12) { month = p0; day = p1; } // p1 > 12 implies it's Day => US Format
+          else { day = p0; month = p1; }         // Default to FR Format
+      } else if (p0 > 1900) {
+          // Format YYYY/MM/DD
+          year = p0; month = p1; day = p2;
+      } else {
+          return null; // Unknown format
+      }
+
+      // Validate bounds
+      if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+      // Return ISO string
+      return `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+  }
+  return null;
+};
+
+// Helper: Split CSV respecting quotes
+const splitCSV = (str, delimiter) => {
+  const regex = new RegExp(`(?:^|${delimiter})(\"(?:[^\"]+|\"\")*\"|[^${delimiter}]*)`, 'g');
+  let match;
+  const result = [];
+  while ((match = regex.exec(str))) {
+      let val = match[1];
+      if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+      result.push(val.trim());
+  }
+  return result;
+};
+
+// IMPORT EMPLOYEES (CSV/Excel)
+router.post('/employees/import', authenticateAdmin, requireRH, upload.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+
+  const filePath = req.file.path;
+  let successCount = 0;
+  let errorCount = 0;
+  const errorsDetails = [];
+
+  try {
+    const fileContent = fs.readFileSync(filePath, 'utf-8');
+    const lines = fileContent.split(/\r?\n/);
+    
+    // Skip header row (start from i=1)
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      // Detect Delimiter
+      const delimiter = line.includes(';') ? ';' : ',';
+      
+      // Use Robust Splitter
+      const cols = splitCSV(line, delimiter);
+
+      // Skip invalid lines
+      if (cols.length < 3) continue; 
+      
+      // Map columns based on your specific CSV structure
+      // 0:CDETAB, 1:CDANN, 2:PPR, 3:NOMF, 4:PRNOMF, 5:SEXE, 6:DatNais, 7:Lieu
+      // 8:EMAIL, 9:grade, 10:TPERS, 11:DatRec, 12:DatService, 13:DatENS, 14:Dept, 15:Dip, 16:Spec
+
+      const ppr = cols[2];
+      if (!ppr) continue; 
+
+      const emp = {
+        etablissement: cols[0],
+        ppr: cols[2],
+        nom: cols[3],
+        prenom: cols[4],
+        sexe: cols[5],
+        date_naissance: parseDate(cols[6]),
+        lieu_naissance: cols[7],
+        email: cols[8],
+        grade: cols[9],
+        type: cols[10], // TPERS
+        date_recrutement: parseDate(cols[11]),
+        date_mise_en_service: parseDate(cols[12]),
+        departement: cols[14], // Uses correct key 'departement'
+        diplome: cols[15],
+        specialite: cols[16]
+      };
+
+      try {
+        await pool.query(`
+          INSERT INTO employees (
+            etablissement, ppr, nom, prenom, sexe, date_naissance, lieu_naissance, 
+            email, grade, type, date_recrutement, date_mise_en_service, 
+            departement, diplome, specialite
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+          ON CONFLICT (ppr) DO UPDATE SET
+            nom = EXCLUDED.nom,
+            prenom = EXCLUDED.prenom,
+            grade = EXCLUDED.grade,
+            type = EXCLUDED.type,
+            email = EXCLUDED.email,
+            departement = EXCLUDED.departement,
+            diplome = EXCLUDED.diplome,
+            specialite = EXCLUDED.specialite,
+            date_recrutement = EXCLUDED.date_recrutement
+        `, [
+          emp.etablissement, emp.ppr, emp.nom, emp.prenom, emp.sexe, 
+          emp.date_naissance, emp.lieu_naissance, emp.email, emp.grade, 
+          emp.type, emp.date_recrutement, emp.date_mise_en_service,
+          emp.departement, emp.diplome, emp.specialite
+        ]);
+        successCount++;
+      } catch (err) {
+        console.error(`Row ${i} Error:`, err.message);
+        errorCount++;
+        if (errorsDetails.length < 10) errorsDetails.push(`Ligne ${i}: ${err.message}`);
+      }
+    }
+
+    fs.unlinkSync(filePath); // Cleanup file
+    res.json({ message: 'Import processed', success: successCount, errors: errorCount, details: errorsDetails });
+
+  } catch (error) {
+    console.error('Import error:', error);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    res.status(500).json({ error: 'Failed to process file' });
+  }
+});
 
 // GET ALL EMPLOYEES
 router.get('/employees', authenticateAdmin, requireRH, async (req, res) => {
@@ -787,7 +933,7 @@ router.get('/employees', authenticateAdmin, requireRH, async (req, res) => {
     }
 
     if (search) {
-      query += ` AND (nom ILIKE $${paramIndex} OR prenom ILIKE $${paramIndex} OR cin ILIKE $${paramIndex})`;
+      query += ` AND (nom ILIKE $${paramIndex} OR prenom ILIKE $${paramIndex} OR ppr ILIKE $${paramIndex})`;
       params.push(`%${search}%`);
       paramIndex++;
     }
@@ -805,24 +951,25 @@ router.get('/employees', authenticateAdmin, requireRH, async (req, res) => {
 // ADD NEW EMPLOYEE
 router.post('/employees', authenticateAdmin, requireRH, async (req, res) => {
   try {
-    const { cin, nom, prenom, email, phone, type, department, grade, date_embauche, status } = req.body;
+    const { ppr, nom, prenom, email, phone, type, department, grade, date_embauche, status } = req.body;
 
-    if (!cin || !nom || !prenom || !type) {
+    if (!ppr || !nom || !prenom || !type) {
       return res.status(400).json({ error: 'Champs obligatoires manquants' });
     }
 
+    // Mapping 'department' from frontend to 'departement' in DB
     const result = await pool.query(
       `INSERT INTO employees 
-       (cin, nom, prenom, email, phone, type, department, grade, date_embauche, status)
+       (ppr, nom, prenom, email, phone, type, departement, grade, date_recrutement, status)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
-      [cin, nom, prenom, email, phone, type, department, grade, date_embauche, status || 'ACTIF']
+      [ppr, nom, prenom, email, phone, type, department, grade, date_embauche, status || 'ACTIF']
     );
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
     if (error.code === '23505') {
-      return res.status(400).json({ error: 'Ce CIN existe déjà.' });
+      return res.status(400).json({ error: 'Ce PPR existe déjà.' });
     }
     console.error('Add employee error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -833,15 +980,16 @@ router.post('/employees', authenticateAdmin, requireRH, async (req, res) => {
 router.put('/employees/:id', authenticateAdmin, requireRH, async (req, res) => {
   try {
     const { id } = req.params;
-    const { nom, prenom, email, phone, type, department, grade, status, date_embauche } = req.body;
+    const { nom, prenom, email, phone, type, department, grade, status, date_embauche, diplome, specialite } = req.body;
 
     const result = await pool.query(
       `UPDATE employees 
        SET nom = $1, prenom = $2, email = $3, phone = $4, type = $5, 
-           department = $6, grade = $7, status = $8, date_embauche = $9
-       WHERE id = $10
+           departement = $6, grade = $7, status = $8, date_recrutement = $9,
+           diplome = $10, specialite = $11
+       WHERE id = $12
        RETURNING *`,
-      [nom, prenom, email, phone, type, department, grade, status, date_embauche, id]
+      [nom, prenom, email, phone, type, department, grade, status, date_embauche, diplome, specialite, id]
     );
 
     if (result.rows.length === 0) {

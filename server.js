@@ -1807,7 +1807,35 @@ app.post('/api/store-document-signature', authenticateToken, async (req, res) =>
   }
 });
 
+// ==========================================
+// RESTORED MIDDLEWARE
+// ==========================================
 
+// Admin authentication middleware
+// This verifies the token issued by your new login system
+const authenticateAdmin = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ error: 'Admin access token required' });
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(403).json({ error: 'Invalid admin token' });
+    }
+    
+    // Check if the user is an admin
+    // Your new login system sets isAdmin: true in the token
+    if (!decoded.isAdmin && decoded.role !== 'SUPER_ADMIN' && decoded.role !== 'RH_MANAGER') {
+      return res.status(403).json({ error: 'Access denied: Admin privileges required' });
+    }
+    
+    req.admin = decoded;
+    next();
+  });
+};
 // In your AdministrativeSituation.jsx or wherever you generate the PDF
 
 const downloadEnrollmentCertificate = async () => {
@@ -2790,102 +2818,102 @@ app.listen(PORT, () => {
 // Add these admin authentication routes to your server.js file
 
 // Admin credentials (in production, store these securely in environment variables)
-const ADMIN_CREDENTIALS = {
-  username: process.env.ADMIN_USERNAME || 'admin',
-  password: process.env.ADMIN_PASSWORD || 'admin123'
-};
+// const ADMIN_CREDENTIALS = {
+//   username: process.env.ADMIN_USERNAME || 'admin',
+//   password: process.env.ADMIN_PASSWORD || 'admin123'
+// };
 
 // Admin authentication middleware
-const authenticateAdmin = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+// const authenticateAdmin = (req, res, next) => {
+//   const authHeader = req.headers['authorization'];
+//   const token = authHeader && authHeader.split(' ')[1];
 
-  if (!token) {
-    return res.status(401).json({ error: 'Admin access token required' });
-  }
+//   if (!token) {
+//     return res.status(401).json({ error: 'Admin access token required' });
+//   }
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, admin) => {
-    if (err || !admin.isAdmin) {
-      return res.status(403).json({ error: 'Invalid admin token' });
-    }
-    req.admin = admin;
-    next();
-  });
-};
+//   jwt.verify(token, process.env.JWT_SECRET, (err, admin) => {
+//     if (err || !admin.isAdmin) {
+//       return res.status(403).json({ error: 'Invalid admin token' });
+//     }
+//     req.admin = admin;
+//     next();
+//   });
+// };
 
 // Admin login endpoint
-app.post('/admin/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
+// app.post('/admin/login', async (req, res) => {
+//   try {
+//     const { username, password } = req.body;
     
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
-    }
+//     if (!username || !password) {
+//       return res.status(400).json({ error: 'Username and password are required' });
+//     }
     
-    // Check admin credentials
-    if (username === ADMIN_CREDENTIALS.username && password === ADMIN_CREDENTIALS.password) {
-      // Generate admin JWT token
-      const adminToken = jwt.sign(
-        { 
-          username: username,
-          isAdmin: true,
-          loginTime: new Date().toISOString()
-        },
-        process.env.JWT_SECRET,
-        { expiresIn: '8h' } // Admin sessions expire in 8 hours
-      );
+//     // Check admin credentials
+//     if (username === ADMIN_CREDENTIALS.username && password === ADMIN_CREDENTIALS.password) {
+//       // Generate admin JWT token
+//       const adminToken = jwt.sign(
+//         { 
+//           username: username,
+//           isAdmin: true,
+//           loginTime: new Date().toISOString()
+//         },
+//         process.env.JWT_SECRET,
+//         { expiresIn: '8h' } // Admin sessions expire in 8 hours
+//       );
       
-      // Log admin login
-      console.log(`Admin login: ${username} at ${new Date().toISOString()}`);
+//       // Log admin login
+//       console.log(`Admin login: ${username} at ${new Date().toISOString()}`);
       
-      res.json({
-        success: true,
-        token: adminToken,
-        message: 'Admin login successful',
-        expiresIn: '8h'
-      });
+//       res.json({
+//         success: true,
+//         token: adminToken,
+//         message: 'Admin login successful',
+//         expiresIn: '8h'
+//       });
       
-    } else {
-      // Log failed login attempt
-      console.log(`Failed admin login attempt: ${username} at ${new Date().toISOString()}`);
+//     } else {
+//       // Log failed login attempt
+//       console.log(`Failed admin login attempt: ${username} at ${new Date().toISOString()}`);
       
-      res.status(401).json({ 
-        error: 'Invalid admin credentials',
-        message: 'Please check your username and password'
-      });
-    }
+//       res.status(401).json({ 
+//         error: 'Invalid admin credentials',
+//         message: 'Please check your username and password'
+//       });
+//     }
     
-  } catch (error) {
-    console.error('Admin login error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+//   } catch (error) {
+//     console.error('Admin login error:', error);
+//     res.status(500).json({ error: 'Internal server error' });
+//   }
+// });
 
 // Admin logout endpoint
-app.post('/admin/logout', authenticateAdmin, (req, res) => {
-  // In a real application, you might want to blacklist the token
-  console.log(`Admin logout: ${req.admin.username} at ${new Date().toISOString()}`);
-  res.json({ success: true, message: 'Logged out successfully' });
-});
+// app.post('/admin/logout', authenticateAdmin, (req, res) => {
+//   // In a real application, you might want to blacklist the token
+//   console.log(`Admin logout: ${req.admin.username} at ${new Date().toISOString()}`);
+//   res.json({ success: true, message: 'Logged out successfully' });
+// });
 
 // Verify admin token endpoint
-app.get('/admin/verify', authenticateAdmin, (req, res) => {
-  res.json({ 
-    valid: true, 
-    admin: {
-      username: req.admin.username,
-      loginTime: req.admin.loginTime
-    }
-  });
-});
+// app.get('/admin/verify', authenticateAdmin, (req, res) => {
+//   res.json({ 
+//     valid: true, 
+//     admin: {
+//       username: req.admin.username,
+//       loginTime: req.admin.loginTime
+//     }
+//   });
+// });
 
 // Update all existing admin routes to use authentication
 // Replace the existing admin routes with these authenticated versions:
 
 // Serve admin dashboard (no auth needed for the HTML file)
-app.get('/admin', (req, res) => {
-  res.sendFile(path.join(__dirname, 'admin.html'));
-});
+// app.get('/admin', (req, res) => {
+//   res.sendFile(path.join(__dirname, 'admin.html'));
+// });
 
 // Add these routes to your server.js or create a new admin-modules-routes.js file
 
