@@ -4,7 +4,8 @@ import {
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Dialog, DialogTitle, DialogContent, DialogActions,
   FormControl, InputLabel, Select, MenuItem, Chip, IconButton,
-  Alert, InputAdornment, LinearProgress
+  Alert, InputAdornment, LinearProgress, Card, CardContent,
+  Menu, ListItemIcon, ListItemText, Divider
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -13,11 +14,21 @@ import {
   Search as SearchIcon,
   Badge as BadgeIcon,
   UploadFile as UploadIcon,
-  Refresh as RefreshIcon
+  Refresh as RefreshIcon,
+  Group as GroupIcon,
+  School as SchoolIcon,
+  AdminPanelSettings as AdminIcon,
+  Business as BuildingIcon,
+  Print as PrintIcon,
+  Description as DescriptionIcon
 } from '@mui/icons-material';
+// Ensure adminAPI is imported correctly from your services
+import { adminAPI } from '../../services/api';
 
 const EmployeeManagement = () => {
+  // --- STATE ---
   const [employees, setEmployees] = useState([]);
+  const [stats, setStats] = useState({ total: 0, professors: 0, admins: 0, departments: 0 });
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [filters, setFilters] = useState({ search: '', type: '' });
@@ -33,6 +44,10 @@ const EmployeeManagement = () => {
     date_recrutement: '', status: 'ACTIF'
   });
 
+  // Document Menu State
+  const [printMenuAnchor, setPrintMenuAnchor] = useState(null);
+  const [selectedEmpForDoc, setSelectedEmpForDoc] = useState(null);
+
   const [notification, setNotification] = useState({ show: false, message: '', type: 'success' });
 
   // --- HELPER: GET TOKEN ---
@@ -45,8 +60,8 @@ const EmployeeManagement = () => {
     setTimeout(() => setNotification({ show: false, message: '', type: 'success' }), 5000);
   };
 
-  // --- LOAD EMPLOYEES ---
-  const loadEmployees = async () => {
+  // --- LOAD DATA ---
+  const loadData = async () => {
     setLoading(true);
     try {
       const token = getAdminToken();
@@ -55,17 +70,33 @@ const EmployeeManagement = () => {
         return;
       }
 
+      // 1. Fetch Employees List
       const queryParams = new URLSearchParams(filters).toString();
-      const response = await fetch(`http://localhost:3000/admin/employees?${queryParams}`, {
+      const listResponse = await fetch(`http://localhost:3000/admin/employees?${queryParams}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       
-      if (response.ok) {
-        const data = await response.json();
+      if (listResponse.ok) {
+        const data = await listResponse.json();
         setEmployees(data);
       }
+
+      // 2. Fetch Stats (Try/Catch to not block the UI if stats API fails)
+      try {
+        // If you implemented the stats endpoint in admin-routes, fetch it here
+        const statsResponse = await fetch('http://localhost:3000/admin/employees/stats', {
+           headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (statsResponse.ok) {
+           const statsData = await statsResponse.json();
+           setStats(statsData);
+        }
+      } catch (statError) {
+        console.warn("Could not load stats", statError);
+      }
+
     } catch (error) {
-      console.error('Error loading employees:', error);
+      console.error('Error loading data:', error);
       showNotification('Erreur de connexion serveur', 'error');
     } finally {
       setLoading(false);
@@ -73,7 +104,7 @@ const EmployeeManagement = () => {
   };
 
   useEffect(() => {
-    loadEmployees();
+    loadData();
   }, [filters.type]);
 
   // --- FILE UPLOAD (CSV/EXCEL) ---
@@ -94,9 +125,7 @@ const EmployeeManagement = () => {
     try {
       const response = await fetch('http://localhost:3000/admin/employees/import', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
+        headers: { 'Authorization': `Bearer ${token}` },
         body: formDataUpload
       });
 
@@ -105,11 +134,8 @@ const EmployeeManagement = () => {
         let msg = `Import réussi ! ${data.success} ajoutés.`;
         if (data.errors > 0) msg += ` (${data.errors} erreurs)`;
         showNotification(msg, data.errors > 0 ? 'warning' : 'success');
-        
-        // Afficher les erreurs détaillées dans la console
         if (data.details) console.warn("Détails des erreurs d'import :", data.details);
-
-        loadEmployees();
+        loadData();
       } else {
         showNotification('Échec de l\'import : ' + (data.error || 'Erreur inconnue'), 'error');
       }
@@ -180,7 +206,7 @@ const EmployeeManagement = () => {
       if (response.ok) {
         showNotification(editMode ? 'Employé mis à jour' : 'Employé ajouté', 'success');
         setOpen(false);
-        loadEmployees();
+        loadData();
       } else {
         const data = await response.json();
         showNotification(data.error || 'Erreur lors de l\'enregistrement', 'error');
@@ -201,7 +227,7 @@ const EmployeeManagement = () => {
 
         if (response.ok) {
           showNotification('Employé supprimé', 'success');
-          loadEmployees();
+          loadData();
         }
       } catch (error) {
         showNotification('Erreur lors de la suppression', 'error');
@@ -209,12 +235,165 @@ const EmployeeManagement = () => {
     }
   };
 
+  // --- DOCUMENT PRINT HANDLERS ---
+  const handleOpenPrintMenu = (event, employee) => {
+    setPrintMenuAnchor(event.currentTarget);
+    setSelectedEmpForDoc(employee);
+  };
+
+  const handleClosePrintMenu = () => {
+    setPrintMenuAnchor(null);
+    setSelectedEmpForDoc(null);
+  };
+
+  const generateAttestation = () => {
+    if (!selectedEmpForDoc) return;
+    
+    const emp = selectedEmpForDoc;
+    const today = new Date().toLocaleDateString('fr-FR');
+    const recruitDate = emp.date_recrutement 
+      ? new Date(emp.date_recrutement).toLocaleDateString('fr-FR') 
+      : '..................';
+
+    // Create a printable window
+    const printWindow = window.open('', '_blank', 'width=800,height=900');
+    
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Attestation de Travail - ${emp.nom}</title>
+        <style>
+          body { font-family: 'Times New Roman', serif; padding: 40px; color: #000; }
+          .container { max-width: 800px; margin: 0 auto; }
+          .header { text-align: center; margin-bottom: 50px; font-weight: bold; text-transform: uppercase; }
+          .header h3 { margin: 5px 0; font-size: 16px; }
+          .title { text-align: center; text-decoration: underline; margin: 50px 0; font-size: 24px; font-weight: bold; text-transform: uppercase; }
+          .content { font-size: 18px; line-height: 1.8; text-align: justify; margin-bottom: 60px; }
+          .emp-name { text-align: center; font-weight: bold; font-size: 20px; margin: 20px 0; text-transform: uppercase; }
+          .info-block { margin: 20px 40px; }
+          .footer { text-align: right; font-size: 18px; margin-top: 80px; }
+          .signature { margin-top: 30px; font-weight: bold; text-align: right; margin-right: 50px; }
+          @media print {
+            @page { margin: 2cm; }
+            body { -webkit-print-color-adjust: exact; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h3>Royaume du Maroc</h3>
+            <h3>Université Hassan 1er</h3>
+            <h3>Faculté des Sciences et Techniques - Settat</h3>
+          </div>
+
+          <div class="title">Attestation de Travail</div>
+
+          <div class="content">
+            <p>Le Doyen de la Faculté des Sciences et Techniques de Settat atteste par la présente que :</p>
+            
+            <div class="emp-name">
+              M/Mme ${emp.nom} ${emp.prenom}
+            </div>
+
+            <div class="info-block">
+              <p><strong>Numéro de PPR :</strong> ${emp.ppr}</p>
+              <p><strong>Grade :</strong> ${emp.grade || emp.type}</p>
+              <p><strong>Département :</strong> ${emp.departement || '..................'}</p>
+            </div>
+
+            <p>
+              Est fonctionnaire titulaire au sein de notre établissement depuis le <strong>${recruitDate}</strong> et continue d'exercer ses fonctions à ce jour.
+            </p>
+
+            <p>
+              Cette attestation est délivrée à l'intéressé(e) sur sa demande pour servir et valoir ce que de droit.
+            </p>
+          </div>
+
+          <div class="footer">
+            <p>Fait à Settat, le ${today}</p>
+            <div class="signature">
+              <p>Le Doyen</p>
+              <br/><br/>
+              <p style="font-size: 14px; font-weight: normal; font-style: italic;">(Signature et Cachet)</p>
+            </div>
+          </div>
+        </div>
+        <script>
+            window.onload = function() { window.print(); }
+        </script>
+      </body>
+      </html>
+    `;
+
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
+    handleClosePrintMenu();
+  };
+
+  // --- STAT CARD COMPONENT ---
+  const StatCard = ({ title, value, icon, color }) => (
+    <Card sx={{ height: '100%', bgcolor: color, color: 'white', position: 'relative', overflow: 'hidden' }}>
+      <CardContent sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Box sx={{ zIndex: 1 }}>
+          <Typography variant="overline" sx={{ opacity: 0.9, fontSize: '0.75rem', fontWeight: 'bold' }}>
+            {title}
+          </Typography>
+          <Typography variant="h4" fontWeight="bold">
+            {value}
+          </Typography>
+        </Box>
+        <Box sx={{ p: 1, bgcolor: 'rgba(255,255,255,0.2)', borderRadius: '50%' }}>
+          {icon}
+        </Box>
+      </CardContent>
+    </Card>
+  );
+
   return (
     <Box sx={{ p: 3 }}>
       <Typography variant="h4" sx={{ mb: 4, fontWeight: 'bold', color: '#1a237e' }}>
         <BadgeIcon sx={{ fontSize: 35, mr: 2, verticalAlign: 'bottom' }} />
         Gestion des Ressources Humaines
       </Typography>
+
+      {/* --- STATISTICS SECTION --- */}
+      <Grid container spacing={3} sx={{ mb: 4 }}>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard 
+            title="Total Employés" 
+            value={stats.total} 
+            icon={<GroupIcon sx={{ fontSize: 30 }} />} 
+            color="#1a237e" 
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard 
+            title="Professeurs" 
+            value={stats.professors} 
+            icon={<SchoolIcon sx={{ fontSize: 30 }} />} 
+            color="#2e7d32" 
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard 
+            title="Administratifs" 
+            value={stats.admins} 
+            icon={<AdminIcon sx={{ fontSize: 30 }} />} 
+            color="#ed6c02" 
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard 
+            title="Départements" 
+            value={stats.departments} 
+            icon={<BuildingIcon sx={{ fontSize: 30 }} />} 
+            color="#9c27b0" 
+          />
+        </Grid>
+      </Grid>
 
       {/* Action Bar */}
       <Paper sx={{ p: 2, mb: 3 }}>
@@ -230,7 +409,7 @@ const EmployeeManagement = () => {
               InputProps={{
                 endAdornment: (
                   <InputAdornment position="end">
-                    <IconButton onClick={loadEmployees}><SearchIcon /></IconButton>
+                    <IconButton onClick={loadData}><SearchIcon /></IconButton>
                   </InputAdornment>
                 ),
               }}
@@ -271,7 +450,7 @@ const EmployeeManagement = () => {
             >
               Nouveau
             </Button>
-            <Button variant="outlined" onClick={loadEmployees}>
+            <Button variant="outlined" onClick={loadData}>
               <RefreshIcon />
             </Button>
           </Grid>
@@ -329,9 +508,21 @@ const EmployeeManagement = () => {
                   <TableCell>{emp.email}</TableCell>
                   <TableCell>{emp.departement || '-'}</TableCell>
                   <TableCell align="center">
+                    {/* PRINT ACTION */}
+                    <IconButton 
+                      color="default" 
+                      title="Documents"
+                      onClick={(e) => handleOpenPrintMenu(e, emp)}
+                    >
+                      <PrintIcon />
+                    </IconButton>
+
+                    {/* EDIT ACTION */}
                     <IconButton color="primary" onClick={() => handleOpenDialog(emp)}>
                       <EditIcon />
                     </IconButton>
+
+                    {/* DELETE ACTION */}
                     <IconButton color="error" onClick={() => handleDelete(emp.id)}>
                       <DeleteIcon />
                     </IconButton>
@@ -342,6 +533,24 @@ const EmployeeManagement = () => {
           </TableBody>
         </Table>
       </TableContainer>
+
+      {/* DOCUMENT MENU */}
+      <Menu
+        anchorEl={printMenuAnchor}
+        open={Boolean(printMenuAnchor)}
+        onClose={handleClosePrintMenu}
+      >
+        <MenuItem disabled sx={{ opacity: 1, fontWeight: 'bold', color: 'black' }}>
+           Documents disponibles
+        </MenuItem>
+        <Divider />
+        <MenuItem onClick={generateAttestation}>
+          <ListItemIcon>
+            <DescriptionIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>Attestation de Travail</ListItemText>
+        </MenuItem>
+      </Menu>
 
       {/* Add/Edit Dialog */}
       <Dialog open={open} onClose={() => setOpen(false)} maxWidth="md" fullWidth>

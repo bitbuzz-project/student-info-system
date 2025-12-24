@@ -198,6 +198,11 @@ export const adminAPI = {
     const response = await api.get(`/admin/laureats/student/${codEtu}`);
     return response.data;
   },
+  // Add this new function:
+  getEmployeeStats: async () => {
+    const response = await api.get('/admin/employees/stats');
+    return response.data;
+  },
   // --- RH MANAGEMENT (Employees) ---
   getEmployees: async (filters = {}) => {
     const params = new URLSearchParams();

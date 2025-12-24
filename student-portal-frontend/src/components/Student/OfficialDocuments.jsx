@@ -136,16 +136,34 @@ const OfficialDocuments = () => {
     }
   };
 
-  const processDocumentsData = (rawData) => {
+// Find this function inside OfficialDocuments.jsx
+const processDocumentsData = (rawData) => {
     const processedData = {};
     const availableSemestersSet = new Set();
     
+    // 1. Iterate over whatever keys the backend sent (e.g., "S1", "S2")
     for (const semesterCode in rawData) {
       if (rawData.hasOwnProperty(semesterCode)) {
         const semesterData = rawData[semesterCode];
         const modulesMap = new Map();
         
         semesterData.subjects.forEach(subject => {
+          // --- FIX START: Handle Yearly Elements ---
+          const isYearly = subject.element_type === 'ANNEE' || 
+                           (subject.lib_elp && subject.lib_elp.toLowerCase().includes('année')) ||
+                           (subject.cod_elp && subject.cod_elp.includes('0A')); // Common pattern for years like JLAP0A13
+
+          // If it's a yearly result, we might want to store it but NOT treat it as a module for the grid
+          // For now, let's assign it a special "display_semester" so it doesn't trigger the warning
+          let displaySem = semesterCode;
+          
+          if (isYearly) {
+             displaySem = 'Annuel'; // Special bucket
+          } else if (subject.semester_number) {
+             displaySem = `S${subject.semester_number}`;
+          }
+          // --- FIX END ---
+
           const currentGrade = parseFloat(subject.not_elp);
           const existingModule = modulesMap.get(subject.cod_elp);
           
@@ -157,9 +175,8 @@ const OfficialDocuments = () => {
             modulesMap.set(subject.cod_elp, { 
               ...subject, 
               is_passed: parseFloat(subject.not_elp) >= 10,
-              display_semester: subject.semester_number ? `S${subject.semester_number}` : 
-                              subject.lib_elp.includes('année') || subject.lib_elp.includes('Année') ? 
-                              subject.lib_elp : semesterCode
+              display_semester: displaySem, // Use our safe value
+              is_year_result: isYearly      // Flag for UI
             });
           }
         });

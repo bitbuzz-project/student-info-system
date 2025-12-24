@@ -823,6 +823,7 @@ const splitCSV = (str, delimiter) => {
   return result;
 };
 
+
 // IMPORT EMPLOYEES (CSV/Excel)
 router.post('/employees/import', authenticateAdmin, requireRH, upload.single('file'), async (req, res) => {
   if (!req.file) {
@@ -1011,6 +1012,36 @@ router.delete('/employees/:id', authenticateAdmin, requireRH, async (req, res) =
     res.json({ message: 'Employé supprimé avec succès' });
   } catch (error) {
     console.error('Delete employee error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+// GET EMPLOYEE STATISTICS
+router.get('/employees/stats', authenticateAdmin, requireRH, async (req, res) => {
+  try {
+    const totalQuery = pool.query('SELECT COUNT(*) as count FROM employees');
+    const typeQuery = pool.query('SELECT type, COUNT(*) as count FROM employees GROUP BY type');
+    const activeQuery = pool.query("SELECT COUNT(*) as count FROM employees WHERE status = 'ACTIF'");
+    const deptQuery = pool.query('SELECT COUNT(DISTINCT departement) as count FROM employees');
+
+    const [total, byType, active, depts] = await Promise.all([
+        totalQuery, typeQuery, activeQuery, deptQuery
+    ]);
+
+    // Format type stats (e.g., { PROF: 10, ADMINISTRATIF: 5 })
+    const typeStats = byType.rows.reduce((acc, row) => {
+        acc[row.type] = parseInt(row.count);
+        return acc;
+    }, {});
+
+    res.json({
+      total: parseInt(total.rows[0].count),
+      professors: typeStats['PROF'] || 0,
+      admins: typeStats['Administratif'] || 0,
+      active: parseInt(active.rows[0].count),
+      departments: parseInt(depts.rows[0].count)
+    });
+  } catch (error) {
+    console.error('Error getting employee stats:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

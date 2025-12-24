@@ -47,7 +47,7 @@ const oracleConfig = {
 };
 
 // ==========================================
-// 1. SYNC LAUREATS (FIRST PRIORITY)
+// 1. SYNC LAUREATS
 // ==========================================
 async function syncLaureats(oracleConnection, pgClient) {
   logger.info('=====================================');
@@ -65,7 +65,7 @@ async function syncLaureats(oracleConnection, pgClient) {
       cod_anu VARCHAR(4),
       cod_vrs_vet VARCHAR(10),
       cod_dip VARCHAR(20),
-      lib_dip VARCHAR(200),  -- NEW COLUMN
+      lib_dip VARCHAR(200),
       cod_uti VARCHAR(50),
       dat_cre_iae TIMESTAMP,
       nbr_ins_cyc INTEGER,
@@ -95,7 +95,6 @@ async function syncLaureats(oracleConnection, pgClient) {
   for (const year of yearsToSync) {
     logger.info(`   Processing year ${year}...`);
     
-    // Updated query with LIB_DIP join and fix_encoding
     const query = `
       SELECT 
         ind.COD_ETU,
@@ -146,8 +145,6 @@ async function syncLaureats(oracleConnection, pgClient) {
 
     const result = await oracleConnection.execute(query, [year], { outFormat: oracledb.OUT_FORMAT_OBJECT });
     
-    logger.info(`   Found ${result.rows.length} laureats for ${year}`);
-
     for (const row of result.rows) {
       await pgClient.query(`
         INSERT INTO laureats (
@@ -177,26 +174,14 @@ async function syncLaureats(oracleConnection, pgClient) {
     }
   }
   
-  logger.info(`✓ Laureats sync completed: ${totalProcessed} records processed`);
+  logger.info(`✓ Laureats sync completed: ${totalProcessed} records`);
 }
 
 // ==========================================
-// 2. QUERY DEFINITIONS & HELPERS
+// 2. QUERY DEFINITIONS FOR STRUCTURE
 // ==========================================
 
 const ENHANCED_ELEMENT_QUERY = `
-  WITH EFFECTIVE_NEL AS (
-    SELECT 
-      COD_ELP, 
-      COD_NEL,
-      TO_NUMBER(SUBSTR(COD_NEL, 3, 2)) + 
-        CASE 
-          WHEN SUBSTR(COD_ELP, 1, 2) IN ('AI', 'EI', 'GG', 'GL') THEN 4 
-          ELSE 0 
-        END AS EFCTV_NEL
-    FROM ELEMENT_PEDAGOGI
-    WHERE COD_NEL LIKE 'SM%'
-  )
   SELECT 
     e.COD_ELP, 
     e.COD_CMP, 
@@ -204,21 +189,23 @@ const ENHANCED_ELEMENT_QUERY = `
     e.COD_PEL, 
     e.LIB_ELP, 
     e.LIC_ELP, 
-    fix_encoding(e.LIB_ELP_ARB) AS LIB_ELP_ARB,
-    efn.EFCTV_NEL
+    fix_encoding(e.LIB_ELP_ARB) AS LIB_ELP_ARB
   FROM ELEMENT_PEDAGOGI e 
-  LEFT JOIN EFFECTIVE_NEL efn ON e.COD_ELP = efn.COD_ELP
-  WHERE e.COD_CMP = 'FJP'
+  WHERE e.COD_CMP LIKE 'FJP'
   ORDER BY e.COD_PEL, e.COD_NEL, e.COD_ELP
 `;
 
 const ELEMENT_HIERARCHY_QUERY = `
-SELECT 
-  COD_ELP_PERE,
-  COD_ELP_FILS
-FROM ELP_REGROUPE_ELP 
-WHERE COD_ELP_PERE LIKE 'JL%' OR COD_ELP_PERE LIKE 'JF%'
-ORDER BY COD_ELP_PERE, COD_ELP_FILS
+SELECT DISTINCT 
+  r.COD_ELP_PERE,
+  r.COD_ELP_FILS
+FROM ELP_REGROUPE_ELP r
+JOIN ELEMENT_PEDAGOGI p ON r.COD_ELP_PERE = p.COD_ELP
+JOIN ELEMENT_PEDAGOGI c ON r.COD_ELP_FILS = c.COD_ELP
+WHERE p.COD_CMP LIKE 'FJP' 
+  AND c.COD_CMP LIKE 'FJP'
+  AND r.DATE_FERMETURE_LIEN IS NULL
+ORDER BY r.COD_ELP_PERE, r.COD_ELP_FILS
 `;
 
 const VALIDATED_MODULES_QUERY = `
@@ -281,11 +268,12 @@ FROM INS_ADM_ETP iae
 JOIN INDIVIDU i ON iae.COD_IND = i.COD_IND
 JOIN ETAPE e ON iae.COD_ETP = e.COD_ETP
 LEFT JOIN DIPLOME d ON iae.COD_DIP = d.COD_DIP
-WHERE iae.COD_CMP = 'FJP'
+WHERE iae.COD_CMP LIKE 'FJP'
   AND iae.COD_ANU IN (2020, 2021, 2022, 2023, 2024, 2025, 2026)
 ORDER BY i.COD_ETU, iae.COD_ANU DESC
 `;
 
+// 1. UPDATE THE QUERY TO FETCH ARABIC NAME
 const PEDAGOGICAL_SITUATION_QUERY = `
 SELECT DISTINCT 
     COD_ETU AS APOGEE,
@@ -294,6 +282,7 @@ SELECT DISTINCT
     DAA_UNI_CON AS DATE_UNI_CON,
     COD_ELP,
     fix_encoding(LIB_ELP) AS MODULE,
+    fix_encoding(LIB_ELP_ARB) AS MODULE_ARB, -- ADDED THIS
     MAX(ETA_IAE) OVER (
         PARTITION BY COD_IND, COD_ANU, COD_ETP, COD_VRS_VET
     ) AS IA
@@ -302,11 +291,10 @@ FROM IND_CONTRAT_ELP
     JOIN ELEMENT_PEDAGOGI USING (COD_ELP)
     LEFT JOIN INS_ADM_ETP USING (COD_IND, COD_ANU, COD_ETP, COD_VRS_VET)
 WHERE TEM_PRC_ICE = 'N'
-  AND COD_CIP = 'FJP'
+  AND COD_CIP LIKE 'FJP'
 ORDER BY COD_ETU, COD_ELP
 `;
 
-// FIXED: Now uses fix_encoding() for Arabic fields
 const ORACLE_QUERY_ALL_STUDENTS = `
 SELECT DISTINCT
   ind.COD_ETU,
@@ -351,18 +339,96 @@ JOIN INDIVIDU ind ON i.COD_IND = ind.COD_IND
 JOIN ETAPE e ON i.COD_ETP = e.COD_ETP
 WHERE i.ETA_IAE = 'E'
   AND i.COD_ANU IN (2023, 2024, 2025)
-  AND i.COD_CMP = 'FJP'
+  AND i.COD_CMP LIKE 'FJP'
   AND i.TEM_IAE_PRM = 'O'
 ORDER BY i.COD_ANU DESC, ind.COD_ETU
 `;
 
 // ==========================================
-// 3. OTHER SYNC FUNCTIONS
+// 3. HELPERS FOR MAPPING
+// ==========================================
+
+// Helper: Map Oracle COD_NEL to readable Element Type
+function mapElementType(codNel) {
+  if (!codNel) return 'MATIERE'; 
+  const code = codNel.trim().toUpperCase();
+  
+  if (code === 'MOD' || code === 'UE') return 'MODULE';
+  if (code.startsWith('SM') || code === 'SEM') return 'SEMESTRE';
+  if (code.startsWith('AN'))  return 'ANNEE'; 
+  if (code === 'MAT' || code === 'ELP') return 'MATIERE';
+  
+  return 'MATIERE';
+}
+
+// Helper: Extract Semester from codes, name, or DB column
+function determineSemester(codElp, codPel, elementType, libElp) {
+  const code = (codElp || '').trim().toUpperCase();
+  const pel = (codPel || '').trim().toUpperCase();
+  const name = (libElp || '').trim().toUpperCase();
+  
+  // 0. If it's an ANNEE, it shouldn't have a semester
+  if (elementType === 'ANNEE') return null;
+
+  // 1. TRUST THE CODE PATTERN FIRST
+  // JLDN6xxx -> S6 (overrides generic S2)
+  const codePattern = /^(JLDN|JMD|JLD|JL)([1-6])\d+/i;
+  const match = code.match(codePattern);
+  if (match) {
+    return parseInt(match[2]);
+  }
+
+  // 2. CHECK THE NAME (LIB_ELP) FOR "S3", "Semestre 3", etc.
+  // This helps when COD_PEL is generic 'S1' but name says 'S3'
+  // Regex looks for "S3", "SEM 3", "SEMESTRE 3"
+  const namePattern = /(?:^|\s|-)S\s?([1-6])(?:\s|$|-)|SEMESTRE\s?([1-6])/i;
+  const nameMatch = name.match(namePattern);
+  if (nameMatch) {
+    // Group 1 or Group 2 will have the number
+    const sem = parseInt(nameMatch[1] || nameMatch[2]);
+    if (!isNaN(sem)) return sem;
+  }
+
+  // 3. FALLBACK TO COD_PEL
+  // Only use if specific (not generic S1/S2 unless no other choice)
+  // We assume S1/S2 in COD_PEL are correct ONLY if we found no other info
+  if (pel.startsWith('S')) {
+    const parsedSem = parseInt(pel.substring(1));
+    if (!isNaN(parsedSem) && parsedSem > 0 && parsedSem <= 12) {
+      return parsedSem;
+    }
+  }
+
+  // 4. Fallback for Semesters explicitly defined in COD_NEL (e.g. SM06)
+  if (elementType === 'SEMESTRE' && codElp.startsWith('SM')) {
+     const parsed = parseInt(codElp.substring(2)); 
+     if (!isNaN(parsed)) return parsed;
+  }
+
+  return null;
+}
+
+function classifyPedagogicalElement(cod_elp, lib_elp) {
+  const code = (cod_elp || '').toUpperCase();
+  const name = (lib_elp || '').toLowerCase();
+  let level = null;
+  let yearly = false;
+  
+  if (code.includes('1A') || name.includes('premiere')) { level = '1A'; yearly = true; }
+  else if (code.includes('2A') || name.includes('deuxieme')) { level = '2A'; yearly = true; }
+  else if (code.includes('3A') || name.includes('troisieme')) { level = '3A'; yearly = true; }
+  
+  return { academicLevel: level || 'Unknown', isYearlyElement: yearly };
+}
+
+// ==========================================
+// 4. CORE SYNC FUNCTIONS
 // ==========================================
 
 async function syncElementPedagogi(oracleConnection, pgClient) {
-  logger.info('Syncing element pedagogi data with improved semester detection...');
+  logger.info('Syncing element pedagogi data (From ELEMENT_PEDAGOGI)...');
   
+  // 1. Ensure Table Exists
   await pgClient.query(`
     CREATE TABLE IF NOT EXISTS element_pedagogi (
       id SERIAL PRIMARY KEY,
@@ -385,6 +451,7 @@ async function syncElementPedagogi(oracleConnection, pgClient) {
 
   await pgClient.query(`ALTER TABLE element_pedagogi ADD COLUMN IF NOT EXISTS effective_nel INTEGER`);
   
+  // 2. Fetch Data
   const result = await oracleConnection.execute(ENHANCED_ELEMENT_QUERY);
   const elements = result.rows;
   
@@ -394,22 +461,35 @@ async function syncElementPedagogi(oracleConnection, pgClient) {
   let processedCount = 0;
   
   for (const element of elements) {
-    const [cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb, efctv_nel] = element;
-    let elementType = 'MATIERE';
-    let semesterNumber = null;
-    let yearLevel = null;
-    let effectiveNel = efctv_nel;
+    const [cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb] = element;
     
-    if (effectiveNel && effectiveNel >= 1 && effectiveNel <= 12) {
-      semesterNumber = effectiveNel;
-      elementType = cod_nel === 'MOD' ? 'MODULE' : (cod_nel && cod_nel.startsWith('SM') ? 'SEMESTRE' : 'MATIERE');
-    } else {
-       const classInfo = classifyPedagogicalElement(cod_elp, lib_elp);
-       if (classInfo.isYearlyElement) {
-         elementType = 'ANNEE';
-         yearLevel = parseInt(classInfo.academicLevel.replace('A','')) || null;
-       }
+    // --- SMART LOGIC ---
+    let elementType = mapElementType(cod_nel);
+    
+    // Use the updated function that checks LIB_ELP as well
+    let semesterNumber = determineSemester(cod_elp, cod_pel, elementType, lib_elp);
+    
+    // Handle Annual/Year Level
+    let yearLevel = null;
+    if (elementType === 'ANNEE') {
+        const nelDigit = parseInt((cod_nel || '').replace(/\D/g, ''));
+        if (!isNaN(nelDigit)) {
+            yearLevel = nelDigit;
+        } else {
+            const classInfo = classifyPedagogicalElement(cod_elp, lib_elp);
+            if (classInfo.isYearlyElement) {
+                 yearLevel = parseInt(classInfo.academicLevel.replace('A', '')) || null;
+            }
+        }
+    } else if (!semesterNumber && !['MODULE', 'SEMESTRE'].includes(elementType)) {
+        const classInfo = classifyPedagogicalElement(cod_elp, lib_elp);
+        if (classInfo.isYearlyElement) {
+             yearLevel = parseInt(classInfo.academicLevel.replace('A', '')) || null;
+             if (elementType === 'MATIERE') elementType = 'ANNEE'; 
+        }
     }
+
+    const effectiveNel = semesterNumber;
 
     await pgClient.query(`
       INSERT INTO element_pedagogi (
@@ -418,12 +498,19 @@ async function syncElementPedagogi(oracleConnection, pgClient) {
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP)
       ON CONFLICT (cod_elp) DO UPDATE SET
         lib_elp = EXCLUDED.lib_elp,
+        lic_elp = EXCLUDED.lic_elp,
+        lib_elp_arb = EXCLUDED.lib_elp_arb,
+        cod_nel = EXCLUDED.cod_nel,
+        cod_pel = EXCLUDED.cod_pel,
         element_type = EXCLUDED.element_type,
         semester_number = EXCLUDED.semester_number,
         year_level = EXCLUDED.year_level,
         effective_nel = EXCLUDED.effective_nel,
         last_sync = CURRENT_TIMESTAMP
-    `, [cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb, elementType, semesterNumber, yearLevel, effectiveNel]);
+    `, [
+      cod_elp, cod_cmp, cod_nel, cod_pel, lib_elp, lic_elp, lib_elp_arb, 
+      elementType, semesterNumber, yearLevel, effectiveNel
+    ]);
     
     processedCount++;
   }
@@ -433,7 +520,8 @@ async function syncElementPedagogi(oracleConnection, pgClient) {
 }
 
 async function syncElementHierarchy(oracleConnection, pgClient) {
-  logger.info('Syncing element hierarchy...');
+  logger.info('Syncing element hierarchy (From ELP_REGROUPE_ELP)...');
+
   await pgClient.query(`
     CREATE TABLE IF NOT EXISTS element_hierarchy (
       id SERIAL PRIMARY KEY,
@@ -443,18 +531,28 @@ async function syncElementHierarchy(oracleConnection, pgClient) {
       UNIQUE(cod_elp_pere, cod_elp_fils)
     )
   `);
+
   const result = await oracleConnection.execute(ELEMENT_HIERARCHY_QUERY);
   const rows = result.rows;
+  
+  logger.info(`✓ Fetched ${rows.length} parent-child relationships`);
+
   await pgClient.query('BEGIN');
+  let count = 0;
+
   for (const row of rows) {
+    const [pere, fils] = row;
+
     await pgClient.query(`
       INSERT INTO element_hierarchy (cod_elp_pere, cod_elp_fils, last_sync)
       VALUES ($1, $2, CURRENT_TIMESTAMP)
       ON CONFLICT (cod_elp_pere, cod_elp_fils) DO UPDATE SET last_sync = CURRENT_TIMESTAMP
-    `, row);
+    `, [pere, fils]);
+    count++;
   }
+
   await pgClient.query('COMMIT');
-  logger.info(`✓ Hierarchy sync completed: ${rows.length} relationships`);
+  logger.info(`✓ Hierarchy sync completed: ${count} relationships linked`);
 }
 
 async function syncValidatedModules(oracleConnection, pgClient) {
@@ -532,7 +630,6 @@ async function syncAdministrativeSituation(oracleConnection, pgClient) {
   
   await pgClient.query('BEGIN');
   for (const row of rows) {
-    // Correctly mapping indices from query
     await pgClient.query(`
       INSERT INTO administrative_situation (
         cod_etu, cod_anu, cod_etp, lib_etp, lic_etp, cod_vrs_vet, eta_iae,
@@ -541,15 +638,17 @@ async function syncAdministrativeSituation(oracleConnection, pgClient) {
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, CURRENT_TIMESTAMP)
       ON CONFLICT (cod_etu, cod_anu, cod_etp) DO UPDATE SET
         last_sync = CURRENT_TIMESTAMP
-    `, row); // row matches columns exactly 
+    `, row);
   }
   await pgClient.query('COMMIT');
   logger.info(`✓ Administrative situation sync completed: ${rows.length} records`);
 }
 
+// 2. UPDATE THE SYNC FUNCTION
 async function syncPedagogicalSituation(oracleConnection, pgClient) {
   logger.info('Syncing pedagogical situation...');
   
+  // Add lib_elp_arb column to table definition
   await pgClient.query(`
     CREATE TABLE IF NOT EXISTS pedagogical_situation (
       id SERIAL PRIMARY KEY,
@@ -559,6 +658,7 @@ async function syncPedagogicalSituation(oracleConnection, pgClient) {
       daa_uni_con INTEGER,
       cod_elp VARCHAR(20) NOT NULL,
       lib_elp VARCHAR(200),
+      lib_elp_arb VARCHAR(200), -- ADDED COLUMN
       eta_iae VARCHAR(10),
       academic_level VARCHAR(20),
       is_yearly_element BOOLEAN DEFAULT FALSE,
@@ -567,29 +667,34 @@ async function syncPedagogicalSituation(oracleConnection, pgClient) {
     )
   `);
   
+  // Ensure column exists if table was already created
+  await pgClient.query(`ALTER TABLE pedagogical_situation ADD COLUMN IF NOT EXISTS lib_elp_arb VARCHAR(200)`);
+
   const result = await oracleConnection.execute(PEDAGOGICAL_SITUATION_QUERY);
   const rows = result.rows;
   
   await pgClient.query('BEGIN');
   for (const row of rows) {
-    const [apogee, nom, prenom, date_uni_con, cod_elp, module, ia] = row;
+    // Destructure the new column (module_arb is at index 6 now)
+    const [apogee, nom, prenom, date_uni_con, cod_elp, module, module_arb, ia] = row;
     const { academicLevel, isYearlyElement } = classifyPedagogicalElement(cod_elp, module);
     
     await pgClient.query(`
       INSERT INTO pedagogical_situation (
         cod_etu, lib_nom_pat_ind, lib_pr1_ind, daa_uni_con, 
-        cod_elp, lib_elp, eta_iae, academic_level, is_yearly_element, last_sync
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP)
+        cod_elp, lib_elp, lib_elp_arb, eta_iae, academic_level, is_yearly_element, last_sync
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP)
       ON CONFLICT (cod_etu, cod_elp, daa_uni_con) DO UPDATE SET
+        lib_elp_arb = EXCLUDED.lib_elp_arb, -- Update Arabic name
         last_sync = CURRENT_TIMESTAMP
-    `, [apogee, nom, prenom, date_uni_con, cod_elp, module, ia, academicLevel, isYearlyElement]);
+    `, [apogee, nom, prenom, date_uni_con, cod_elp, module, module_arb, ia, academicLevel, isYearlyElement]);
   }
   await pgClient.query('COMMIT');
   logger.info(`✓ Pedagogical situation sync completed: ${rows.length} records`);
 }
 
 // ==========================================
-// 4. SYNC STUDENTS DATA (FIXED ARABIC)
+// 5. SYNC STUDENTS DATA
 // ==========================================
 async function syncStudentsData(oracleConnection, pgClient) {
   logger.info('Syncing students data...');
@@ -638,26 +743,12 @@ async function syncStudentsData(oracleConnection, pgClient) {
   logger.info(`✓ Students sync completed: ${students.length} records`);
 }
 
-// Helpers and Empty functions for now to keep structure
-async function syncGradesData(oracleConnection, pgClient) { logger.info('Syncing Grades...'); /* Implementation from previous file */ }
-async function syncOfficialDocuments(oracleConnection, pgClient) { logger.info('Syncing Documents...'); /* Implementation from previous file */ }
+async function syncGradesData(oracleConnection, pgClient) { logger.info('Syncing Grades...'); }
+async function syncOfficialDocuments(oracleConnection, pgClient) { logger.info('Syncing Documents...'); }
 async function syncElementsFromGrades(oracleConnection, pgClient) { return 0; }
 
-function classifyPedagogicalElement(cod_elp, lib_elp) {
-  const code = (cod_elp || '').toUpperCase();
-  const name = (lib_elp || '').toLowerCase();
-  let level = null;
-  let yearly = false;
-  
-  if (code.includes('1A') || name.includes('premiere')) { level = '1A'; yearly = true; }
-  else if (code.includes('2A') || name.includes('deuxieme')) { level = '2A'; yearly = true; }
-  else if (code.includes('3A') || name.includes('troisieme')) { level = '3A'; yearly = true; }
-  
-  return { academicLevel: level || 'Unknown', isYearlyElement: yearly };
-}
-
 // ==========================================
-// 5. MAIN SYNC FUNCTION
+// 6. MAIN SYNC FUNCTION
 // ==========================================
 
 async function syncStudents() {
@@ -670,13 +761,10 @@ async function syncStudents() {
     logger.info('Starting manual sync process...');
     logger.info('=====================================');
     
-    // Connections
     pgClient = await pgPool.connect();
     oracleConnection = await oracledb.getConnection(oracleConfig);
     
-    // --- ORDER OF EXECUTION ---
-    
-    // 1. Laureats (Requested Priority)
+    // 1. Laureats
     await syncLaureats(oracleConnection, pgClient);
     
     // 2. Base Data
@@ -690,8 +778,6 @@ async function syncStudents() {
     
     // 4. Students & Grades
     await syncStudentsData(oracleConnection, pgClient);
-    // await syncGradesData(oracleConnection, pgClient); // Uncomment when full logic included
-    // await syncOfficialDocuments(oracleConnection, pgClient); // Uncomment when full logic included
     
     const endTime = Date.now();
     logger.info(`✓ SYNC COMPLETE in ${Math.round((endTime - startTime) / 1000)}s`);
@@ -706,7 +792,6 @@ async function syncStudents() {
   }
 }
 
-// Manual execution block
 if (require.main === module) {
   syncStudents()
     .then(() => process.exit(0))
@@ -715,5 +800,5 @@ if (require.main === module) {
 
 module.exports = { 
   syncStudents,
-  syncLaureats // Exported so admin route can use it independently
+  syncLaureats
 };
