@@ -33,7 +33,7 @@ import {
   Menu as MenuIcon,
   MoreVert as MoreVertIcon,
   CreditCard as CreditCardIcon, // Icon for card requests
-
+  Groups as GroupsIcon, 
   Home as HomeIcon
 } from '@mui/icons-material';
 import { useAdmin } from '../../contexts/AdminContext';
@@ -41,6 +41,7 @@ import { useNavigate } from 'react-router-dom';
 import ModuleManagement from './ModuleManagement';
 import StudentCardRequests from './StudentCardRequests';
 import EmployeeManagement from './EmployeeManagement';
+import GroupManagement from './GroupManagement';
 
 // Import admin page components (we'll create these next)
 import AdminOverview from './AdminOverview';
@@ -123,6 +124,12 @@ const AdminDashboard = () => {
       color: '#ff9800' // Orange color
     },
     {
+    id: 'groups', // New ID
+    label: 'Gestion des Groupes',
+    icon: <GroupsIcon />,
+    color: '#009688' // Teal color
+  },
+    {
       id: 'sync',
       label: 'Data Synchronization',
       icon: <SyncIcon />,
@@ -162,6 +169,8 @@ const AdminDashboard = () => {
         return <LaureatManagement />;
       case 'card-requests':
         return <StudentCardRequests />;
+        case 'groups':
+      return <GroupManagement />;
       default:
         return <AdminOverview onNavigate={handlePageChange} />;
     }

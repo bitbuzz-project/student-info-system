@@ -238,6 +238,53 @@ router.get('/verify', authenticateAdmin, (req, res) => {
 });
 
 
+// Get all grouping rules
+router.get('/groups/rules', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM grouping_rules ORDER BY module_pattern, group_name');
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Get grouping rules error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Add a new grouping rule
+router.post('/groups/rules', authenticateAdmin, async (req, res) => {
+  try {
+    const { module_pattern, group_name, range_start, range_end } = req.body;
+
+    if (!module_pattern || !group_name || !range_start || !range_end) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO grouping_rules (module_pattern, group_name, range_start, range_end)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [module_pattern.toUpperCase(), group_name, range_start.toUpperCase(), range_end.toUpperCase()]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Add grouping rule error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete a grouping rule
+router.delete('/groups/rules/:id', authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await pool.query('DELETE FROM grouping_rules WHERE id = $1', [id]);
+    res.json({ message: 'Rule deleted successfully' });
+  } catch (error) {
+    console.error('Delete grouping rule error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+
 // ==========================================
 // 4. DASHBOARD & STATS ROUTES
 // ==========================================

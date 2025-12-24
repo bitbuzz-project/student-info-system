@@ -29,9 +29,6 @@ import {
   School as SchoolIcon,
   Refresh as RefreshIcon,
   Assignment as AssignmentIcon,
-  CheckCircle as CheckCircleIcon,
-  Cancel as CancelIcon,
-  Info as InfoIcon,
   CalendarToday as CalendarIcon,
   Timeline as TimelineIcon
 } from '@mui/icons-material';
@@ -94,13 +91,27 @@ const PedagogicalSituation = () => {
         studentAPI.getPedagogicalSituation({ year }),
         studentAPI.getPedagogicalStats()
       ]);
+
+      // Handle Year Sorting and Default Selection
+      let years = situationResponse.available_years || [];
+      // Sort years descending (newest first)
+      years = years.sort((a, b) => parseInt(b) - parseInt(a));
+      setAvailableYears(years);
+
+      // If no year was selected and we have years available, 
+      // set the latest year and RE-FETCH for that specific year to filter
+      if (!year && years.length > 0) {
+        const latestYear = years[0].toString();
+        setSelectedYear(latestYear);
+        // Call recursively for the specific year
+        fetchPedagogicalSituation(latestYear); 
+        return; // Stop processing this generic request
+      }
+
       const cleanData = processSituationData(situationResponse.pedagogical_situation);
       setSituationData(cleanData);
       setStatsData(statsResponse.statistics);
-      setAvailableYears(situationResponse.available_years);
-      if (!year && situationResponse.available_years.length > 0) {
-        setSelectedYear(situationResponse.available_years[0].toString());
-      }
+      
     } catch (err) {
       setError(err.response?.data?.error || 'فشل في تحميل الوضعية البيداغوجية');
     } finally {
@@ -118,7 +129,7 @@ const PedagogicalSituation = () => {
 
   const handleTabChange = (event, newValue) => setTabValue(newValue);
 
-  // --- HELPERS (Colors & Icons) ---
+  // --- HELPERS (Colors) ---
   const getSemesterColor = (semester) => {
     if (semester === 'Unknown' || semester === 'Annuel') return '#8e44ad';
     const colors = { 'S1': '#3498db', 'S2': '#e67e22', 'S3': '#2ecc71', 'S4': '#9b59b6', 'S5': '#e74c3c', 'S6': '#34495e' };
@@ -128,26 +139,12 @@ const PedagogicalSituation = () => {
     const colors = { '1A': '#3498db', '2A': '#e67e22', '3A': '#2ecc71', '4A': '#9b59b6', '5A': '#e74c3c' };
     return colors[level] || '#95a5a6';
   };
-  const getStatusIcon = (status) => {
-    switch (status) {
-      case 'E': return <CheckCircleIcon sx={{ color: '#27ae60', fontSize: 20 }} />;
-      case 'D': return <CancelIcon sx={{ color: '#e74c3c', fontSize: 20 }} />;
-      default: return <InfoIcon sx={{ color: '#95a5a6', fontSize: 20 }} />;
-    }
-  };
-  const getStatusLabel = (status) => {
-    switch (status) {
-      case 'E': return 'Inscrit - مسجل';
-      case 'D': return 'Désinscrit - غير مسجل';
-      default: return status || 'Non défini';
-    }
-  };
   const getAcademicLevelLabel = (level) => {
     const labels = { '1A': 'السنة الأولى', '2A': 'السنة الثانية', '3A': 'السنة الثالثة', '4A': 'السنة الرابعة', '5A': 'السنة الخامسة' };
     return labels[level] || level;
   };
 
-  // --- RENDER FUNCTIONS (Updated with Arabic Name) ---
+  // --- RENDER FUNCTIONS ---
 
   const renderYearlyElements = (yearlyElements) => {
     if (!yearlyElements || Object.keys(yearlyElements).length === 0) {
@@ -172,8 +169,8 @@ const PedagogicalSituation = () => {
                     <TableRow sx={{ bgcolor: '#f8f9fa' }}>
                       <TableCell sx={{ fontWeight: 600 }}>رمز الوحدة</TableCell>
                       <TableCell sx={{ fontWeight: 600 }}>اسم الوحدة/المادة</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>النوع</TableCell>
-                      <TableCell sx={{ fontWeight: 600, textAlign: 'center' }}>الحالة</TableCell>
+                      {/* Removed Type and Status */}
+                      <TableCell sx={{ fontWeight: 600, textAlign: 'center', width: '200px' }}>المجموعة / Group</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -182,19 +179,29 @@ const PedagogicalSituation = () => {
                         <TableCell sx={{ fontFamily: 'monospace', fontWeight: 600 }}>{module.cod_elp}</TableCell>
                         <TableCell sx={{ maxWidth: 350 }}>
                           <Typography variant="body2" sx={{ fontWeight: 500 }}>{module.lib_elp}</Typography>
-                          {/* Display Arabic Name if available */}
                           {module.lib_elp_arb && (
                             <Typography variant="caption" color="text.secondary" display="block" sx={{ fontFamily: 'Amiri, serif', fontSize: '0.85rem', mt: 0.5 }}>
                               {module.lib_elp_arb}
                             </Typography>
                           )}
                         </TableCell>
-                        <TableCell><Chip label="سنة جامعية" color="secondary" size="small" /></TableCell>
+                        {/* Group Display */}
                         <TableCell sx={{ textAlign: 'center' }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1 }}>
-                            {getStatusIcon(module.eta_iae)}
-                            <Typography variant="body2" sx={{ fontWeight: 500 }}>{getStatusLabel(module.eta_iae)}</Typography>
-                          </Box>
+                          {module.group_name ? (
+                            <Chip 
+                              label={module.group_name} 
+                              sx={{ 
+                                bgcolor: '#e0f2f1', 
+                                color: '#00695c', 
+                                fontWeight: 'bold',
+                                fontSize: '0.9rem',
+                                height: '32px',
+                                '& .MuiChip-label': { px: 2 }
+                              }} 
+                            />
+                          ) : (
+                            <Typography variant="caption" color="text.secondary">-</Typography>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -248,8 +255,8 @@ const PedagogicalSituation = () => {
                         <TableRow sx={{ bgcolor: '#f8f9fa' }}>
                           <TableCell sx={{ fontWeight: 600 }}>رمز الوحدة</TableCell>
                           <TableCell sx={{ fontWeight: 600 }}>اسم الوحدة/المادة</TableCell>
-                          <TableCell sx={{ fontWeight: 600 }}>النوع</TableCell>
-                          <TableCell sx={{ fontWeight: 600, textAlign: 'center' }}>الحالة</TableCell>
+                          {/* Removed Type and Status */}
+                          <TableCell sx={{ fontWeight: 600, textAlign: 'center', width: '200px' }}>المجموعة / Group</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
@@ -258,29 +265,29 @@ const PedagogicalSituation = () => {
                             <TableCell sx={{ fontFamily: 'monospace', fontWeight: 600 }}>{module.cod_elp}</TableCell>
                             <TableCell sx={{ maxWidth: 350 }}>
                               <Typography variant="body2" sx={{ fontWeight: 500 }}>{module.lib_elp}</Typography>
-                              {/* Display Arabic Name if available */}
                               {module.lib_elp_arb && (
                                 <Typography variant="caption" color="text.secondary" display="block" sx={{ fontFamily: 'Amiri, serif', fontSize: '0.85rem', mt: 0.5 }}>
                                   {module.lib_elp_arb}
                                 </Typography>
                               )}
                             </TableCell>
-                            <TableCell>
-                              <Chip
-                                label={
-                                  module.element_type === 'ANNEE' || (module.lib_elp || '').toLowerCase().includes('année') ? 'سنة - Year' :
-                                  module.element_type === 'MODULE' ? 'وحدة - Module' :
-                                  module.element_type === 'MATIERE' ? 'مادة - Subject' : 'غير محدد'
-                                }
-                                color={module.element_type === 'ANNEE' ? 'secondary' : module.element_type === 'MODULE' ? 'primary' : 'default'}
-                                size="small"
-                              />
-                            </TableCell>
+                            {/* Group Display */}
                             <TableCell sx={{ textAlign: 'center' }}>
-                              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1 }}>
-                                {getStatusIcon(module.eta_iae)}
-                                <Typography variant="body2" sx={{ fontWeight: 500 }}>{getStatusLabel(module.eta_iae)}</Typography>
-                              </Box>
+                              {module.group_name ? (
+                                <Chip 
+                                  label={module.group_name} 
+                                  sx={{ 
+                                    bgcolor: '#e0f2f1', 
+                                    color: '#00695c', 
+                                    fontWeight: 'bold',
+                                    fontSize: '0.9rem',
+                                    height: '32px',
+                                    '& .MuiChip-label': { px: 2 }
+                                  }} 
+                                />
+                              ) : (
+                                <Typography variant="caption" color="text.secondary">-</Typography>
+                              )}
                             </TableCell>
                           </TableRow>
                         ))}

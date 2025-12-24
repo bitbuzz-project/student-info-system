@@ -143,6 +143,20 @@ async function setupDatabase() {
         COMMENT ON TABLE sync_log IS 'Log of synchronization operations';
       END $$;
     `);
+
+    // NEW: Create grouping_rules table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS grouping_rules (
+        id SERIAL PRIMARY KEY,
+        module_pattern VARCHAR(50) NOT NULL, -- e.g., 'JLAP1%'
+        group_name VARCHAR(50) NOT NULL,     -- e.g., 'Groupe 1'
+        range_start VARCHAR(10) NOT NULL,    -- e.g., 'A'
+        range_end VARCHAR(10) NOT NULL,      -- e.g., 'BEL'
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('✓ Grouping rules table created');
     console.log('✓ Database comments added');
 
     console.log('\n=====================================');

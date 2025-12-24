@@ -4617,11 +4617,56 @@ app.get('/admin/sync-statistics', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+// - Helper function to determine if a name fits in a range
+function isNameInRange(name, start, end) {
+  if (!name) return false;
+  // Trim and uppercase all inputs to ensure safe comparison
+  const n = name.trim().toUpperCase();
+  const s = start.trim().toUpperCase();
+  const e = end.trim().toUpperCase();
 
-// Get student pedagogical situation
+  // 1. Check Lower Bound: Name must be >= Start
+  if (n < s) return false;
+
+  // 2. Check Upper Bound
+  // Logic: "Ends with D" usually implies the block of D is included (D, DA, DB...).
+  // So:
+  // - If Name starts with the End prefix, it's IN (e.g. "DAHMANI" starts with "D" -> Included)
+  // - If Name is strictly less than the End prefix, it's IN (e.g. "CHATTAT" < "D" -> Included)
+  // - Otherwise, it's OUT (e.g. "EZZAHI" > "D" -> Excluded)
+  
+  if (n.startsWith(e)) return true;
+  if (n < e) return true;
+  
+  return false;
+}
+
+// Helper to check module pattern (e.g. "JLAP1%")
+function matchesPattern(code, pattern) {
+  if (!code || !pattern) return false;
+  const c = code.trim().toUpperCase(); // Added trim here too
+  const p = pattern.trim().toUpperCase();
+  
+  if (p.endsWith('%')) {
+    const prefix = p.slice(0, -1);
+    return c.startsWith(prefix);
+  }
+  return c === p;
+}
+// Update the Pedagogical Situation Endpoint
 app.get('/student/pedagogical-situation', authenticateToken, async (req, res) => {
   try {
     const { year } = req.query;
+
+    // 1. Fetch Rules
+    // Ensure the table exists or handle error if setup-database wasn't run
+    let rules = [];
+    try {
+      const rulesResult = await pool.query('SELECT * FROM grouping_rules');
+      rules = rulesResult.rows;
+    } catch (err) {
+      console.warn('Grouping rules table might not exist yet:', err.message);
+    }
 
     let query = `
       SELECT
@@ -4659,7 +4704,7 @@ app.get('/student/pedagogical-situation', authenticateToken, async (req, res) =>
 
     const result = await pool.query(query, params);
 
-    // Organize data by year and then by academic level or semester
+    // Organize data
     const organizedData = {};
     let availableYears = new Set();
 
@@ -4669,44 +4714,51 @@ app.get('/student/pedagogical-situation', authenticateToken, async (req, res) =>
 
       if (!organizedData[year]) {
         organizedData[year] = {
-          yearly_elements: {}, // For 1A, 2A, 3A, etc.
-          semester_elements: {} // For S1, S2, S3, etc.
+          yearly_elements: {}, 
+          semester_elements: {} 
         };
       }
+
+      // --- CALCULATE GROUP ---
+      let assignedGroup = null;
+      const studentName = row.lib_nom_pat_ind || '';
+      
+      const matchedRule = rules.find(rule => 
+        matchesPattern(row.cod_elp, rule.module_pattern) && 
+        isNameInRange(studentName, rule.range_start, rule.range_end)
+      );
+
+      if (matchedRule) {
+        assignedGroup = matchedRule.group_name;
+      }
+      // -----------------------
+
+      const elementData = {
+        cod_elp: row.cod_elp,
+        lib_elp: row.lib_elp,
+        eta_iae: row.eta_iae,
+        academic_level: row.academic_level,
+        is_yearly_element: row.is_yearly_element,
+        element_type: row.element_type,
+        semester_number: row.semester_number,
+        cod_pel: row.cod_pel,
+        cod_nel: row.cod_nel,
+        last_sync: row.last_sync,
+        group_name: assignedGroup
+      };
 
       if (row.is_yearly_element) {
         const academicLevel = row.academic_level || 'Unknown';
         if (!organizedData[year].yearly_elements[academicLevel]) {
           organizedData[year].yearly_elements[academicLevel] = [];
         }
-        organizedData[year].yearly_elements[academicLevel].push({
-          cod_elp: row.cod_elp,
-          lib_elp: row.lib_elp,
-          eta_iae: row.eta_iae,
-          academic_level: row.academic_level,
-          is_yearly_element: row.is_yearly_element,
-          element_type: row.element_type,
-          cod_pel: row.cod_pel,
-          cod_nel: row.cod_nel,
-          last_sync: row.last_sync
-        });
+        organizedData[year].yearly_elements[academicLevel].push(elementData);
       } else {
         const semester = row.semester_number ? `S${row.semester_number}` : 'Unknown';
         if (!organizedData[year].semester_elements[semester]) {
           organizedData[year].semester_elements[semester] = [];
         }
-        organizedData[year].semester_elements[semester].push({
-          cod_elp: row.cod_elp,
-          lib_elp: row.lib_elp,
-          eta_iae: row.eta_iae,
-          academic_level: row.academic_level,
-          is_yearly_element: row.is_yearly_element,
-          element_type: row.element_type,
-          semester_number: row.semester_number,
-          cod_pel: row.cod_pel,
-          cod_nel: row.cod_nel,
-          last_sync: row.last_sync
-        });
+        organizedData[year].semester_elements[semester].push(elementData);
       }
     });
 
