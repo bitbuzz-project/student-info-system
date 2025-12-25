@@ -1,3 +1,8 @@
+/*
+type: uploaded file
+fileName: bitbuzz-project/student-info-system/student-info-system-b858bf5862393e4426ceab7c444160e120be74d4/admin-routes.js
+fullContent:
+*/
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
@@ -24,6 +29,9 @@ const ADMIN_CREDENTIALS = {
   username: process.env.ADMIN_USERNAME || 'admin',
   password: process.env.ADMIN_PASSWORD || 'admin123'
 };
+
+// --- CONSTANTS ---
+const CURRENT_ACADEMIC_YEAR = '2025'; // 2025-2026
 
 // ==========================================
 // 1. AUTO-INITIALIZATION
@@ -238,16 +246,187 @@ router.get('/verify', authenticateAdmin, (req, res) => {
 });
 
 
-// Get all grouping rules
+// Get all grouping rules with statistics (Current Year Only)
 router.get('/groups/rules', authenticateAdmin, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM grouping_rules ORDER BY module_pattern, group_name');
+    const query = `
+      SELECT 
+        gr.*,
+        (
+          SELECT COUNT(DISTINCT s.cod_etu)
+          FROM students s
+          JOIN grades g ON s.cod_etu = g.cod_etu
+          WHERE 
+            g.cod_elp ILIKE gr.module_pattern
+            AND g.cod_anu = $1  -- Current Academic Year
+            AND s.lib_nom_pat_ind >= gr.range_start
+            AND s.lib_nom_pat_ind <= (gr.range_end || 'ZZZZZZ')
+        ) as student_count
+      FROM grouping_rules gr
+      ORDER BY gr.module_pattern, gr.group_name
+    `;
+    const result = await pool.query(query, [CURRENT_ACADEMIC_YEAR]);
     res.json(result.rows);
   } catch (error) {
     console.error('Get grouping rules error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// Get unique students for a specific grouping rule (FIXED DUPLICATES & YEAR)
+router.get('/groups/rules/:id/students', authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // 1. Get the rule details
+    const ruleResult = await pool.query('SELECT * FROM grouping_rules WHERE id = $1', [id]);
+    
+    if (ruleResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Rule not found' });
+    }
+
+    const rule = ruleResult.rows[0];
+
+    // 2. Find matching unique students for current year
+    const studentsQuery = `
+      WITH unique_students AS (
+        SELECT DISTINCT ON (s.cod_etu) 
+          s.cod_etu, s.lib_nom_pat_ind, s.lib_pr1_ind, s.lib_etp, s.cin_ind, s.cod_anu
+        FROM students s
+        JOIN grades g ON s.cod_etu = g.cod_etu
+        WHERE 
+          g.cod_elp ILIKE $1
+          AND g.cod_anu = $4 -- Current Academic Year
+          AND s.lib_nom_pat_ind >= $2
+          AND s.lib_nom_pat_ind <= ($3 || 'ZZZZZZ')
+        ORDER BY s.cod_etu, s.cod_anu DESC
+      )
+      SELECT * FROM unique_students 
+      ORDER BY lib_nom_pat_ind, lib_pr1_ind
+    `;
+
+    const studentsResult = await pool.query(studentsQuery, [
+      rule.module_pattern, 
+      rule.range_start, 
+      rule.range_end,
+      CURRENT_ACADEMIC_YEAR
+    ]);
+
+    res.json(studentsResult.rows);
+
+  } catch (error) {
+    console.error('Get rule students error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// NEW ENDPOINT: Get breakdown of stats by element code for a pattern with NAMES
+// EXCLUDES CODES ENDING IN 'CC'
+// FILTERS FOR CURRENT YEAR
+router.get('/groups/stats/breakdown', authenticateAdmin, async (req, res) => {
+  try {
+    const { pattern } = req.query;
+    if (!pattern) return res.status(400).json({ error: 'Pattern required' });
+
+    // 1. Get Totals per Module Code (Filtered by Pattern & !CC & Year)
+    const totalsQuery = `
+      SELECT 
+        g.cod_elp, 
+        MAX(ep.lib_elp) as lib_elp,
+        COUNT(DISTINCT s.cod_etu) as total_count
+      FROM grades g
+      JOIN students s ON g.cod_etu = s.cod_etu
+      LEFT JOIN element_pedagogi ep ON g.cod_elp = ep.cod_elp
+      WHERE g.cod_elp ILIKE $1
+      AND g.cod_elp NOT LIKE '%CC'  -- EXCLUDE CC MODULES
+      AND g.cod_anu = $2            -- CURRENT YEAR
+      GROUP BY g.cod_elp
+    `;
+    
+    // 2. Get Distribution per Group Rule
+    const groupsQuery = `
+      SELECT 
+        g.cod_elp,
+        gr.group_name,
+        COUNT(DISTINCT s.cod_etu) as group_count
+      FROM grades g
+      JOIN students s ON g.cod_etu = s.cod_etu
+      JOIN grouping_rules gr ON gr.module_pattern = $1
+      WHERE g.cod_elp ILIKE $1
+      AND g.cod_elp NOT LIKE '%CC'
+      AND g.cod_anu = $2            -- CURRENT YEAR
+      AND s.lib_nom_pat_ind >= gr.range_start 
+      AND s.lib_nom_pat_ind <= (gr.range_end || 'ZZZZZZ')
+      GROUP BY g.cod_elp, gr.group_name
+    `;
+
+    const [totalsResult, groupsResult] = await Promise.all([
+      pool.query(totalsQuery, [pattern, CURRENT_ACADEMIC_YEAR]),
+      pool.query(groupsQuery, [pattern, CURRENT_ACADEMIC_YEAR])
+    ]);
+
+    // 3. Merge
+    const map = {};
+    totalsResult.rows.forEach(row => {
+      map[row.cod_elp] = {
+        cod_elp: row.cod_elp,
+        lib_elp: row.lib_elp,
+        total: parseInt(row.total_count),
+        groups: []
+      };
+    });
+
+    groupsResult.rows.forEach(row => {
+      if (map[row.cod_elp]) {
+        map[row.cod_elp].groups.push({
+          name: row.group_name,
+          count: parseInt(row.group_count)
+        });
+      }
+    });
+
+    Object.values(map).forEach(m => m.groups.sort((a, b) => a.name.localeCompare(b.name)));
+    const finalResult = Object.values(map).sort((a, b) => a.cod_elp.localeCompare(b.cod_elp));
+
+    res.json(finalResult);
+
+  } catch (error) {
+    console.error('Stats breakdown error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// NEW ENDPOINT: Full Export of Stats (Module | Code | Name | Group | Count)
+// FILTERED BY CURRENT YEAR
+router.get('/groups/stats/full-export', authenticateAdmin, async (req, res) => {
+  try {
+    const query = `
+      SELECT 
+        gr.module_pattern,
+        g.cod_elp,
+        MAX(ep.lib_elp) as lib_elp,
+        gr.group_name,
+        COUNT(DISTINCT s.cod_etu) as student_count
+      FROM grouping_rules gr
+      JOIN grades g ON g.cod_elp ILIKE gr.module_pattern
+      JOIN students s ON g.cod_etu = s.cod_etu 
+          AND s.lib_nom_pat_ind >= gr.range_start 
+          AND s.lib_nom_pat_ind <= (gr.range_end || 'ZZZZZZ')
+      LEFT JOIN element_pedagogi ep ON g.cod_elp = ep.cod_elp
+      WHERE g.cod_elp NOT LIKE '%CC'
+      AND g.cod_anu = $1 -- Current Year
+      GROUP BY gr.module_pattern, g.cod_elp, gr.group_name
+      ORDER BY gr.module_pattern, g.cod_elp, gr.group_name
+    `;
+
+    const result = await pool.query(query, [CURRENT_ACADEMIC_YEAR]);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Full stats export error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 
 // Add a new grouping rule
 router.post('/groups/rules', authenticateAdmin, async (req, res) => {
