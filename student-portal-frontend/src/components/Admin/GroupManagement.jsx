@@ -151,14 +151,12 @@ const GroupManagement = () => {
     }
   };
 
-  // --- EXPORT FUNCTIONS ---
-
   const handleExportExcel = () => {
     if (selectedStudents.length === 0) return;
 
     // Excel CSV Header with Separator
     const separator = 'sep=,';
-    const headers = ["CNE", "Nom", "Prénom", "Filière"];
+    const headers = ["CNE", "Nom", "Prénom", "CIN"];
     
     const csvContent = [
       headers.join(','),
@@ -167,7 +165,7 @@ const GroupManagement = () => {
             s.cod_etu, 
             `"${s.lib_nom_pat_ind}"`, 
             `"${s.lib_pr1_ind}"`, 
-            `"${s.lib_etp}"`
+            `"${s.cin_ind}"`
         ].join(',')
       )
     ].join('\n');
@@ -195,7 +193,7 @@ const GroupManagement = () => {
         return;
       }
 
-      const headers = ["Pattern Module", "Code Module", "Nom Module", "Groupe", "Nombre Étudiants"];
+      const headers = ["Module (Pattern)", "Code Module", "Nom Module", "Groupe", "Nombre Étudiants"];
       const csvContent = [
         headers.join(','),
         ...data.map(row => 

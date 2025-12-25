@@ -7,15 +7,13 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const { Pool } = require('pg');
-const multer = require('multer'); // Required for file upload
-const fs = require('fs'); // Required for file reading
+const multer = require('multer'); 
+const fs = require('fs'); 
 const router = express.Router();
 require('dotenv').config();
 
-// Configure upload
 const upload = multer({ dest: 'uploads/' });
 
-// PostgreSQL connection
 const pool = new Pool({
   host: process.env.PG_HOST,
   port: process.env.PG_PORT,
@@ -24,14 +22,14 @@ const pool = new Pool({
   password: process.env.PG_PASSWORD,
 });
 
-// Admin credentials (fallback)
 const ADMIN_CREDENTIALS = {
   username: process.env.ADMIN_USERNAME || 'admin',
   password: process.env.ADMIN_PASSWORD || 'admin123'
 };
 
-// --- CONSTANTS ---
-const CURRENT_ACADEMIC_YEAR = '2025'; // 2025-2026
+// --- CONSTANTES ---
+// Année universitaire cible : 2025 = 2025/2026
+const CURRENT_ACADEMIC_YEAR = 2025; 
 
 // ==========================================
 // 1. AUTO-INITIALIZATION
@@ -51,7 +49,6 @@ async function initHRDatabase() {
     `);
 
     // B. Create EMPLOYEES table (Matches your CSV structure)
-    // Note: If you ran reset-db.js, this table already exists with the correct columns.
     await pool.query(`
       CREATE TABLE IF NOT EXISTS employees (
         id SERIAL PRIMARY KEY,
@@ -117,7 +114,6 @@ initHRDatabase();
 // 2. MIDDLEWARE
 // ==========================================
 
-// Admin authentication middleware
 const authenticateAdmin = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -135,7 +131,6 @@ const authenticateAdmin = (req, res, next) => {
   });
 };
 
-// Middleware: Allows BOTH 'SUPER_ADMIN' and 'RH_MANAGER'
 const requireRH = (req, res, next) => {
   const role = req.admin?.role;
   if (role === 'SUPER_ADMIN' || role === 'RH_MANAGER') {
@@ -150,7 +145,6 @@ const requireRH = (req, res, next) => {
 // 3. AUTHENTICATION ROUTES
 // ==========================================
 
-// Admin login
 router.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -180,8 +174,6 @@ router.post('/login', async (req, res) => {
                 { expiresIn: '12h' }
             );
             
-            console.log(`DB Admin login: ${username} (${admin.role})`);
-            
             return res.json({
                 success: true,
                 token: adminToken,
@@ -206,8 +198,6 @@ router.post('/login', async (req, res) => {
         process.env.JWT_SECRET,
         { expiresIn: '8h' }
       );
-      
-      console.log(`Hardcoded Admin login: ${username}`);
       
       return res.json({
         success: true,
@@ -246,21 +236,26 @@ router.get('/verify', authenticateAdmin, (req, res) => {
 });
 
 
-// Get all grouping rules with statistics (Current Year Only)
+// ==========================================
+// 4. GROUP & PEDAGOGICAL ROUTES (STRICT)
+// ==========================================
+
+// Get all grouping rules with statistics
+// SOURCE: pedagogical_situation ONLY
 router.get('/groups/rules', authenticateAdmin, async (req, res) => {
   try {
     const query = `
       SELECT 
         gr.*,
         (
-          SELECT COUNT(DISTINCT s.cod_etu)
-          FROM students s
-          JOIN grades g ON s.cod_etu = g.cod_etu
+          SELECT COUNT(DISTINCT ps.cod_etu)
+          FROM pedagogical_situation ps
           WHERE 
-            g.cod_elp ILIKE gr.module_pattern
-            AND g.cod_anu = $1  -- Current Academic Year
-            AND s.lib_nom_pat_ind >= gr.range_start
-            AND s.lib_nom_pat_ind <= (gr.range_end || 'ZZZZZZ')
+            ps.cod_elp ILIKE gr.module_pattern
+            AND ps.daa_uni_con = $1  -- Année 2025/2026 uniquement
+            AND ps.cod_elp NOT LIKE '%CC' -- Exclusion des contrôles continus
+            AND ps.lib_nom_pat_ind >= gr.range_start -- Filtre sur le nom (directement dans ps)
+            AND ps.lib_nom_pat_ind <= (gr.range_end || 'ZZZZZZ')
         ) as student_count
       FROM grouping_rules gr
       ORDER BY gr.module_pattern, gr.group_name
@@ -273,12 +268,12 @@ router.get('/groups/rules', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Get unique students for a specific grouping rule (FIXED DUPLICATES & YEAR)
+// Get unique students for a specific grouping rule (Display List)
+// SOURCE: pedagogical_situation + students (pour le CIN)
 router.get('/groups/rules/:id/students', authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // 1. Get the rule details
     const ruleResult = await pool.query('SELECT * FROM grouping_rules WHERE id = $1', [id]);
     
     if (ruleResult.rows.length === 0) {
@@ -287,22 +282,18 @@ router.get('/groups/rules/:id/students', authenticateAdmin, async (req, res) => 
 
     const rule = ruleResult.rows[0];
 
-    // 2. Find matching unique students for current year
+    // Pour l'affichage liste, on joint 'students' juste pour avoir le CIN et d'autres détails si besoin
     const studentsQuery = `
-      WITH unique_students AS (
-        SELECT DISTINCT ON (s.cod_etu) 
-          s.cod_etu, s.lib_nom_pat_ind, s.lib_pr1_ind, s.lib_etp, s.cin_ind, s.cod_anu
-        FROM students s
-        JOIN grades g ON s.cod_etu = g.cod_etu
-        WHERE 
-          g.cod_elp ILIKE $1
-          AND g.cod_anu = $4 -- Current Academic Year
-          AND s.lib_nom_pat_ind >= $2
-          AND s.lib_nom_pat_ind <= ($3 || 'ZZZZZZ')
-        ORDER BY s.cod_etu, s.cod_anu DESC
-      )
-      SELECT * FROM unique_students 
-      ORDER BY lib_nom_pat_ind, lib_pr1_ind
+      SELECT DISTINCT ps.cod_etu, ps.lib_nom_pat_ind, ps.lib_pr1_ind, s.cin_ind, s.lib_etp
+      FROM pedagogical_situation ps
+      LEFT JOIN students s ON ps.cod_etu = s.cod_etu
+      WHERE 
+        ps.cod_elp ILIKE $1
+        AND ps.daa_uni_con = $4  -- Année 2025/2026
+        AND ps.cod_elp NOT LIKE '%CC'
+        AND ps.lib_nom_pat_ind >= $2
+        AND ps.lib_nom_pat_ind <= ($3 || 'ZZZZZZ')
+      ORDER BY ps.lib_nom_pat_ind, ps.lib_pr1_ind
     `;
 
     const studentsResult = await pool.query(studentsQuery, [
@@ -320,44 +311,40 @@ router.get('/groups/rules/:id/students', authenticateAdmin, async (req, res) => 
   }
 });
 
-// NEW ENDPOINT: Get breakdown of stats by element code for a pattern with NAMES
-// EXCLUDES CODES ENDING IN 'CC'
-// FILTERS FOR CURRENT YEAR
+// GET BREAKDOWN: Distribution par Code Module et Groupe
+// SOURCE: pedagogical_situation ONLY
 router.get('/groups/stats/breakdown', authenticateAdmin, async (req, res) => {
   try {
     const { pattern } = req.query;
     if (!pattern) return res.status(400).json({ error: 'Pattern required' });
 
-    // 1. Get Totals per Module Code (Filtered by Pattern & !CC & Year)
+    // 1. Total par Code Module (Exclut CC et filtre Année 2025)
     const totalsQuery = `
       SELECT 
-        g.cod_elp, 
-        MAX(ep.lib_elp) as lib_elp,
-        COUNT(DISTINCT s.cod_etu) as total_count
-      FROM grades g
-      JOIN students s ON g.cod_etu = s.cod_etu
-      LEFT JOIN element_pedagogi ep ON g.cod_elp = ep.cod_elp
-      WHERE g.cod_elp ILIKE $1
-      AND g.cod_elp NOT LIKE '%CC'  -- EXCLUDE CC MODULES
-      AND g.cod_anu = $2            -- CURRENT YEAR
-      GROUP BY g.cod_elp
+        ps.cod_elp, 
+        MAX(ps.lib_elp) as lib_elp,
+        COUNT(DISTINCT ps.cod_etu) as total_count
+      FROM pedagogical_situation ps
+      WHERE ps.cod_elp ILIKE $1
+      AND ps.cod_elp NOT LIKE '%CC'
+      AND ps.daa_uni_con = $2
+      GROUP BY ps.cod_elp
     `;
     
-    // 2. Get Distribution per Group Rule
+    // 2. Répartition par Groupe (Basé sur les noms dans pedagogical_situation)
     const groupsQuery = `
       SELECT 
-        g.cod_elp,
+        ps.cod_elp,
         gr.group_name,
-        COUNT(DISTINCT s.cod_etu) as group_count
-      FROM grades g
-      JOIN students s ON g.cod_etu = s.cod_etu
+        COUNT(DISTINCT ps.cod_etu) as group_count
+      FROM pedagogical_situation ps
       JOIN grouping_rules gr ON gr.module_pattern = $1
-      WHERE g.cod_elp ILIKE $1
-      AND g.cod_elp NOT LIKE '%CC'
-      AND g.cod_anu = $2            -- CURRENT YEAR
-      AND s.lib_nom_pat_ind >= gr.range_start 
-      AND s.lib_nom_pat_ind <= (gr.range_end || 'ZZZZZZ')
-      GROUP BY g.cod_elp, gr.group_name
+      WHERE ps.cod_elp ILIKE $1
+      AND ps.cod_elp NOT LIKE '%CC'
+      AND ps.daa_uni_con = $2
+      AND ps.lib_nom_pat_ind >= gr.range_start 
+      AND ps.lib_nom_pat_ind <= (gr.range_end || 'ZZZZZZ')
+      GROUP BY ps.cod_elp, gr.group_name
     `;
 
     const [totalsResult, groupsResult] = await Promise.all([
@@ -365,8 +352,9 @@ router.get('/groups/stats/breakdown', authenticateAdmin, async (req, res) => {
       pool.query(groupsQuery, [pattern, CURRENT_ACADEMIC_YEAR])
     ]);
 
-    // 3. Merge
+    // 3. Fusion des données
     const map = {};
+    
     totalsResult.rows.forEach(row => {
       map[row.cod_elp] = {
         cod_elp: row.cod_elp,
@@ -385,7 +373,12 @@ router.get('/groups/stats/breakdown', authenticateAdmin, async (req, res) => {
       }
     });
 
-    Object.values(map).forEach(m => m.groups.sort((a, b) => a.name.localeCompare(b.name)));
+    // Tri alphabétique des groupes
+    Object.values(map).forEach(m => {
+        m.groups.sort((a, b) => a.name.localeCompare(b.name));
+    });
+
+    // Retourne un tableau trié
     const finalResult = Object.values(map).sort((a, b) => a.cod_elp.localeCompare(b.cod_elp));
 
     res.json(finalResult);
@@ -396,27 +389,26 @@ router.get('/groups/stats/breakdown', authenticateAdmin, async (req, res) => {
   }
 });
 
-// NEW ENDPOINT: Full Export of Stats (Module | Code | Name | Group | Count)
-// FILTERED BY CURRENT YEAR
+// FULL EXPORT: Module Pattern | Code | Name | Group | Count
+// SOURCE: pedagogical_situation ONLY
+// ROUTE: /groups/stats/full-export
 router.get('/groups/stats/full-export', authenticateAdmin, async (req, res) => {
   try {
     const query = `
       SELECT 
         gr.module_pattern,
-        g.cod_elp,
-        MAX(ep.lib_elp) as lib_elp,
+        ps.cod_elp,
+        MAX(ps.lib_elp) as lib_elp,
         gr.group_name,
-        COUNT(DISTINCT s.cod_etu) as student_count
+        COUNT(DISTINCT ps.cod_etu) as student_count
       FROM grouping_rules gr
-      JOIN grades g ON g.cod_elp ILIKE gr.module_pattern
-      JOIN students s ON g.cod_etu = s.cod_etu 
-          AND s.lib_nom_pat_ind >= gr.range_start 
-          AND s.lib_nom_pat_ind <= (gr.range_end || 'ZZZZZZ')
-      LEFT JOIN element_pedagogi ep ON g.cod_elp = ep.cod_elp
-      WHERE g.cod_elp NOT LIKE '%CC'
-      AND g.cod_anu = $1 -- Current Year
-      GROUP BY gr.module_pattern, g.cod_elp, gr.group_name
-      ORDER BY gr.module_pattern, g.cod_elp, gr.group_name
+      JOIN pedagogical_situation ps ON ps.cod_elp ILIKE gr.module_pattern
+      WHERE ps.cod_elp NOT LIKE '%CC'
+      AND ps.daa_uni_con = $1 -- Année 2025/2026
+      AND ps.lib_nom_pat_ind >= gr.range_start 
+      AND ps.lib_nom_pat_ind <= (gr.range_end || 'ZZZZZZ')
+      GROUP BY gr.module_pattern, ps.cod_elp, gr.group_name
+      ORDER BY gr.module_pattern, ps.cod_elp, gr.group_name
     `;
 
     const result = await pool.query(query, [CURRENT_ACADEMIC_YEAR]);
@@ -465,7 +457,7 @@ router.delete('/groups/rules/:id', authenticateAdmin, async (req, res) => {
 
 
 // ==========================================
-// 4. DASHBOARD & STATS ROUTES
+// 5. DASHBOARD & STATS ROUTES
 // ==========================================
 
 router.get('/dashboard/stats', authenticateAdmin, async (req, res) => {
@@ -555,7 +547,7 @@ router.get('/dashboard/overview', authenticateAdmin, async (req, res) => {
 
 
 // ==========================================
-// 5. STUDENT MANAGEMENT ROUTES
+// 6. STUDENT MANAGEMENT ROUTES
 // ==========================================
 
 router.get('/students/search', authenticateAdmin, async (req, res) => {
@@ -697,7 +689,7 @@ router.get('/students/:id', authenticateAdmin, async (req, res) => {
 
 
 // ==========================================
-// 6. SYNC MANAGEMENT ROUTES
+// 7. SYNC MANAGEMENT ROUTES
 // ==========================================
 
 router.get('/sync/status', authenticateAdmin, async (req, res) => {
@@ -776,7 +768,7 @@ router.post('/sync/manual', authenticateAdmin, async (req, res) => {
 
 
 // ==========================================
-// 7. SYSTEM HEALTH & REQUESTS ROUTES
+// 8. SYSTEM HEALTH & REQUESTS ROUTES
 // ==========================================
 
 router.get('/system/health', authenticateAdmin, async (req, res) => {
@@ -858,7 +850,7 @@ router.get('/system/stats', authenticateAdmin, async (req, res) => {
 
 
 // ==========================================
-// 8. LAUREAT MANAGEMENT ROUTES
+// 9. LAUREAT MANAGEMENT ROUTES
 // ==========================================
 
 router.get('/laureats', authenticateAdmin, async (req, res) => {
@@ -987,7 +979,7 @@ router.post('/laureats/sync', authenticateAdmin, async (req, res) => {
 
 
 // ==========================================
-// 9. RH MANAGEMENT ROUTES (Fully Updated)
+// 10. RH MANAGEMENT ROUTES
 // ==========================================
 
 // Helper: Parse Date smartly (US vs FR vs ISO)
