@@ -251,6 +251,36 @@ router.get('/groups/stats/full-export', authenticateAdmin, async (req, res) => {
   } catch (error) { console.error('Full stats export error:', error); res.status(500).json({ error: 'Internal server error' }); }
 });
 
+// *** NEW ROUTE: EXPORT DETAILED ASSIGNMENTS ***
+router.get('/groups/assignments/export', authenticateAdmin, async (req, res) => {
+  try {
+    const query = `
+      SELECT 
+        ps.cod_etu,
+        ps.lib_nom_pat_ind,
+        ps.lib_pr1_ind,
+        ps.cod_elp,
+        ps.lib_elp,
+        gr.group_name
+      FROM grouping_rules gr
+      JOIN pedagogical_situation ps ON ps.cod_elp ILIKE gr.module_pattern
+      WHERE 
+        ps.cod_elp NOT LIKE '%CC'
+        AND ps.cod_elp NOT LIKE '%005'
+        -- Strict ASCII Sorting
+        AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" >= UPPER(gr.range_start) COLLATE "C"
+        AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" <= (UPPER(gr.range_end) || 'ZZZZZZ') COLLATE "C"
+      ORDER BY gr.group_name, ps.cod_elp, ps.lib_nom_pat_ind, ps.lib_pr1_ind
+    `;
+
+    const result = await pool.query(query);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Export assignments error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Rule Management Routes
 router.post('/groups/rules', authenticateAdmin, async (req, res) => {
   try {
@@ -268,7 +298,7 @@ router.delete('/groups/rules/:id', authenticateAdmin, async (req, res) => {
   } catch (error) { console.error('Delete grouping rule error:', error); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-// ... [Rest of the file remains unchanged] ...
+// ... [Rest of the file remains unchanged for Dashboard, Students, Sync, System Health, Laureats, RH] ...
 
 // ==========================================
 // 5. DASHBOARD & STATS ROUTES
