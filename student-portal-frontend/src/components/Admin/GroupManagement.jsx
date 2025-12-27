@@ -1,8 +1,3 @@
-/*
-type: uploaded file
-fileName: bitbuzz-project/student-info-system/student-info-system-b858bf5862393e4426ceab7c444160e120be74d4/student-portal-frontend/src/components/Admin/GroupManagement.jsx
-fullContent:
-*/
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Box, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
@@ -170,13 +165,10 @@ const GroupManagement = () => {
       )
     ].join('\n');
 
-    // Add BOM (Byte Order Mark) \uFEFF so Excel recognizes UTF-8 (Arabic/French chars)
     const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
-    
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
     link.setAttribute("href", url);
-    // Use .csv extension, Excel opens it by default
     link.setAttribute("download", `${selectedRuleTitle}_etudiants.csv`);
     document.body.appendChild(link);
     link.click();
@@ -219,6 +211,46 @@ const GroupManagement = () => {
     } catch (error) {
       console.error("Export error", error);
       alert("Erreur lors de l'exportation des statistiques globales.");
+    }
+  };
+
+  const handleExportAssignments = async () => {
+    try {
+      const res = await axios.get('/api/admin/groups/assignments/export', getAuthHeader());
+      const data = res.data;
+
+      if (!data || data.length === 0) {
+        alert("Aucune affectation à exporter.");
+        return;
+      }
+
+      const headers = ["CNE", "Nom", "Prénom", "Code Module", "Nom Module", "Groupe"];
+      const csvContent = [
+        headers.join(','),
+        ...data.map(row => 
+          [
+            `"${row.cod_etu}"`,
+            `"${row.lib_nom_pat_ind}"`,
+            `"${row.lib_pr1_ind}"`,
+            `"${row.cod_elp}"`,
+            `"${row.lib_elp || ''}"`,
+            `"${row.group_name}"`
+          ].join(',')
+        )
+      ].join('\n');
+
+      const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute("download", `liste_globale_affectations_${new Date().toISOString().slice(0,10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+    } catch (error) {
+      console.error("Export error", error);
+      alert("Erreur lors de l'exportation de la liste détaillée.");
     }
   };
 
@@ -364,6 +396,16 @@ const GroupManagement = () => {
                                   </Box>
                                   <GroupsIcon sx={{ fontSize: 60, opacity: 0.3 }} />
                               </Box>
+                              <Button 
+                                size="small" 
+                                variant="outlined" 
+                                fullWidth
+                                sx={{ mt: 2, color: 'white', borderColor: 'rgba(255,255,255,0.5)', '&:hover': { borderColor: 'white', bgcolor: 'rgba(255,255,255,0.1)' } }}
+                                startIcon={<DownloadIcon />}
+                                onClick={handleExportAssignments}
+                              >
+                                Exporter Liste Détaillée
+                              </Button>
                           </CardContent>
                       </Card>
                   </Grid>
@@ -506,7 +548,7 @@ const GroupManagement = () => {
           </Box>
       )}
 
-      {/* --- LIST VIEW (VISIBLE IN 'LIST' MODE) --- */}
+      {/* ... [Rest of the JSX for List Mode and Dialogs remains unchanged] ... */}
       {viewMode === 'list' && (
       <Box>
         {/* TOOLBAR */}
