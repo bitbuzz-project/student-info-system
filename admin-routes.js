@@ -357,6 +357,94 @@ router.get('/dashboard/overview', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+// ==========================================
+// 6. STUDENT MANAGEMENT ROUTES
+// ==========================================
+
+// Add this NEW route before /students/search or /students/:id
+// GET /students/export - Export filtered students to CSV
+router.get('/students/export', authenticateAdmin, async (req, res) => {
+  try {
+    const { search = '', program = '', year = '' } = req.query;
+    
+    let whereConditions = [];
+    let params = [];
+    let paramIndex = 1;
+    
+    // 1. Build Filters
+    if (search) {
+      whereConditions.push(`(lib_nom_pat_ind ILIKE $${paramIndex} OR lib_pr1_ind ILIKE $${paramIndex} OR cod_etu ILIKE $${paramIndex} OR cin_ind ILIKE $${paramIndex})`);
+      params.push(`%${search}%`);
+      paramIndex++;
+    }
+    if (program) { whereConditions.push(`lib_etp = $${paramIndex}`); params.push(program); paramIndex++; }
+    if (year) { whereConditions.push(`cod_anu = $${paramIndex}`); params.push(year); paramIndex++; }
+    
+    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+    
+    // 2. Corrected SQL Query
+    // Removed 'email', 'tel_ind' (likely non-existent)
+    // Fixed 'dat_nai_ind' -> 'date_nai_ind'
+    const query = `
+      SELECT 
+        cod_etu, 
+        lib_nom_pat_ind, 
+        lib_pr1_ind, 
+        cin_ind, 
+        lib_etp, 
+        cod_anu, 
+        date_nai_ind,  
+        lib_vil_nai_etu, 
+        cod_sex_etu,
+        cod_nne_ind
+      FROM students ${whereClause}
+      ORDER BY cod_anu DESC, lib_nom_pat_ind, lib_pr1_ind
+    `;
+    
+    const result = await pool.query(query, params);
+    
+    // 3. Generate CSV
+    const headers = [
+      'Code Etudiant', 'Nom', 'Prenom', 'CIN', 
+      'Filiere', 'Annee', 
+      'Date Naissance', 'Lieu Naissance', 
+      'Sexe', 'CNE'
+    ];
+    
+    let csvContent = headers.join(',') + '\n';
+    
+    result.rows.forEach(row => {
+      // Helper to format date safely
+      const formatDate = (d) => d ? new Date(d).toLocaleDateString('fr-FR') : '';
+      // Helper to escape CSV fields (handle quotes/commas)
+      const escape = (t) => t ? `"${t.toString().replace(/"/g, '""')}"` : '';
+      
+      const line = [
+        row.cod_etu,
+        escape(row.lib_nom_pat_ind),
+        escape(row.lib_pr1_ind),
+        row.cin_ind || '',
+        escape(row.lib_etp),
+        row.cod_anu || '',
+        formatDate(row.date_nai_ind), // Matches SQL column name
+        escape(row.lib_vil_nai_etu),
+        row.cod_sex_etu || '',
+        row.cod_nne_ind || ''
+      ].join(',');
+      
+      csvContent += line + '\n';
+    });
+    
+    // 4. Send Response
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=students_export_${year || 'all'}_${new Date().toISOString().split('T')[0]}.csv`);
+    res.send(csvContent);
+
+  } catch (error) {
+    console.error('Error exporting students:', error);
+    res.status(500).json({ error: 'Internal server error: ' + error.message });
+  }
+});
 
 
 // ==========================================
@@ -592,6 +680,8 @@ router.post('/laureats/sync', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Sync failed' });
   }
 });
+
+
 
 // ==========================================
 // 10. RH MANAGEMENT ROUTES

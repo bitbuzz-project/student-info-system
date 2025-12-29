@@ -194,6 +194,43 @@ export const adminAPI = {
     }
     return response.data;
   },
+
+  // Student Management APIs
+  searchStudents: async (params = {}) => {
+    const searchParams = new URLSearchParams();
+    Object.keys(params).forEach(key => {
+      if (params[key]) searchParams.append(key, params[key]);
+    });
+    
+    const response = await api.get(`/admin/students/search?${searchParams}`);
+    return response.data;
+  },
+
+  // NEW: Export Students Function
+  exportStudents: async (params = {}) => {
+    const searchParams = new URLSearchParams();
+    Object.keys(params).forEach(key => {
+      if (params[key]) searchParams.append(key, params[key]);
+    });
+    
+    const response = await api.get(`/admin/students/export?${searchParams}`, {
+      responseType: 'blob' // Important for handling file downloads
+    });
+    
+    // Trigger file download in browser
+    const blob = new Blob([response.data], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const fileName = `students_export_${params.year || 'all'}_${new Date().toISOString().split('T')[0]}.csv`;
+    link.setAttribute('download', fileName);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+    
+    return true;
+  },
   getLaureatDetails: async (codEtu) => {
     const response = await api.get(`/admin/laureats/student/${codEtu}`);
     return response.data;

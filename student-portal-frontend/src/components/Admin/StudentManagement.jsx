@@ -165,6 +165,19 @@ const StudentManagement = () => {
     loadStudents(newFilters);
   };
 
+  // NEW: Handle Export
+  const handleExport = async () => {
+    try {
+      setIsLoading(true);
+      await adminAPI.exportStudents(filters);
+    } catch (err) {
+      console.error('Export failed:', err);
+      setError('Failed to export student data');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // View student details
   const viewStudentDetails = async (studentId) => {
     try {
@@ -901,6 +914,19 @@ const StudentManagement = () => {
                 >
                   Search
                 </Button>
+                
+                {/* === NEW: Export Button === */}
+                <Button
+                  variant="outlined"
+                  color="secondary"
+                  startIcon={<DownloadIcon />}
+                  onClick={handleExport}
+                  disabled={isLoading}
+                  title="Export current list to CSV"
+                >
+                  Export
+                </Button>
+
                 <Button
                   variant="outlined"
                   startIcon={<ClearIcon />}
