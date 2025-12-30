@@ -298,8 +298,6 @@ router.delete('/groups/rules/:id', authenticateAdmin, async (req, res) => {
   } catch (error) { console.error('Delete grouping rule error:', error); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-// ... [Rest of the file remains unchanged for Dashboard, Students, Sync, System Health, Laureats, RH] ...
-
 // ==========================================
 // 5. DASHBOARD & STATS ROUTES
 // ==========================================
@@ -357,6 +355,7 @@ router.get('/dashboard/overview', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
 // ==========================================
 // 6. STUDENT MANAGEMENT ROUTES
 // ==========================================
@@ -383,8 +382,6 @@ router.get('/students/export', authenticateAdmin, async (req, res) => {
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
     
     // 2. Corrected SQL Query
-    // Removed 'email', 'tel_ind' (likely non-existent)
-    // Fixed 'dat_nai_ind' -> 'date_nai_ind'
     const query = `
       SELECT 
         cod_etu, 
@@ -445,11 +442,6 @@ router.get('/students/export', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Internal server error: ' + error.message });
   }
 });
-
-
-// ==========================================
-// 6. STUDENT MANAGEMENT ROUTES
-// ==========================================
 
 router.get('/students/search', authenticateAdmin, async (req, res) => {
   try {
@@ -598,6 +590,36 @@ router.get('/student-card-requests', authenticateAdmin, async (req, res) => {
     res.json({ requests: result.rows });
   } catch (error) {
     console.error('Get student card requests error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// *** ADDED: PUT ROUTE FOR UPDATING STATUS ***
+router.put('/student-card-requests/:id', authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, comment } = req.body;
+    
+    if (!['approved', 'rejected'].includes(status)) {
+       return res.status(400).json({ error: 'Invalid status' });
+    }
+
+    // Update status and comment (assuming you have these columns)
+    const result = await pool.query(
+      `UPDATE student_card_requests 
+       SET status = $1, comment = $2, updated_at = CURRENT_TIMESTAMP 
+       WHERE id = $3 
+       RETURNING *`,
+      [status, comment || '', id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Request not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Update student card request error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

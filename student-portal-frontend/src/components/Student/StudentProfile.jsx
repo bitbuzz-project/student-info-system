@@ -1,7 +1,3 @@
-// Remove the old StudentNavigation.jsx component since we're using sidebar navigation now
-
-// Update the imports in StudentProfile.jsx to remove navigation dependency
-// src/components/Student/StudentProfile.jsx
 import React, { useState, useEffect } from 'react';
 import {
   Box,
@@ -12,7 +8,6 @@ import {
   Divider,
   Chip,
   Avatar,
-  Paper,
   Stack,
   IconButton,
   Tooltip
@@ -68,6 +63,12 @@ const StudentProfile = () => {
     }
   };
 
+  const getGenderLabel = (code) => {
+    if (code === 'M') return t('male');
+    if (code === 'F') return t('female');
+    return code;
+  };
+
   if (isLoading) {
     return <Loading message={t('loading')} />;
   }
@@ -119,51 +120,22 @@ const StudentProfile = () => {
     </Box>
   );
 
-  const StatsCard = ({ title, value, color = 'primary' }) => (
-    <Paper
-      elevation={2}
-      sx={{
-        p: 2,
-        textAlign: 'center',
-        borderRadius: 2,
-        background: `linear-gradient(135deg, ${
-          color === 'primary' ? '#3498db 0%, #2980b9 100%' :
-          color === 'success' ? '#2ecc71 0%, #27ae60 100%' :
-          color === 'warning' ? '#f39c12 0%, #e67e22 100%' :
-          '#9b59b6 0%, #8e44ad 100%'
-        })`,
-        color: 'white',
-        '&:hover': {
-          transform: 'translateY(-2px)',
-          transition: 'transform 0.3s ease'
-        }
-      }}
-    >
-      <Typography variant="h4" fontWeight="bold">
-        {value}
-      </Typography>
-      <Typography variant="body2" sx={{ opacity: 0.9 }}>
-        {title}
-      </Typography>
-    </Paper>
-  );
-
   return (
     <Box>
       {/* Page Header */}
       <Box sx={{ mb: 4 }}>
         <Typography variant="h4" fontWeight="600" color="primary" gutterBottom>
-          👤 المعلومات الشخصية 
+          {t('profileTitle')}
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          عرض جميع المعلومات الشخصية والجامعية الخاصة بك
+          {t('profileDescription')}
         </Typography>
       </Box>
 
       {/* Header with Avatar */}
       <Card sx={{ mb: 3, borderRadius: 3 }}>
         <CardContent sx={{ p: 4 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
             <Avatar
               sx={{
                 width: 80,
@@ -202,44 +174,12 @@ const StudentProfile = () => {
                 sx={{ mt: 1 }}
               />
             </Box>
-            <Tooltip title="Refresh Data">
+            <Tooltip title={t('refreshData')}>
               <IconButton onClick={fetchStudentData} color="primary">
                 <RefreshIcon />
               </IconButton>
             </Tooltip>
           </Box>
-
-          {/* Statistics */}
-          <Grid container spacing={2} sx={{ mt: 2 }}>
-            <Grid item xs={6} sm={3}>
-              <StatsCard 
-                title="التسجيلات في الدورة"
-                value={studentData.nombre_inscriptions_cycle || '0'}
-                color="primary"
-              />
-            </Grid>
-            <Grid item xs={6} sm={3}>
-              <StatsCard 
-                title="التسجيلات في المرحلة"
-                value={studentData.nombre_inscriptions_etape || '0'}
-                color="success"
-              />
-            </Grid>
-            <Grid item xs={6} sm={3}>
-              <StatsCard 
-                title="التسجيلات في الدبلوم"
-                value={studentData.nombre_inscriptions_diplome || '0'}
-                color="warning"
-              />
-            </Grid>
-            <Grid item xs={6} sm={3}>
-              <StatsCard 
-                title="السنة الجامعية"
-                value={studentData.annee_universitaire || '2024'}
-                color="secondary"
-              />
-            </Grid>
-          </Grid>
         </CardContent>
       </Card>
 
@@ -275,7 +215,7 @@ const StudentProfile = () => {
                 {studentData.lieu_naissance_arabe && (
                   <InfoRow
                     icon={<LocationIcon />}
-                    label=" مدينة الازدياد (بالعربية)"
+                    label={t('placeOfBirthArabic')}
                     value={studentData.lieu_naissance_arabe}
                     isArabic={true}
                   />
@@ -283,7 +223,7 @@ const StudentProfile = () => {
                 <InfoRow
                   icon={<PersonIcon />}
                   label={t('gender')}
-                  value={studentData.sexe === 'M' ? 'ذكر / Masculin' : studentData.sexe === 'F' ? 'أنثى / Féminin' : studentData.sexe}
+                  value={getGenderLabel(studentData.sexe)}
                 />
               </Stack>
             </CardContent>
@@ -310,7 +250,7 @@ const StudentProfile = () => {
                 />
                 <InfoRow
                   icon={<BadgeIcon />}
-                  label="رخصة التخصص"
+                  label={t('specializationLicense')}
                   value={studentData.licence_etape}
                 />
                 <InfoRow
@@ -318,9 +258,14 @@ const StudentProfile = () => {
                   label={t('diploma')}
                   value={studentData.diplome}
                 />
+                 <InfoRow
+                  icon={<DateIcon />}
+                  label={t('academicYear')}
+                  value={studentData.annee_universitaire}
+                />
                 <InfoRow
                   icon={<DateIcon />}
-                  label="آخر تحديث"
+                  label={t('lastUpdate')}
                   value={formatDate(studentData.derniere_mise_a_jour)}
                 />
               </Stack>
@@ -328,8 +273,6 @@ const StudentProfile = () => {
           </Card>
         </Grid>
       </Grid>
-
-    
     </Box>
   );
 };

@@ -1,3 +1,4 @@
+// src/services/api.js
 import axios from 'axios';
 
 // Create axios instance with base configuration
@@ -8,7 +9,6 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
 });
-
 
 // Request interceptor to add auth token
 api.interceptors.request.use(
@@ -71,32 +71,31 @@ export const authAPI = {
   }
 };
 
-
 // Student API
-// Updated studentAPI section in src/services/api.js
-
 export const studentAPI = {
   getProfile: async () => {
     const response = await api.get('/student/me');
     return response.data;
   },
+  
   getStudentCardRequestStatus: async () => {
     const response = await api.get('/student/request/student-card/status');
     return response.data;
   },
 
-    getValidatedModules: async () => {
+  getValidatedModules: async () => {
     const response = await api.get('/student/validated-modules');
     return response.data;
   },
-    getPedagogicalSituation: async (filters = {}) => {
-      const params = new URLSearchParams();
-      if (filters.year) params.append('year', filters.year);
-      
-      const response = await api.get(`/student/pedagogical-situation?${params}`);
-      return response.data;
-    },
-    getGradeStats: () => apiClient.get('/student/grades/stats').then(res => res.data),
+  
+  getPedagogicalSituation: async (filters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.year) params.append('year', filters.year);
+    
+    const response = await api.get(`/student/pedagogical-situation?${params}`);
+    return response.data;
+  },
+  
   requestStudentCard: (formData) => api.post('/student/request/student-card', formData, {
     headers: {
       'Content-Type': 'multipart/form-data'
@@ -107,19 +106,20 @@ export const studentAPI = {
     const response = await api.get('/student/pedagogical-stats');
     return response.data;
   },
-  // Add to studentAPI in src/services/api.js
-getAdministrativeSituation: async (filters = {}) => {
-  const params = new URLSearchParams();
-  if (filters.year) params.append('year', filters.year);
-  
-  const response = await api.get(`/student/administrative-situation?${params}`);
-  return response.data;
-},
 
-getAdministrativeStats: async () => {
-  const response = await api.get('/student/administrative-stats');
-  return response.data;
-},
+  getAdministrativeSituation: async (filters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.year) params.append('year', filters.year);
+    
+    const response = await api.get(`/student/administrative-situation?${params}`);
+    return response.data;
+  },
+
+  getAdministrativeStats: async () => {
+    const response = await api.get('/student/administrative-stats');
+    return response.data;
+  },
+  
   // Current year grades from RESULTAT_EPR
   getGrades: async (filters = {}) => {
     const params = new URLSearchParams();
@@ -130,7 +130,7 @@ getAdministrativeStats: async () => {
     return response.data;
   },
   
-  // NEW: Official documents/transcripts 
+  // Official documents/transcripts 
   getOfficialDocuments: async (filters = {}) => {
     const params = new URLSearchParams();
     if (filters.semester) params.append('semester', filters.semester);
@@ -139,7 +139,7 @@ getAdministrativeStats: async () => {
     return response.data;
   },
   
-  // NEW: Generate transcript PDF (server-side)
+  // Generate transcript PDF (server-side)
   downloadTranscriptPDF: async (semester, studentCode) => {
     try {
       const response = await api.get(`/student/transcript/${semester}/pdf`, {
@@ -163,7 +163,7 @@ getAdministrativeStats: async () => {
     }
   },
   
-  // NEW: Print transcript
+  // Print transcript
   printTranscriptPDF: async (semester) => {
     try {
       const response = await api.get(`/student/transcript/${semester}/print`);
@@ -182,8 +182,6 @@ getAdministrativeStats: async () => {
     return response.data;
   }
 };
-
-
 
 // Admin API
 export const adminAPI = {
@@ -206,7 +204,7 @@ export const adminAPI = {
     return response.data;
   },
 
-  // NEW: Export Students Function
+  // Export Students Function
   exportStudents: async (params = {}) => {
     const searchParams = new URLSearchParams();
     Object.keys(params).forEach(key => {
@@ -231,15 +229,17 @@ export const adminAPI = {
     
     return true;
   },
+
   getLaureatDetails: async (codEtu) => {
     const response = await api.get(`/admin/laureats/student/${codEtu}`);
     return response.data;
   },
-  // Add this new function:
+  
   getEmployeeStats: async () => {
     const response = await api.get('/admin/employees/stats');
     return response.data;
   },
+
   // --- RH MANAGEMENT (Employees) ---
   getEmployees: async (filters = {}) => {
     const params = new URLSearchParams();
@@ -264,20 +264,16 @@ export const adminAPI = {
     const response = await api.delete(`/admin/employees/${id}`);
     return response.data;
   },
-  // --- FIXED LAUREAT ROUTES (Uses axios 'api' instance) ---
-// Laureat Management
+
+  // Laureat Management
   getLaureats: async (params) => {
     const searchParams = new URLSearchParams();
     
-    // Add filters to query string
     if (params.year) searchParams.append('year', params.year);
     if (params.diploma) searchParams.append('diploma', params.diploma);
     if (params.search) searchParams.append('search', params.search);
     if (params.page) searchParams.append('page', params.page);
-    
-    // --- FIX: Pass the multiDiploma parameter ---
     if (params.multiDiploma) searchParams.append('multiDiploma', 'true');
-    // --------------------------------------------
     
     const response = await api.get(`/admin/laureats?${searchParams.toString()}`);
     return response.data;
@@ -292,7 +288,6 @@ export const adminAPI = {
     const response = await api.post('/admin/laureats/sync', { years });
     return response.data;
   },
-  // -------------------------------------------------------
 
   // Student Registration Management APIs
   getStudentRegistrations: async (params = {}) => {
@@ -403,17 +398,6 @@ export const adminAPI = {
   
   getDataOverview: async () => {
     const response = await api.get('/admin/dashboard/overview');
-    return response.data;
-  },
-  
-  // Student Management APIs
-  searchStudents: async (params = {}) => {
-    const searchParams = new URLSearchParams();
-    Object.keys(params).forEach(key => {
-      if (params[key]) searchParams.append(key, params[key]);
-    });
-    
-    const response = await api.get(`/admin/students/search?${searchParams}`);
     return response.data;
   },
   
@@ -604,9 +588,13 @@ export const adminAPI = {
     const response = await api.get('/admin/student-card-requests');
     return response.data;
   },
+
+  // Added Function
+  updateStudentCardRequestStatus: async (id, status, comment = '') => {
+    const response = await api.put(`/admin/student-card-requests/${id}`, { status, comment });
+    return response.data;
+  },
 };
-
-
 
 // System API
 export const systemAPI = {

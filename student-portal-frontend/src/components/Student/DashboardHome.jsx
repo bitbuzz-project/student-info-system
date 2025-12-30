@@ -6,30 +6,21 @@ import {
   Card,
   CardContent,
   Typography,
-  Button,
   Paper,
   Avatar,
-  Chip,
-  Alert,
   Skeleton,
-  Divider
+  Divider,
+  Alert
 } from '@mui/material';
 import {
   Person as PersonIcon,
   Grade as GradeIcon,
-  BarChart as StatsIcon,
-  School as SchoolIcon,
-  CalendarToday as CalendarIcon,
-  TrendingUp as TrendingUpIcon,
-  Star as StarIcon,
+  Assignment as AssignmentIcon,
   AccessTime as TimeIcon,
-  Assignment as AssignmentIcon
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTranslation } from 'react-i18next';
 import { studentAPI } from '../../services/api';
-
-
 
 const DashboardHome = ({ onNavigate }) => {
   const { user } = useAuth();
@@ -45,13 +36,11 @@ const DashboardHome = ({ onNavigate }) => {
   const loadQuickStats = async () => {
     try {
       setIsLoading(true);
-      // Load both grades and stats for quick overview
       const [gradesResponse, statsResponse] = await Promise.all([
         studentAPI.getGrades(),
         studentAPI.getGradeStats()
       ]);
 
-      // Calculate quick statistics
       const totalGrades = Object.values(gradesResponse.grades || {})
         .flatMap(year => Object.values(year))
         .flatMap(session => Object.values(session))
@@ -70,7 +59,7 @@ const DashboardHome = ({ onNavigate }) => {
         totalYears: Object.keys(gradesResponse.grades || {}).length
       });
     } catch (err) {
-      setError('فشل في تحميل الإحصائيات');
+      setError(t('error')); 
       console.error('Error loading quick stats:', err);
     } finally {
       setIsLoading(false);
@@ -94,11 +83,11 @@ const DashboardHome = ({ onNavigate }) => {
   const getCurrentTimeGreeting = () => {
     const hour = new Date().getHours();
     if (hour < 12) {
-      return i18n.language === 'ar' ? 'صباح الخير' : 'Bonjour';
+      return t('goodMorning');
     } else if (hour < 18) {
-      return i18n.language === 'ar' ? 'مساء الخير' : 'Bon après-midi';
+      return t('goodAfternoon');
     } else {
-      return i18n.language === 'ar' ? 'مساء الخير' : 'Bonsoir';
+      return t('goodEvening');
     }
   };
 
@@ -143,34 +132,6 @@ const DashboardHome = ({ onNavigate }) => {
     </Card>
   );
 
-  const StatCard = ({ title, value, icon, color, subtitle }) => (
-    <Paper
-      elevation={2}
-      sx={{
-        p: 3,
-        borderRadius: 3,
-        background: `linear-gradient(135deg, ${color} 0%, ${color}CC 100%)`,
-        color: 'white',
-        textAlign: 'center'
-      }}
-    >
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 2 }}>
-        {icon}
-        <Typography variant="h4" fontWeight="bold" sx={{ ml: 1 }}>
-          {isLoading ? <Skeleton width={60} sx={{ bgcolor: 'rgba(255,255,255,0.3)' }} /> : value}
-        </Typography>
-      </Box>
-      <Typography variant="body1" fontWeight="600">
-        {title}
-      </Typography>
-      {subtitle && (
-        <Typography variant="body2" sx={{ opacity: 0.8, mt: 0.5 }}>
-          {subtitle}
-        </Typography>
-      )}
-    </Paper>
-  );
-
   return (
     <Box>
       {/* Welcome Section */}
@@ -197,9 +158,7 @@ const DashboardHome = ({ onNavigate }) => {
               </Typography>
             
               <Typography variant="body1" sx={{ opacity: 0.9, mt: 2 }}>
-                {i18n.language === 'ar' 
-? 'مرحباً بك في تطبيق وضعيتي – المنصة الخاصة بطلبة كلية العلوم القانونية والسياسية بسطات. يمكنك من خلاله الاطلاع على وضعيتك الجامعية، نقاطك، وتتبع مسارك الجامعي بكل سهولة وفي أي وقت.'                  : 'Bienvenue dans le système d\'information des étudiants. Vous pouvez consulter toutes vos informations académiques et notes ici.'
-                }
+                {t('welcomeMessageBody')}
               </Typography>
             </Grid>
             <Grid item xs={12} md={4} sx={{ textAlign: 'center' }}>
@@ -217,13 +176,12 @@ const DashboardHome = ({ onNavigate }) => {
               >
                 {user?.nom_complet?.charAt(0) || user?.cod_etu?.charAt(0) || 'S'}
               </Avatar>
-            
             </Grid>
           </Grid>
         </Box>
         
         {/* Decorative Elements */}
-        <Box
+         <Box
           sx={{
             position: 'absolute',
             top: -50,
@@ -249,44 +207,41 @@ const DashboardHome = ({ onNavigate }) => {
         />
       </Paper>
 
-    
-
       {/* Quick Actions */}
       <Box sx={{ mb: 4 }}>
- 
         <Grid container spacing={3}>
           <Grid item xs={12} sm={6} md={3}>
             <QuickActionCard
-              title=" بياناتي"
-              description="عرض  معلوماتك الشخصية والجامعية"
+              title={t('myProfile')}
+              description={t('viewPersonalInfo')}
               icon={<PersonIcon sx={{ fontSize: 30 }} />}
               color="#3498db"
               onClick={() => onNavigate('profile')}
             />
           </Grid>
-                <Grid item xs={12} sm={6} md={3}>
-          <QuickActionCard
-            title="الوضعية البيداغوجية"
-            description="عرض الوحدات والمواد المسجل بها حسب السنة"
-            icon={<AssignmentIcon sx={{ fontSize: 30 }} />}
-            color="#f39c12"
-            onClick={() => onNavigate('pedagogical')}
-          />
-        </Grid>
-
-            <Grid item xs={12} sm={6} md={3}>
-          <QuickActionCard
-            title="الوضعية الادارية"
-            description="عرض التسجيل الإداري عبر السنوات الجامعية"
-            icon={<AssignmentIcon sx={{ fontSize: 30 }} />}
-            color="#2340e2"
-            onClick={() => onNavigate('administrative')}
-          />
-        </Grid>
           <Grid item xs={12} sm={6} md={3}>
             <QuickActionCard
-              title="نقطي"
-              description="عرض جميع نقطك مفصلة حسب السنوات"
+              title={t('pedagogicalSituation')}
+              description={t('viewModules')}
+              icon={<AssignmentIcon sx={{ fontSize: 30 }} />}
+              color="#f39c12"
+              onClick={() => onNavigate('pedagogical')}
+            />
+          </Grid>
+
+          <Grid item xs={12} sm={6} md={3}>
+            <QuickActionCard
+              title={t('administrativeSituation')}
+              description={t('viewAdminReg')}
+              icon={<AssignmentIcon sx={{ fontSize: 30 }} />}
+              color="#2340e2"
+              onClick={() => onNavigate('administrative')}
+            />
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <QuickActionCard
+              title={t('myGrades')}
+              description={t('viewAllGrades')}
               icon={<GradeIcon sx={{ fontSize: 30 }} />}
               color="#e74c3c"
               onClick={() => onNavigate('grades')}
@@ -294,8 +249,8 @@ const DashboardHome = ({ onNavigate }) => {
           </Grid>
           <Grid item xs={12} sm={6} md={3}>
             <QuickActionCard
-              title=" البرمجة الزمنية"
-              description="  عرض البرمجة الزمنية الخاصة بالدورة  "
+              title={t('timeSchedule')}
+              description={t('viewSchedule')}
               icon={<TimeIcon sx={{ fontSize: 30 }} />}
               color="#12f3ce"
               onClick={loadQuickStats}
@@ -310,7 +265,7 @@ const DashboardHome = ({ onNavigate }) => {
           <Card sx={{ borderRadius: 3 }}>
             <CardContent sx={{ p: 3 }}>
               <Typography variant="h6" fontWeight="600" gutterBottom color="primary">
-                📋 ملخص المعلومات 
+                📋 {t('infoSummary')}
               </Typography>
               <Divider sx={{ mb: 3 }} />
               
@@ -326,7 +281,7 @@ const DashboardHome = ({ onNavigate }) => {
                   </Box>
                   <Box sx={{ mb: 2 }}>
                     <Typography variant="body2" color="text.secondary">
-                      التخصص
+                      {t('specialization')}
                     </Typography>
                     <Typography variant="body1" fontWeight="600">
                       {user?.etape || '-'}
@@ -336,7 +291,7 @@ const DashboardHome = ({ onNavigate }) => {
                 <Grid item xs={12} sm={6}>
                   <Box sx={{ mb: 2 }}>
                     <Typography variant="body2" color="text.secondary">
-                      رقم بطاقة التعريف - CIN
+                      {t('cinLabel')}
                     </Typography>
                     <Typography variant="body1" fontWeight="600">
                       {user?.cin || '-'}
@@ -344,7 +299,7 @@ const DashboardHome = ({ onNavigate }) => {
                   </Box>
                   <Box sx={{ mb: 2 }}>
                     <Typography variant="body2" color="text.secondary">
-                      آخر تحديث
+                      {t('lastUpdate')}
                     </Typography>
                     <Typography variant="body1" fontWeight="600">
                       {formatDate(user?.derniere_mise_a_jour)}
@@ -355,8 +310,6 @@ const DashboardHome = ({ onNavigate }) => {
             </CardContent>
           </Card>
         </Grid>
-
-        
       </Grid>
 
       {/* Error Display */}
