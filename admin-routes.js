@@ -138,7 +138,6 @@ router.get('/verify', authenticateAdmin, (req, res) => { res.json({ valid: true,
 router.get('/groups/rules', authenticateAdmin, async (req, res) => {
   try {
     // FIX: Use COLLATE "C" to strictly force "Space" (32) < "Letters" (65+)
-    // Result: "EL M..." (Group 3) < "EL N..." (Group 3) < "ELM..." (Group 4)
     const query = `
       SELECT 
         gr.*,
@@ -163,12 +162,12 @@ router.get('/groups/rules', authenticateAdmin, async (req, res) => {
   }
 });
 
-// GET Students for a specific Grouping Rule (CORRECTED)
+// GET Students for a specific Grouping Rule
 router.get('/groups/rules/:id/students', authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // 1. Fetch the rule details first to get the pattern and ranges
+    // 1. Fetch the rule details first
     const ruleRes = await pool.query('SELECT * FROM grouping_rules WHERE id = $1', [id]);
     
     if (ruleRes.rows.length === 0) {
@@ -178,20 +177,19 @@ router.get('/groups/rules/:id/students', authenticateAdmin, async (req, res) => 
     const rule = ruleRes.rows[0];
 
     // 2. Fetch matching students using the rule's criteria
-    // We join pedagogical_situation to ensure we get the correct names and module registration
     const query = `
       SELECT DISTINCT
         ps.cod_etu, 
-        COALESCE(ps.lib_nom_pat_ind, s.nom) as lib_nom_pat_ind, 
-        COALESCE(ps.lib_pr1_ind, s.prenom) as lib_pr1_ind, 
+        COALESCE(ps.lib_nom_pat_ind, s.lib_nom_pat_ind) as lib_nom_pat_ind, 
+        COALESCE(ps.lib_pr1_ind, s.lib_pr1_ind) as lib_pr1_ind, 
         s.cin_ind, 
         s.lib_etp
       FROM pedagogical_situation ps
       LEFT JOIN students s ON ps.cod_etu = s.cod_etu
       WHERE ps.cod_elp ILIKE $1
-      AND UPPER(ps.lib_nom_pat_ind) >= UPPER($2)
-      AND UPPER(ps.lib_nom_pat_ind) <= UPPER($3 || 'ZZZZZZ')
-      ORDER BY lib_nom_pat_ind, lib_pr1_ind
+      AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" >= UPPER($2) COLLATE "C"
+      AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" <= (UPPER($3) || 'ZZZZZZ') COLLATE "C"
+      ORDER BY 2, 3
     `;
 
     const result = await pool.query(query, [
@@ -203,8 +201,9 @@ router.get('/groups/rules/:id/students', authenticateAdmin, async (req, res) => 
     res.json(result.rows);
 
   } catch (error) {
-    console.error('Get rule students error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('❌ Error in GET /groups/rules/:id/students');
+    console.error('Message:', error.message);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 
@@ -221,7 +220,6 @@ router.get('/groups/stats/breakdown', authenticateAdmin, async (req, res) => {
       GROUP BY ps.cod_elp
     `;
     
-    // FIX: Strict ASCII sorting for breakdown
     const groupsQuery = `
       SELECT ps.cod_elp, gr.group_name, COUNT(DISTINCT ps.cod_etu) as group_count
       FROM pedagogical_situation ps
@@ -250,7 +248,6 @@ router.get('/groups/stats/breakdown', authenticateAdmin, async (req, res) => {
 // FULL EXPORT
 router.get('/groups/stats/full-export', authenticateAdmin, async (req, res) => {
   try {
-    // FIX: Strict ASCII sorting for export
     const query = `
       SELECT gr.module_pattern, ps.cod_elp, MAX(ps.lib_elp) as lib_elp, gr.group_name, COUNT(DISTINCT ps.cod_etu) as student_count
       FROM grouping_rules gr
@@ -266,7 +263,7 @@ router.get('/groups/stats/full-export', authenticateAdmin, async (req, res) => {
   } catch (error) { console.error('Full stats export error:', error); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-// *** NEW ROUTE: EXPORT DETAILED ASSIGNMENTS ***
+// EXPORT DETAILED ASSIGNMENTS
 router.get('/groups/assignments/export', authenticateAdmin, async (req, res) => {
   try {
     const query = `
@@ -282,7 +279,6 @@ router.get('/groups/assignments/export', authenticateAdmin, async (req, res) => 
       WHERE 
         ps.cod_elp NOT LIKE '%CC'
         AND ps.cod_elp NOT LIKE '%005'
-        -- Strict ASCII Sorting
         AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" >= UPPER(gr.range_start) COLLATE "C"
         AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" <= (UPPER(gr.range_end) || 'ZZZZZZ') COLLATE "C"
       ORDER BY gr.group_name, ps.cod_elp, ps.lib_nom_pat_ind, ps.lib_pr1_ind
@@ -375,7 +371,6 @@ router.get('/dashboard/overview', authenticateAdmin, async (req, res) => {
 // 6. STUDENT MANAGEMENT ROUTES
 // ==========================================
 
-// Add this NEW route before /students/search or /students/:id
 // GET /students/export - Export filtered students to CSV
 router.get('/students/export', authenticateAdmin, async (req, res) => {
   try {
@@ -385,7 +380,6 @@ router.get('/students/export', authenticateAdmin, async (req, res) => {
     let params = [];
     let paramIndex = 1;
     
-    // 1. Build Filters
     if (search) {
       whereConditions.push(`(lib_nom_pat_ind ILIKE $${paramIndex} OR lib_pr1_ind ILIKE $${paramIndex} OR cod_etu ILIKE $${paramIndex} OR cin_ind ILIKE $${paramIndex})`);
       params.push(`%${search}%`);
@@ -396,7 +390,6 @@ router.get('/students/export', authenticateAdmin, async (req, res) => {
     
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
     
-    // 2. Corrected SQL Query
     const query = `
       SELECT 
         cod_etu, 
@@ -415,7 +408,6 @@ router.get('/students/export', authenticateAdmin, async (req, res) => {
     
     const result = await pool.query(query, params);
     
-    // 3. Generate CSV
     const headers = [
       'Code Etudiant', 'Nom', 'Prenom', 'CIN', 
       'Filiere', 'Annee', 
@@ -426,9 +418,7 @@ router.get('/students/export', authenticateAdmin, async (req, res) => {
     let csvContent = headers.join(',') + '\n';
     
     result.rows.forEach(row => {
-      // Helper to format date safely
       const formatDate = (d) => d ? new Date(d).toLocaleDateString('fr-FR') : '';
-      // Helper to escape CSV fields (handle quotes/commas)
       const escape = (t) => t ? `"${t.toString().replace(/"/g, '""')}"` : '';
       
       const line = [
@@ -438,7 +428,7 @@ router.get('/students/export', authenticateAdmin, async (req, res) => {
         row.cin_ind || '',
         escape(row.lib_etp),
         row.cod_anu || '',
-        formatDate(row.date_nai_ind), // Matches SQL column name
+        formatDate(row.date_nai_ind),
         escape(row.lib_vil_nai_etu),
         row.cod_sex_etu || '',
         row.cod_nne_ind || ''
@@ -447,7 +437,6 @@ router.get('/students/export', authenticateAdmin, async (req, res) => {
       csvContent += line + '\n';
     });
     
-    // 4. Send Response
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename=students_export_${year || 'all'}_${new Date().toISOString().split('T')[0]}.csv`);
     res.send(csvContent);
@@ -609,7 +598,6 @@ router.get('/student-card-requests', authenticateAdmin, async (req, res) => {
   }
 });
 
-// *** ADDED: PUT ROUTE FOR UPDATING STATUS ***
 router.put('/student-card-requests/:id', authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
@@ -619,7 +607,6 @@ router.put('/student-card-requests/:id', authenticateAdmin, async (req, res) => 
        return res.status(400).json({ error: 'Invalid status' });
     }
 
-    // Update status and comment (assuming you have these columns)
     const result = await pool.query(
       `UPDATE student_card_requests 
        SET status = $1, comment = $2, updated_at = CURRENT_TIMESTAMP 
@@ -822,44 +809,10 @@ router.get('/employees/stats', authenticateAdmin, requireRH, async (req, res) =>
 });
 
 // ==========================================
-// 11. EXAM PLANNING ROUTES (NEW)
+// 11. EXAM PLANNING ROUTES
 // ==========================================
 
-// Get all scheduled exams
-router.get('/exams', authenticateAdmin, async (req, res) => {
-  try {
-    const result = await pool.query('SELECT * FROM exam_planning ORDER BY exam_date DESC, start_time ASC');
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Get exams error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Create a new exam schedule
-router.post('/exams', authenticateAdmin, async (req, res) => {
-  try {
-    const { module_code, module_name, group_name, exam_date, start_time, end_time, location, professor_name } = req.body;
-    
-    if (!module_code || !exam_date || !start_time || !location) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    const result = await pool.query(
-      `INSERT INTO exam_planning 
-       (module_code, module_name, group_name, exam_date, start_time, end_time, location, professor_name) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
-       RETURNING *`,
-      [module_code, module_name, group_name, exam_date, start_time, end_time, location, professor_name]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error('Create exam error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Delete an exam
+// DELETE an exam
 router.delete('/exams/:id', authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
@@ -879,40 +832,44 @@ router.get('/groups/students', authenticateAdmin, async (req, res) => {
     
     if (!module) return res.status(400).json({ error: 'Module code required' });
 
-    console.log(`Fetching students for Module: ${module}, Group: ${group}`);
+    console.log(`🔍 Fetching students for Module: "${module}", Group: "${group}"`);
 
+    // FIX: Changed '=' to 'ILIKE' and added TRIM to fix matching issues
     let query = `
-      SELECT DISTINCT ps.cod_etu, ps.lib_nom_pat_ind, ps.lib_pr1_ind, s.cin_ind, s.lib_etp
+      SELECT DISTINCT 
+        ps.cod_etu, 
+        COALESCE(ps.lib_nom_pat_ind, s.lib_nom_pat_ind) as lib_nom_pat_ind, 
+        COALESCE(ps.lib_pr1_ind, s.lib_pr1_ind) as lib_pr1_ind, 
+        s.cin_ind, 
+        s.lib_etp
       FROM pedagogical_situation ps
       LEFT JOIN students s ON ps.cod_etu = s.cod_etu
-      WHERE ps.cod_elp = $1
+      WHERE TRIM(ps.cod_elp) ILIKE TRIM($1)
     `;
     
     const params = [module];
 
-    // Handle Groups
-    if (group && group !== 'Tous') {
-      // Logic: Find students whose names fall into the alphabetic range of the group
+    if (group && group !== 'Tous' && group !== 'null') {
       query += `
         AND EXISTS (
           SELECT 1 FROM grouping_rules gr
           WHERE ps.cod_elp ILIKE gr.module_pattern
           AND gr.group_name = $2
-          AND ps.lib_nom_pat_ind >= gr.range_start
-          AND ps.lib_nom_pat_ind <= (gr.range_end || 'ZZZZZZ')
+          AND UPPER(COALESCE(ps.lib_nom_pat_ind, s.lib_nom_pat_ind)) COLLATE "C" >= UPPER(gr.range_start) COLLATE "C"
+          AND UPPER(COALESCE(ps.lib_nom_pat_ind, s.lib_nom_pat_ind)) COLLATE "C" <= (UPPER(gr.range_end) || 'ZZZZZZ') COLLATE "C"
         )
       `;
       params.push(group);
     }
 
-    query += ` ORDER BY ps.lib_nom_pat_ind, ps.lib_pr1_ind`;
+    query += ` ORDER BY 2, 3`;
 
     const result = await pool.query(query, params);
-    console.log(`Found ${result.rows.length} students.`);
+    console.log(`✅ Found ${result.rows.length} students.`);
     
     res.json(result.rows);
   } catch (error) {
-    console.error('❌ Error in /groups/students:', error.message); // Look at your terminal for this!
+    console.error('❌ Error in /groups/students:', error.message);
     res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
@@ -959,89 +916,88 @@ router.delete('/locations/:id', authenticateAdmin, async (req, res) => {
 router.post('/exams', authenticateAdmin, async (req, res) => {
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    
     const { 
       module_code, module_name, group_name, 
       exam_date, start_time, end_time, 
       location, professor_name,
-      student_ids // Array of cod_etu strings
+      student_ids 
     } = req.body;
+
+    // --- DEBUG LOGS ---
+    console.log(`\n--- 📝 Creating Exam: ${module_name} ---`);
+    console.log(`📍 Location: ${location}`);
+    console.log(`👥 Received Student IDs Count: ${student_ids ? student_ids.length : 'UNDEFINED'}`);
+    
+    await client.query('BEGIN');
     
     // 1. Create Exam Record
     const examRes = await client.query(
       `INSERT INTO exam_planning 
        (module_code, module_name, group_name, exam_date, start_time, end_time, location, professor_name) 
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
-       RETURNING *`,
+       RETURNING id`,
       [module_code, module_name, group_name, exam_date, start_time, end_time, location, professor_name]
     );
     const examId = examRes.rows[0].id;
+    console.log(`✅ Exam Record Created (ID: ${examId})`);
 
-    // 2. Insert Student Assignments (if provided)
+    // 2. Insert Student Assignments
     if (student_ids && student_ids.length > 0) {
-      // Create values string: ($1, $2), ($1, $3), ...
+      // Build the bulk insert query
       const values = student_ids.map((_, i) => `($1, $${i + 2})`).join(',');
       const params = [examId, ...student_ids];
       
+      console.log(`💾 Inserting ${student_ids.length} students into database...`);
+      
       await client.query(
-        `INSERT INTO exam_assignments (exam_id, cod_etu) VALUES ${values}`,
+        `INSERT INTO exam_assignments (exam_id, cod_etu) VALUES ${values}
+         ON CONFLICT (exam_id, cod_etu) DO NOTHING`, // Prevent duplicate errors
         params
       );
+      console.log(`✅ Students Inserted Successfully.`);
+    } else {
+      console.warn(`⚠️ WARNING: No students were inserted! student_ids list was empty.`);
     }
 
     await client.query('COMMIT');
-    res.status(201).json(examRes.rows[0]);
+    res.status(201).json({ id: examId, message: 'Exam created successfully' });
+    
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Create exam error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('❌ Create exam error:', error);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   } finally {
     client.release();
   }
 });
 
-// UPDATE: Get Exams with Accurate Student Counts
-router.get('/exams', authenticateAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT ep.*, COUNT(ea.cod_etu) as assigned_count 
-      FROM exam_planning ep
-      LEFT JOIN exam_assignments ea ON ep.id = ea.exam_id
-      GROUP BY ep.id
-      ORDER BY ep.exam_date DESC, ep.start_time ASC
-    `);
-    res.json(result.rows);
-  } catch (error) {
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// NEW: Get Students specific to an exam instance (CORRECTED)
+// NEW: Get Students specific to an exam instance (ROBUST - NO DUPLICATES)
 router.get('/exams/:id/students', authenticateAdmin, async (req, res) => {
   try {
+    // FIX: Use DISTINCT ON (ea.cod_etu) to strictly ensure 1 row per student ID
     const result = await pool.query(`
-      SELECT 
+      SELECT DISTINCT ON (ea.cod_etu)
         ea.cod_etu, 
-        COALESCE(ps.lib_nom_pat_ind, s.nom) as lib_nom_pat_ind, 
-        COALESCE(ps.lib_pr1_ind, s.prenom) as lib_pr1_ind, 
+        COALESCE(s.lib_nom_pat_ind, ps.lib_nom_pat_ind) as lib_nom_pat_ind, 
+        COALESCE(s.lib_pr1_ind, ps.lib_pr1_ind) as lib_pr1_ind, 
         s.cin_ind, 
         s.lib_etp
       FROM exam_assignments ea
-      LEFT JOIN pedagogical_situation ps ON ea.cod_etu = ps.cod_etu
       LEFT JOIN students s ON ea.cod_etu = s.cod_etu
+      LEFT JOIN pedagogical_situation ps ON ea.cod_etu = ps.cod_etu
       WHERE ea.exam_id = $1
-      ORDER BY ps.lib_nom_pat_ind, ps.lib_pr1_ind
+      ORDER BY ea.cod_etu, lib_nom_pat_ind
     `, [req.params.id]);
     
     res.json(result.rows);
   } catch (error) {
-    console.error('Get exam students error:', error); // Check your terminal for this error if it fails again
+    console.error('Get exam students error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// GET Exams with Student Count (REPLACE YOUR OLD ROUTE WITH THIS)
+
+// GET Exams with Student Count (CORRECTED LIST VIEW)
 router.get('/exams', authenticateAdmin, async (req, res) => {
   try {
     const result = await pool.query(`
