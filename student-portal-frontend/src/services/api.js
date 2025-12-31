@@ -204,6 +204,64 @@ export const adminAPI = {
     return response.data;
   },
 
+  // NEW: Fetch detailed breakdown (Module Code -> Groups)
+  getDetailedStats: async () => {
+    const response = await api.get('/admin/groups/stats/full-export');
+    return response.data;
+  },
+
+  getGroupStudents: async (moduleCode, groupName) => {
+    const params = new URLSearchParams();
+    params.append('module', moduleCode);
+    if (groupName) params.append('group', groupName);
+    
+    const response = await api.get(`/admin/groups/students?${params}`);
+    return response.data;
+  },
+
+  // Locations
+  getLocations: async () => {
+    const response = await api.get('/admin/locations');
+    return response.data;
+  },
+  
+  addLocation: async (data) => {
+    const response = await api.post('/admin/locations', data);
+    return response.data;
+  },
+  
+  deleteLocation: async (id) => {
+    await api.delete(`/admin/locations/${id}`);
+  },
+
+  // Updated Exam Methods
+  getExamStudents: async (examId) => {
+    const response = await api.get(`/admin/exams/${examId}/students`);
+    return response.data;
+  },
+
+  
+  // --- ADD THIS METHOD ---
+  getGroupingRules: async () => {
+    const response = await api.get('/admin/groups/rules');
+    return response.data;
+  },
+  // Exam Planning
+  getExams: async () => {
+    const response = await api.get('/admin/exams');
+    return response.data;
+  },
+
+  createExam: async (examData) => {
+    const response = await api.post('/admin/exams', examData);
+    return response.data;
+  },
+
+  deleteExam: async (id) => {
+    const response = await api.delete(`/admin/exams/${id}`);
+    return response.data;
+  },
+
   // Export Students Function
   exportStudents: async (params = {}) => {
     const searchParams = new URLSearchParams();

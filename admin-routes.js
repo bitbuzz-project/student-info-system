@@ -163,30 +163,45 @@ router.get('/groups/rules', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Get unique students for a specific grouping rule (Display List)
+// GET Students for a specific Grouping Rule (CORRECTED)
 router.get('/groups/rules/:id/students', authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const ruleResult = await pool.query('SELECT * FROM grouping_rules WHERE id = $1', [id]);
-    if (ruleResult.rows.length === 0) return res.status(404).json({ error: 'Rule not found' });
-    const rule = ruleResult.rows[0];
 
-    // FIX: Strict ASCII sorting for student list
-    const studentsQuery = `
-      SELECT DISTINCT ps.cod_etu, ps.lib_nom_pat_ind, ps.lib_pr1_ind, s.cin_ind, s.lib_etp
+    // 1. Fetch the rule details first to get the pattern and ranges
+    const ruleRes = await pool.query('SELECT * FROM grouping_rules WHERE id = $1', [id]);
+    
+    if (ruleRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Règle introuvable' });
+    }
+
+    const rule = ruleRes.rows[0];
+
+    // 2. Fetch matching students using the rule's criteria
+    // We join pedagogical_situation to ensure we get the correct names and module registration
+    const query = `
+      SELECT DISTINCT
+        ps.cod_etu, 
+        COALESCE(ps.lib_nom_pat_ind, s.nom) as lib_nom_pat_ind, 
+        COALESCE(ps.lib_pr1_ind, s.prenom) as lib_pr1_ind, 
+        s.cin_ind, 
+        s.lib_etp
       FROM pedagogical_situation ps
       LEFT JOIN students s ON ps.cod_etu = s.cod_etu
-      WHERE 
-        ps.cod_elp ILIKE $1
-        AND ps.cod_elp NOT LIKE '%CC'
-        AND ps.cod_elp NOT LIKE '%005'
-        AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" >= UPPER($2) COLLATE "C"
-        AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" <= (UPPER($3) || 'ZZZZZZ') COLLATE "C"
-      ORDER BY ps.lib_nom_pat_ind COLLATE "C", ps.lib_pr1_ind COLLATE "C"
+      WHERE ps.cod_elp ILIKE $1
+      AND UPPER(ps.lib_nom_pat_ind) >= UPPER($2)
+      AND UPPER(ps.lib_nom_pat_ind) <= UPPER($3 || 'ZZZZZZ')
+      ORDER BY lib_nom_pat_ind, lib_pr1_ind
     `;
 
-    const studentsResult = await pool.query(studentsQuery, [rule.module_pattern, rule.range_start, rule.range_end]);
-    res.json(studentsResult.rows);
+    const result = await pool.query(query, [
+      rule.module_pattern, 
+      rule.range_start, 
+      rule.range_end
+    ]);
+
+    res.json(result.rows);
+
   } catch (error) {
     console.error('Get rule students error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -804,6 +819,250 @@ router.get('/employees/stats', authenticateAdmin, requireRH, async (req, res) =>
     const typeStats = byType.rows.reduce((acc, row) => { acc[row.type] = parseInt(row.count); return acc; }, {});
     res.json({ total: parseInt(total.rows[0].count), professors: typeStats['PROF'] || 0, admins: typeStats['Administratif'] || 0, active: parseInt(active.rows[0].count), departments: parseInt(depts.rows[0].count) });
   } catch (error) { console.error('Error getting employee stats:', error); res.status(500).json({ error: 'Internal server error' }); }
+});
+
+// ==========================================
+// 11. EXAM PLANNING ROUTES (NEW)
+// ==========================================
+
+// Get all scheduled exams
+router.get('/exams', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM exam_planning ORDER BY exam_date DESC, start_time ASC');
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Get exams error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create a new exam schedule
+router.post('/exams', authenticateAdmin, async (req, res) => {
+  try {
+    const { module_code, module_name, group_name, exam_date, start_time, end_time, location, professor_name } = req.body;
+    
+    if (!module_code || !exam_date || !start_time || !location) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO exam_planning 
+       (module_code, module_name, group_name, exam_date, start_time, end_time, location, professor_name) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
+       RETURNING *`,
+      [module_code, module_name, group_name, exam_date, start_time, end_time, location, professor_name]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Create exam error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete an exam
+router.delete('/exams/:id', authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await pool.query('DELETE FROM exam_planning WHERE id = $1', [id]);
+    res.json({ message: 'Exam deleted successfully' });
+  } catch (error) {
+    console.error('Delete exam error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET Students for a specific Module + Group (for Exam Planning)
+// ROBUST GET STUDENTS ROUTE
+router.get('/groups/students', authenticateAdmin, async (req, res) => {
+  try {
+    const { module, group } = req.query;
+    
+    if (!module) return res.status(400).json({ error: 'Module code required' });
+
+    console.log(`Fetching students for Module: ${module}, Group: ${group}`);
+
+    let query = `
+      SELECT DISTINCT ps.cod_etu, ps.lib_nom_pat_ind, ps.lib_pr1_ind, s.cin_ind, s.lib_etp
+      FROM pedagogical_situation ps
+      LEFT JOIN students s ON ps.cod_etu = s.cod_etu
+      WHERE ps.cod_elp = $1
+    `;
+    
+    const params = [module];
+
+    // Handle Groups
+    if (group && group !== 'Tous') {
+      // Logic: Find students whose names fall into the alphabetic range of the group
+      query += `
+        AND EXISTS (
+          SELECT 1 FROM grouping_rules gr
+          WHERE ps.cod_elp ILIKE gr.module_pattern
+          AND gr.group_name = $2
+          AND ps.lib_nom_pat_ind >= gr.range_start
+          AND ps.lib_nom_pat_ind <= (gr.range_end || 'ZZZZZZ')
+        )
+      `;
+      params.push(group);
+    }
+
+    query += ` ORDER BY ps.lib_nom_pat_ind, ps.lib_pr1_ind`;
+
+    const result = await pool.query(query, params);
+    console.log(`Found ${result.rows.length} students.`);
+    
+    res.json(result.rows);
+  } catch (error) {
+    console.error('❌ Error in /groups/students:', error.message); // Look at your terminal for this!
+    res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
+// ==========================================
+// 12. LOCATION & ASSIGNMENT ROUTES
+// ==========================================
+
+// GET Locations
+router.get('/locations', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM locations ORDER BY name');
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ADD Location
+router.post('/locations', authenticateAdmin, async (req, res) => {
+  try {
+    const { name, capacity, type } = req.body;
+    const result = await pool.query(
+      'INSERT INTO locations (name, capacity, type) VALUES ($1, $2, $3) RETURNING *',
+      [name, capacity, type]
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// DELETE Location
+router.delete('/locations/:id', authenticateAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM locations WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// UPDATE: Create Exam with Student Assignments
+router.post('/exams', authenticateAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    
+    const { 
+      module_code, module_name, group_name, 
+      exam_date, start_time, end_time, 
+      location, professor_name,
+      student_ids // Array of cod_etu strings
+    } = req.body;
+    
+    // 1. Create Exam Record
+    const examRes = await client.query(
+      `INSERT INTO exam_planning 
+       (module_code, module_name, group_name, exam_date, start_time, end_time, location, professor_name) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
+       RETURNING *`,
+      [module_code, module_name, group_name, exam_date, start_time, end_time, location, professor_name]
+    );
+    const examId = examRes.rows[0].id;
+
+    // 2. Insert Student Assignments (if provided)
+    if (student_ids && student_ids.length > 0) {
+      // Create values string: ($1, $2), ($1, $3), ...
+      const values = student_ids.map((_, i) => `($1, $${i + 2})`).join(',');
+      const params = [examId, ...student_ids];
+      
+      await client.query(
+        `INSERT INTO exam_assignments (exam_id, cod_etu) VALUES ${values}`,
+        params
+      );
+    }
+
+    await client.query('COMMIT');
+    res.status(201).json(examRes.rows[0]);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Create exam error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// UPDATE: Get Exams with Accurate Student Counts
+router.get('/exams', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT ep.*, COUNT(ea.cod_etu) as assigned_count 
+      FROM exam_planning ep
+      LEFT JOIN exam_assignments ea ON ep.id = ea.exam_id
+      GROUP BY ep.id
+      ORDER BY ep.exam_date DESC, ep.start_time ASC
+    `);
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// NEW: Get Students specific to an exam instance (CORRECTED)
+router.get('/exams/:id/students', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        ea.cod_etu, 
+        COALESCE(ps.lib_nom_pat_ind, s.nom) as lib_nom_pat_ind, 
+        COALESCE(ps.lib_pr1_ind, s.prenom) as lib_pr1_ind, 
+        s.cin_ind, 
+        s.lib_etp
+      FROM exam_assignments ea
+      LEFT JOIN pedagogical_situation ps ON ea.cod_etu = ps.cod_etu
+      LEFT JOIN students s ON ea.cod_etu = s.cod_etu
+      WHERE ea.exam_id = $1
+      ORDER BY ps.lib_nom_pat_ind, ps.lib_pr1_ind
+    `, [req.params.id]);
+    
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Get exam students error:', error); // Check your terminal for this error if it fails again
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET Exams with Student Count (REPLACE YOUR OLD ROUTE WITH THIS)
+router.get('/exams', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT ep.*, COUNT(ea.cod_etu) as assigned_count 
+      FROM exam_planning ep
+      LEFT JOIN exam_assignments ea ON ep.id = ea.exam_id
+      GROUP BY ep.id
+      ORDER BY ep.exam_date DESC, ep.start_time ASC
+    `);
+    
+    // Ensure assigned_count is a number (Postgres returns it as a string)
+    const rows = result.rows.map(row => ({
+      ...row,
+      assigned_count: parseInt(row.assigned_count || 0)
+    }));
+
+    res.json(rows);
+  } catch (error) {
+    console.error('Get exams error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 module.exports = router;

@@ -34,6 +34,7 @@ import {
   MoreVert as MoreVertIcon,
   CreditCard as CreditCardIcon, // Icon for card requests
   Groups as GroupsIcon, 
+  Event as EventIcon, // <--- ADD THIS ICON
   Home as HomeIcon
 } from '@mui/icons-material';
 import { useAdmin } from '../../contexts/AdminContext';
@@ -42,7 +43,7 @@ import ModuleManagement from './ModuleManagement';
 import StudentCardRequests from './StudentCardRequests';
 import EmployeeManagement from './EmployeeManagement';
 import GroupManagement from './GroupManagement';
-
+import ExamPlanning from './ExamPlanning'; // <--- ADD THIS IMPORT
 // Import admin page components (we'll create these next)
 import AdminOverview from './AdminOverview';
 import StudentManagement from './StudentManagement';
@@ -111,6 +112,12 @@ const AdminDashboard = () => {
     icon: <SettingsIcon />,
     color: '#f39c12'
   },
+  {                                 // <--- START OF NEW ITEM
+      id: 'exams',
+      label: 'Planning Examens',
+      icon: <EventIcon />,
+      color: '#9b59b6' 
+    },
   {
       id: 'laureats',
       label: 'Gestion des Lauréats',
@@ -163,6 +170,8 @@ const AdminDashboard = () => {
     return <EmployeeManagement />;
       case 'sync':
         return <SyncManagement />;
+        case 'exams':               // <--- ADD THIS CASE
+        return <ExamPlanning />;
       case 'system':
         return <SystemHealth />;
         case 'laureats':                 // <--- ADD THIS CASE
