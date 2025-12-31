@@ -131,7 +131,7 @@ router.get('/verify', authenticateAdmin, (req, res) => { res.json({ valid: true,
 
 
 // ==========================================
-// 4. GROUP & PEDAGOGICAL ROUTES (STRICT ASCII SORTING)
+// 4. GROUP & PEDAGOGICAL ROUTES
 // ==========================================
 
 // Get all grouping rules with statistics
@@ -824,17 +824,26 @@ router.delete('/exams/:id', authenticateAdmin, async (req, res) => {
   }
 });
 
-// GET Students for a specific Module + Group (for Exam Planning)
-// ROBUST GET STUDENTS ROUTE
+// GET Students for Multiple Modules + Multiple Groups (MERGE FEATURE)
 router.get('/groups/students', authenticateAdmin, async (req, res) => {
   try {
     const { module, group } = req.query;
     
     if (!module) return res.status(400).json({ error: 'Module code required' });
 
-    console.log(`🔍 Fetching students for Module: "${module}", Group: "${group}"`);
+    // 1. Parse comma-separated inputs
+    const modules = module.split(',').map(m => m.trim()).filter(m => m);
+    // Parse groups, filtering out 'null' or 'undefined' strings
+    const groups = group 
+      ? group.split(',').map(g => g.trim()).filter(g => g && g !== 'null' && g !== 'undefined') 
+      : [];
 
-    // FIX: Changed '=' to 'ILIKE' and added TRIM to fix matching issues
+    console.log(`🔍 Fetching students for Modules: [${modules.join(', ')}], Groups: [${groups.join(', ')}]`);
+
+    // 2. Build Dynamic Module Conditions (OR logic)
+    // Result: (TRIM(ps.cod_elp) ILIKE TRIM($1) OR TRIM(ps.cod_elp) ILIKE TRIM($2) ...)
+    const moduleConditions = modules.map((_, index) => `TRIM(ps.cod_elp) ILIKE TRIM($${index + 1})`).join(' OR ');
+
     let query = `
       SELECT DISTINCT 
         ps.cod_etu, 
@@ -844,25 +853,32 @@ router.get('/groups/students', authenticateAdmin, async (req, res) => {
         s.lib_etp
       FROM pedagogical_situation ps
       LEFT JOIN students s ON ps.cod_etu = s.cod_etu
-      WHERE TRIM(ps.cod_elp) ILIKE TRIM($1)
+      WHERE (${moduleConditions})
     `;
     
-    const params = [module];
+    const params = [...modules];
+    let nextParamIndex = modules.length + 1;
 
-    if (group && group !== 'Tous' && group !== 'null') {
+    // 3. Apply Group Filter (only if groups provided and not "Tous")
+    if (groups.length > 0 && !groups.includes('Tous')) {
+      const groupPlaceholders = groups.map((_, i) => `$${nextParamIndex + i}`).join(',');
+      
+      // We check if the student belongs to ANY of the selected groups for ANY of the selected modules
       query += `
         AND EXISTS (
           SELECT 1 FROM grouping_rules gr
-          WHERE ps.cod_elp ILIKE gr.module_pattern
-          AND gr.group_name = $2
+          WHERE (
+             ${modules.map((_, i) => `ps.cod_elp ILIKE gr.module_pattern`).join(' OR ')}
+          )
+          AND gr.group_name IN (${groupPlaceholders})
           AND UPPER(COALESCE(ps.lib_nom_pat_ind, s.lib_nom_pat_ind)) COLLATE "C" >= UPPER(gr.range_start) COLLATE "C"
           AND UPPER(COALESCE(ps.lib_nom_pat_ind, s.lib_nom_pat_ind)) COLLATE "C" <= (UPPER(gr.range_end) || 'ZZZZZZ') COLLATE "C"
         )
       `;
-      params.push(group);
+      params.push(...groups);
     }
 
-    query += ` ORDER BY 2, 3`;
+    query += ` ORDER BY 2, 3`; // Order by Nom, Prenom
 
     const result = await pool.query(query, params);
     console.log(`✅ Found ${result.rows.length} students.`);
