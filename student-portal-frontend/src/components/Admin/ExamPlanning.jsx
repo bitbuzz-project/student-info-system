@@ -11,10 +11,40 @@ import {
   Delete as DeleteIcon,
   MeetingRoom as MeetingRoomIcon,
   Settings as SettingsIcon,
-  ViewWeek as RangeIcon,
-  Balance as BalanceIcon
+  Balance as BalanceIcon,
+  Block as BlockIcon,
+  Class as ClassIcon,
+  People as PeopleIcon,          // Restored
+  CheckCircle as CheckCircleIcon, // Restored
+  Cancel as CancelIcon           // Restored
 } from '@mui/icons-material';
 import { adminAPI } from '../../services/api';
+
+// --- COMPONENT: STAT CARD ---
+const StatCard = ({ title, value, icon, color, loading }) => (
+  <Card sx={{ height: '100%', boxShadow: 2 }}>
+    <CardContent sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', p: 2, '&:last-child': { pb: 2 } }}>
+      <Box>
+        <Typography color="text.secondary" variant="subtitle2" fontWeight="bold">{title}</Typography>
+        {loading ? (
+          <CircularProgress size={20} sx={{ mt: 1 }} />
+        ) : (
+          <Typography variant="h4" fontWeight="bold" color={`${color}.main`}>{value}</Typography>
+        )}
+      </Box>
+      <Box sx={{ 
+        p: 1.5, 
+        borderRadius: 3, 
+        bgcolor: (theme) => theme.palette[color].light, 
+        color: (theme) => theme.palette[color].contrastText || theme.palette[color].dark,
+        opacity: 0.8,
+        display: 'flex'
+      }}>
+        {icon}
+      </Box>
+    </CardContent>
+  </Card>
+);
 
 const ExamPlanning = () => {
   // --- STATE ---
@@ -58,7 +88,6 @@ const ExamPlanning = () => {
       setExams(examsData);
       setRawStats(statsData);
 
-      // --- FIX: NATURAL SORT FOR LOCATIONS (1, 2, ... 10 instead of 1, 10, 2) ---
       const sortedLocations = locsData.sort((a, b) => 
         a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
       );
@@ -80,34 +109,44 @@ const ExamPlanning = () => {
 
   useEffect(() => { loadData(); }, []);
 
-  // --- LOGIC: FETCH STUDENTS (PRECISE PAIRS) ---
+  // --- LOGIC: IDENTIFY OCCUPIED LOCATIONS ---
+  const occupiedLocationNames = useMemo(() => {
+    if (!commonDate || !commonStartTime || !commonEndTime) return [];
+    
+    return exams
+      .filter(e => {
+        const examDate = new Date(e.exam_date).toISOString().split('T')[0];
+        if (examDate !== commonDate) return false;
+        return e.start_time < commonEndTime && e.end_time > commonStartTime;
+      })
+      .map(e => e.location);
+  }, [exams, commonDate, commonStartTime, commonEndTime]);
+
+  // --- LOGIC: FETCH STUDENTS ---
   const handleSelectData = async (modules, groups) => {
     setSelectedModules(modules);
     setSelectedGroups(groups);
     setPlanningSessions([]); 
     
     if (modules && modules.length > 0) {
-      if (groups.length === 0) {
-        setAllGroupStudents([]);
-        return;
-      }
-
       setLoading(true);
       try {
         const requests = [];
-        const moduleMap = new Map();
+        
+        if (groups.length === 0) {
+            const moduleCodes = modules.map(m => m.cod_elp).join(',');
+            requests.push(adminAPI.getGroupStudents(moduleCodes, 'Tous'));
+        } else {
+            const moduleMap = new Map();
+            groups.forEach(g => {
+                if (!moduleMap.has(g.cod_elp)) moduleMap.set(g.cod_elp, []);
+                moduleMap.get(g.cod_elp).push(g.group_name);
+            });
 
-        // Group selections by Module Code
-        groups.forEach(g => {
-            if (!moduleMap.has(g.cod_elp)) {
-                moduleMap.set(g.cod_elp, []);
-            }
-            moduleMap.get(g.cod_elp).push(g.group_name);
-        });
-
-        for (const [modCode, groupNames] of moduleMap.entries()) {
-            if (groupNames.length > 0) {
-                requests.push(adminAPI.getGroupStudents(modCode, groupNames.join(',')));
+            for (const [modCode, groupNames] of moduleMap.entries()) {
+                if (groupNames.length > 0) {
+                    requests.push(adminAPI.getGroupStudents(modCode, groupNames.join(',')));
+                }
             }
         }
 
@@ -135,7 +174,7 @@ const ExamPlanning = () => {
     }
   };
 
-  // --- LOGIC: BALANCED AUTO DISTRIBUTE ---
+  // --- LOGIC: AUTO DISTRIBUTE ---
   const handleAutoDistribute = () => {
     if (!rangeStart || !rangeEnd) return;
     if (allGroupStudents.length === 0) {
@@ -151,22 +190,23 @@ const ExamPlanning = () => {
     const start = Math.min(idx1, idx2);
     const end = Math.max(idx1, idx2);
     
-    // Because locations are now sorted naturally, this slice is numerically correct
-    const locationSubset = locations.slice(start, end + 1);
+    const locationSubset = locations.slice(start, end + 1).filter(loc => 
+      !occupiedLocationNames.includes(loc.name)
+    );
+
+    if (locationSubset.length === 0) {
+      setError("Tous les locaux de cette plage sont occupés !");
+      return;
+    }
 
     const totalCapacity = locationSubset.reduce((sum, loc) => sum + (parseInt(loc.capacity) || 0), 0);
     const totalStudents = allGroupStudents.length;
-
-    if (totalStudents > totalCapacity) {
-        setError(`Capacité insuffisante ! (Besoin: ${totalStudents}, Dispo: ${totalCapacity}). Les locaux seront remplis à 100%.`);
-    }
 
     const ratio = Math.min(totalStudents / totalCapacity, 1);
 
     let assignedSoFar = 0;
     const newSessions = [];
 
-    // First Pass: Fill proportionally
     locationSubset.forEach((loc, index) => {
         const cap = parseInt(loc.capacity) || 0;
         let count = Math.floor(cap * ratio); 
@@ -179,7 +219,6 @@ const ExamPlanning = () => {
         });
     });
 
-    // Second Pass: Distribute Remainder
     let remainder = totalStudents - assignedSoFar;
     if (remainder > 0) {
         for (const session of newSessions) {
@@ -193,19 +232,10 @@ const ExamPlanning = () => {
     }
 
     setPlanningSessions(newSessions.filter(s => s.count > 0));
-
-    if (remainder > 0) {
-        setError(`Répartition effectuée, mais il reste ${remainder} étudiants sans place.`);
-    } else {
-        setSuccess(`Répartition équilibrée (${(ratio * 100).toFixed(0)}%) effectuée.`);
-    }
+    setSuccess(`Répartition automatique effectuée.`);
   };
 
-  // --- MANUAL SESSION MGMT ---
   const handleAddSession = () => {
-    const allocatedCount = planningSessions.reduce((sum, s) => sum + (parseInt(s.count) || 0), 0);
-    const remaining = allGroupStudents.length - allocatedCount;
-    if (remaining <= 0) return;
     setPlanningSessions([...planningSessions, { id: Date.now(), location: null, count: 0, professor: '' }]);
   };
 
@@ -213,11 +243,10 @@ const ExamPlanning = () => {
     setPlanningSessions(prev => prev.map(session => {
       if (session.id !== id) return session;
       const updated = { ...session, [field]: value };
-      
       if (field === 'location' && value) {
         const allocatedOthers = prev.filter(s => s.id !== id).reduce((sum, s) => sum + (parseInt(s.count) || 0), 0);
         const remainingTotal = allGroupStudents.length - allocatedOthers;
-        updated.count = Math.min(value.capacity, remainingTotal);
+        updated.count = Math.min(value.capacity, Math.max(0, remainingTotal));
       }
       return updated;
     }));
@@ -227,27 +256,57 @@ const ExamPlanning = () => {
     setPlanningSessions(prev => prev.filter(s => s.id !== id));
   };
 
-  // --- SUBMIT PLAN ---
   const handleSubmitPlan = async () => {
+    setError(null);
+    setSuccess(null);
+
     if (selectedModules.length === 0 || !commonDate || !commonStartTime || !commonEndTime || planningSessions.length === 0) {
       setError("Veuillez remplir tous les champs communs et ajouter au moins une session.");
+      return;
+    }
+
+    if (commonStartTime >= commonEndTime) {
+      setError("L'heure de fin doit être après l'heure de début.");
+      return;
+    }
+
+    const occupiedInDb = exams
+    .filter(e => {
+      const examDate = new Date(e.exam_date).toISOString().split('T')[0];
+      if (examDate !== commonDate) return false;
+      return e.start_time < commonEndTime && e.end_time > commonStartTime;
+    })
+    .map(e => e.location);
+
+    const dbConflicts = planningSessions.filter(s => 
+      s.location && occupiedInDb.includes(s.location.name)
+    );
+
+    if (dbConflicts.length > 0) {
+      const names = dbConflicts.map(s => s.location.name).join(', ');
+      setError(`ERREUR CRITIQUE: Les locaux suivants sont DÉJÀ occupés : ${names}`);
+      return;
+    }
+
+    const currentSelectionNames = planningSessions.filter(s => s.location).map(s => s.location.name);
+    const uniqueNames = new Set(currentSelectionNames);
+    if (uniqueNames.size !== currentSelectionNames.length) {
+      const duplicates = currentSelectionNames.filter((item, index) => currentSelectionNames.indexOf(item) !== index);
+      setError(`ERREUR: Vous avez sélectionné plusieurs fois le même local : ${duplicates.join(', ')}`);
       return;
     }
 
     setLoading(true);
     try {
       let startIndex = 0;
-      
       const mergedCode = selectedModules.map(m => m.cod_elp).join(' + ');
       const mergedName = selectedModules.map(m => m.lib_elp).join(' & ');
-      
       const mergedGroups = selectedGroups.length > 0 
         ? selectedGroups.map(g => `${g.group_name}(${g.cod_elp})`).join(' + ') 
         : 'Tous';
 
       for (const session of planningSessions) {
         if (!session.location || !session.count) continue;
-
         const count = parseInt(session.count);
         const sessionStudents = allGroupStudents.slice(startIndex, startIndex + count);
         const studentIds = sessionStudents.map(s => s.cod_etu);
@@ -298,7 +357,6 @@ const ExamPlanning = () => {
 
   const availableGroups = useMemo(() => {
     if (selectedModules.length === 0) return [];
-    
     const options = [];
     selectedModules.forEach(mod => {
       const modStats = rawStats.filter(item => item.cod_elp === mod.cod_elp);
@@ -314,9 +372,23 @@ const ExamPlanning = () => {
         }
       });
     });
-    
     return options.sort((a, b) => a.label.localeCompare(b.label));
   }, [rawStats, selectedModules]);
+
+  // --- GROUPING LOGIC FOR LIST ---
+  const groupedExams = useMemo(() => {
+    const groups = {};
+    exams.forEach(exam => {
+      const key = exam.module_name || 'Autre';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(exam);
+    });
+    return groups;
+  }, [exams]);
+
+  const sortedModuleNames = useMemo(() => {
+    return Object.keys(groupedExams).sort((a, b) => a.localeCompare(b));
+  }, [groupedExams]);
 
   const allocatedTotal = planningSessions.reduce((sum, s) => sum + (parseInt(s.count) || 0), 0);
   const remainingStudents = allGroupStudents.length - allocatedTotal;
@@ -328,7 +400,7 @@ const ExamPlanning = () => {
           <EventIcon sx={{ fontSize: 40, mr: 2, color: 'primary.main' }} />
           <Box>
             <Typography variant="h4" color="primary" fontWeight="600">Planning des Examens</Typography>
-            <Typography variant="body2" color="text.secondary">Fusion Modules + Groupes & Répartition Équilibrée.</Typography>
+            <Typography variant="body2" color="text.secondary">Gestion des sessions, conflits & listes.</Typography>
           </Box>
         </Box>
         <Button startIcon={<SettingsIcon />} variant="outlined" onClick={() => setLocationDialog(true)}>
@@ -336,11 +408,28 @@ const ExamPlanning = () => {
         </Button>
       </Box>
 
+      {/* STATS CARDS */}
+      <Grid container spacing={2} sx={{ mb: 3 }}>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard title="Total Étudiants" value={allGroupStudents.length} icon={<PeopleIcon />} color="primary" loading={loading} />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard title="Affectés" value={allocatedTotal} icon={<CheckCircleIcon />} color="success" />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard title="Non Affectés" value={remainingStudents} icon={<CancelIcon />} color={remainingStudents === 0 ? "success" : "warning"} />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+           {/* Placeholder for future stat */}
+           <StatCard title="Salles Occupées" value={occupiedLocationNames.length} icon={<MeetingRoomIcon />} color="info" />
+        </Grid>
+      </Grid>
+
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
       {success && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>{success}</Alert>}
 
       <Grid container spacing={3}>
-        {/* --- PLANNING WIZARD --- */}
+        {/* --- LEFT: PLANNING WIZARD --- */}
         <Grid item xs={12} md={5}>
           <Card sx={{ borderRadius: 2, boxShadow: 3 }}>
             <CardContent>
@@ -350,14 +439,13 @@ const ExamPlanning = () => {
               
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 2 }}>
                 
-                {/* 1. Modules */}
                 <Autocomplete
                   multiple
                   options={uniqueModules}
                   getOptionLabel={(opt) => `${opt.lib_elp} (${opt.cod_elp})`}
                   value={selectedModules}
                   onChange={(e, val) => handleSelectData(val, [])}
-                  renderInput={(params) => <TextField {...params} label="1. Modules (Fusion)" size="small" />}
+                  renderInput={(params) => <TextField {...params} label="1. Modules" size="small" />}
                   renderTags={(value, getTagProps) =>
                     value.map((option, index) => (
                       <Chip variant="outlined" label={option.cod_elp} size="small" {...getTagProps({ index })} />
@@ -365,7 +453,6 @@ const ExamPlanning = () => {
                   }
                 />
                 
-                {/* 2. Groups */}
                 <Autocomplete
                   multiple
                   options={availableGroups}
@@ -374,24 +461,14 @@ const ExamPlanning = () => {
                   value={selectedGroups}
                   onChange={(e, val) => handleSelectData(selectedModules, val)}
                   disabled={selectedModules.length === 0}
-                  renderInput={(params) => <TextField {...params} label="2. Groupes à Fusionner" size="small" placeholder="Sélectionner..." />}
-                  renderTags={(value, getTagProps) =>
-                    value.map((option, index) => (
-                      <Chip label={option.label} size="small" {...getTagProps({ index })} />
-                    ))
-                  }
+                  renderInput={(params) => <TextField {...params} label="2. Groupes" size="small" />}
                 />
 
-                {/* 3. Stats */}
                 {allGroupStudents.length > 0 && (
                   <Paper sx={{ p: 2, bgcolor: '#e3f2fd', border: '1px solid #90caf9' }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                      <Typography variant="body2" fontWeight="bold">Total Étudiants (Fusionnés):</Typography>
+                      <Typography variant="body2" fontWeight="bold">Total Étudiants:</Typography>
                       <Typography variant="body2" fontWeight="bold">{allGroupStudents.length}</Typography>
-                    </Box>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                      <Typography variant="body2" color={remainingStudents < 0 ? 'error' : 'text.secondary'}>Restant à placer:</Typography>
-                      <Typography variant="body2" fontWeight="bold" color={remainingStudents < 0 ? 'error' : 'primary'}>{remainingStudents}</Typography>
                     </Box>
                     <LinearProgress 
                       variant="determinate" 
@@ -401,20 +478,25 @@ const ExamPlanning = () => {
                   </Paper>
                 )}
 
-                {/* 4. Common Time */}
                 <TextField type="date" label="Date" value={commonDate} onChange={(e) => setCommonDate(e.target.value)} InputLabelProps={{ shrink: true }} size="small" fullWidth />
                 <Box sx={{ display: 'flex', gap: 2 }}>
                   <TextField type="time" label="Début" value={commonStartTime} onChange={(e) => setCommonStartTime(e.target.value)} InputLabelProps={{ shrink: true }} size="small" fullWidth />
                   <TextField type="time" label="Fin" value={commonEndTime} onChange={(e) => setCommonEndTime(e.target.value)} InputLabelProps={{ shrink: true }} size="small" fullWidth />
                 </Box>
+                
+                {occupiedLocationNames.length > 0 && (
+                   <Alert severity="warning" icon={<BlockIcon />} sx={{ mt: 0 }}>
+                     <strong>Attention :</strong> {occupiedLocationNames.length} salles indisponibles.
+                   </Alert>
+                )}
 
                 <Divider sx={{ my: 1 }}>Distribution Automatique</Divider>
                 
-                {/* 5. Range Auto-Distribution */}
                 <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
                   <Autocomplete
                     options={locations}
-                    getOptionLabel={(opt) => opt.name}
+                    getOptionLabel={(opt) => `${opt.name} ${occupiedLocationNames.includes(opt.name) ? '(Occupé)' : ''}`}
+                    getOptionDisabled={(opt) => occupiedLocationNames.includes(opt.name)}
                     value={rangeStart}
                     onChange={(e, v) => setRangeStart(v)}
                     renderInput={(p) => <TextField {...p} label="De..." size="small" />}
@@ -423,7 +505,8 @@ const ExamPlanning = () => {
                   <Typography variant="body2">-</Typography>
                   <Autocomplete
                     options={locations}
-                    getOptionLabel={(opt) => opt.name}
+                    getOptionLabel={(opt) => `${opt.name} ${occupiedLocationNames.includes(opt.name) ? '(Occupé)' : ''}`}
+                    getOptionDisabled={(opt) => occupiedLocationNames.includes(opt.name)}
                     value={rangeEnd}
                     onChange={(e, v) => setRangeEnd(v)}
                     renderInput={(p) => <TextField {...p} label="À..." size="small" />}
@@ -436,10 +519,9 @@ const ExamPlanning = () => {
                   </Tooltip>
                 </Box>
 
-                {/* 6. Sessions List */}
                 <Typography variant="subtitle2" sx={{ mt: 1, fontWeight: 'bold' }}>Répartition Détaillée</Typography>
                 {planningSessions.map((session, index) => (
-                  <Box key={session.id} sx={{ p: 1.5, border: '1px solid #ddd', borderRadius: 1, position: 'relative' }}>
+                  <Box key={session.id} sx={{ p: 1.5, border: '1px solid #ddd', borderRadius: 1, position: 'relative', mb: 1 }}>
                     <IconButton size="small" onClick={() => handleRemoveSession(session.id)} sx={{ position: 'absolute', right: 0, top: 0, color: 'error.main' }}>
                       <DeleteIcon fontSize="small" />
                     </IconButton>
@@ -447,7 +529,7 @@ const ExamPlanning = () => {
                       <Grid item xs={7}>
                         <Autocomplete
                           options={locations}
-                          getOptionLabel={(opt) => `${opt.name} (${opt.capacity})`}
+                          getOptionLabel={(opt) => `${opt.name} (${opt.capacity}) ${occupiedLocationNames.includes(opt.name) ? '(Occupé)' : ''}`}
                           value={session.location}
                           onChange={(e, val) => handleUpdateSession(session.id, 'location', val)}
                           renderInput={(params) => <TextField {...params} label={`Local ${index + 1}`} size="small" />}
@@ -495,64 +577,87 @@ const ExamPlanning = () => {
           </Card>
         </Grid>
 
-        {/* --- LIST VIEW --- */}
+        {/* --- RIGHT: LIST VIEW (GROUPED) --- */}
         <Grid item xs={12} md={7}>
           <Card sx={{ borderRadius: 2, boxShadow: 2 }}>
             <CardContent>
-              <Typography variant="h6" gutterBottom>Examens Programmés</Typography>
+              <Typography variant="h6" gutterBottom>Liste des Examens</Typography>
               <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid #eee', maxHeight: 600 }}>
-                <Table stickyHeader>
+                <Table stickyHeader size="small">
                   <TableHead sx={{ bgcolor: '#f8f9fa' }}>
                     <TableRow>
                       <TableCell><strong>Date</strong></TableCell>
-                      <TableCell><strong>Module</strong></TableCell>
+                      <TableCell><strong>Groupe</strong></TableCell>
                       <TableCell><strong>Lieu</strong></TableCell>
-                      <TableCell align="center"><strong>Effectif</strong></TableCell>
+                      <TableCell align="center"><strong>Eff.</strong></TableCell>
                       <TableCell align="center"><strong>Action</strong></TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {exams.map((exam) => (
-                      <TableRow key={exam.id} hover>
-                        <TableCell>
-                          <Typography variant="body2" fontWeight="bold">{new Date(exam.exam_date).toLocaleDateString('fr-FR')}</Typography>
-                          <Typography variant="caption" color="text.secondary">{exam.start_time.slice(0,5)} - {exam.end_time.slice(0,5)}</Typography>
-                        </TableCell>
-                        <TableCell>
-                          <Typography variant="body2" sx={{maxWidth: 200, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}} title={exam.module_name}>
-                             {exam.module_name}
-                          </Typography>
-                          <Chip label={exam.group_name} size="small" sx={{ fontSize: '0.7rem' }} />
-                        </TableCell>
-                        <TableCell>
-                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                             <MeetingRoomIcon fontSize="small" color="action" /> {exam.location}
-                           </Box>
-                        </TableCell>
-                        <TableCell align="center">
-                          <Tooltip title="Voir la liste exacte">
-                            <Button 
-                              size="small" 
-                              onClick={() => {
-                                setStudentDialog({ open: true, students: [], loading: true, title: `${exam.module_name} (${exam.location})` });
-                                adminAPI.getExamStudents(exam.id).then(s => setStudentDialog(p => ({ ...p, students: s, loading: false })));
-                              }}
-                              sx={{ borderRadius: 5, minWidth: 40 }}
-                              variant="soft"
-                            >
-                              {exam.assigned_count || 0}
-                            </Button>
-                          </Tooltip>
-                        </TableCell>
-                        <TableCell align="center">
-                          <IconButton size="small" color="error" onClick={async () => {
-                             if(confirm('Supprimer ?')) { await adminAPI.deleteExam(exam.id); loadData(); }
-                          }}>
-                            <DeleteIcon />
-                          </IconButton>
+                    {sortedModuleNames.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5} align="center" sx={{ py: 3, color: 'text.secondary' }}>
+                           Aucun examen programmé.
                         </TableCell>
                       </TableRow>
-                    ))}
+                    ) : (
+                      sortedModuleNames.map(modName => (
+                        <React.Fragment key={modName}>
+                          {/* En-tête du Module */}
+                          <TableRow sx={{ bgcolor: '#e3f2fd' }}>
+                             <TableCell colSpan={5}>
+                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                 <ClassIcon color="primary" fontSize="small" />
+                                 <Typography variant="subtitle2" fontWeight="bold" color="primary.dark">
+                                   {modName}
+                                 </Typography>
+                               </Box>
+                             </TableCell>
+                          </TableRow>
+                          
+                          {/* Liste des Sessions pour ce Module */}
+                          {groupedExams[modName].map((exam) => (
+                            <TableRow key={exam.id} hover>
+                              <TableCell>
+                                <Typography variant="body2" fontWeight="bold">{new Date(exam.exam_date).toLocaleDateString('fr-FR')}</Typography>
+                                <Typography variant="caption" color="text.secondary">{exam.start_time.slice(0,5)} - {exam.end_time.slice(0,5)}</Typography>
+                              </TableCell>
+                              <TableCell>
+                                {/* On affiche uniquement le groupe car le module est dans le titre */}
+                                <Chip label={exam.group_name} size="small" sx={{ fontSize: '0.75rem', height: 24 }} />
+                              </TableCell>
+                              <TableCell>
+                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                   <MeetingRoomIcon fontSize="small" color="action" /> 
+                                   <Typography variant="body2">{exam.location}</Typography>
+                                 </Box>
+                              </TableCell>
+                              <TableCell align="center">
+                                <Tooltip title="Voir liste d'émargement">
+                                  <Button 
+                                    size="small" 
+                                    onClick={() => {
+                                      setStudentDialog({ open: true, students: [], loading: true, title: `${exam.module_name} (${exam.location})` });
+                                      adminAPI.getExamStudents(exam.id).then(s => setStudentDialog(p => ({ ...p, students: s, loading: false })));
+                                    }}
+                                    sx={{ minWidth: 40, borderRadius: 4, bgcolor: '#f5f5f5', color: 'text.primary' }}
+                                  >
+                                    {exam.assigned_count || 0}
+                                  </Button>
+                                </Tooltip>
+                              </TableCell>
+                              <TableCell align="center">
+                                <IconButton size="small" color="error" onClick={async () => {
+                                   if(confirm('Supprimer cet examen ?')) { await adminAPI.deleteExam(exam.id); loadData(); }
+                                }}>
+                                  <DeleteIcon fontSize="small" />
+                                </IconButton>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </React.Fragment>
+                      ))
+                    )}
                   </TableBody>
                 </Table>
               </TableContainer>
