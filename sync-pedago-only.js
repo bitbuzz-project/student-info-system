@@ -54,25 +54,34 @@ function determineSemester(codElp, codPel, elementType, libElp) {
   const name = (libElp || '').trim().toUpperCase();
   
   if (elementType === 'ANNEE') return null;
+
+  // 1. Check Code (e.g. JLDN5xxx -> S5)
   const codePattern = /^(JLDN|JMD|JLD|JL)([1-6])\d+/i;
   const match = code.match(codePattern);
   if (match) return parseInt(match[2]);
+
+  // 2. Check Name (e.g. "Semestre 3")
   const namePattern = /(?:^|\s|-)S\s?([1-6])(?:\s|$|-)|SEMESTRE\s?([1-6])/i;
   const nameMatch = name.match(namePattern);
   if (nameMatch) {
     const sem = parseInt(nameMatch[1] || nameMatch[2]);
     if (!isNaN(sem)) return sem;
   }
+
+  // 3. Fallback to COD_PEL (e.g. S5)
   if (pel.startsWith('S')) {
     const parsedSem = parseInt(pel.substring(1));
     if (!isNaN(parsedSem) && parsedSem > 0 && parsedSem <= 12) return parsedSem;
   }
+  
+  // 4. Manual Fallback for common patterns
   if (code.includes('S1')) return 1;
   if (code.includes('S2')) return 2;
   if (code.includes('S3')) return 3;
   if (code.includes('S4')) return 4;
   if (code.includes('S5')) return 5;
   if (code.includes('S6')) return 6;
+
   return null;
 }
 
@@ -90,7 +99,7 @@ function classifyPedagogicalElement(cod_elp, lib_elp) {
 }
 
 // ==========================================
-// 2. ORACLE QUERY
+// 2. QUERY FOR FULL SYNC
 // ==========================================
 
 const PEDAGOGICAL_SITUATION_QUERY = `
@@ -100,8 +109,8 @@ SELECT DISTINCT
     IND.LIB_PR1_IND AS PRENOM,
     IND.DAA_ENT_ETB AS DATE_UNI_CON,
     ICE.COD_ELP,
-    ELP.COD_NEL,
-    ELP.COD_PEL,
+    ELP.COD_NEL,   -- Added to determine type
+    ELP.COD_PEL,   -- Added to determine semester
     fix_encoding(ELP.LIB_ELP) AS MODULE,
     fix_encoding(ELP.LIB_ELP_ARB) AS MODULE_ARB,
     MAX(IAE.ETA_IAE) OVER (
@@ -124,118 +133,7 @@ ORDER BY IND.COD_ETU, ICE.COD_ELP
 `;
 
 // ==========================================
-// 3. EXAM SYNC LOGIC (NEW)
-// ==========================================
-
-async function syncExamParticipants(pgClient) {
-  logger.info('=====================================');
-  logger.info('🔄 SYNCING EXAM PARTICIPANTS...');
-  
-  // 1. Get all future exams (or exams from today onwards)
-  // We avoid touching past exams to preserve history
-  const examsResult = await pgClient.query(`
-    SELECT id, module_code, module_name, group_name, exam_date 
-    FROM exam_planning 
-    WHERE exam_date >= CURRENT_DATE
-  `);
-  
-  const exams = examsResult.rows;
-  logger.info(`Found ${exams.length} future exams to check.`);
-
-  let totalAdded = 0;
-  let totalRemoved = 0;
-
-  for (const exam of exams) {
-    const { id, module_code, group_name, module_name } = exam;
-    
-    // 2. Determine ELIGIBLE students from Pedagogical Situation based on Rules
-    // This query mimics the logic used in the frontend to fetch students
-    let eligibleQuery = `
-      SELECT DISTINCT ps.cod_etu
-      FROM pedagogical_situation ps
-      WHERE ps.cod_elp = $1
-    `;
-    const params = [module_code];
-
-    // Apply Group Filtering Logic
-    if (group_name && group_name !== 'Tous') {
-      eligibleQuery += `
-        AND EXISTS (
-          SELECT 1 FROM grouping_rules gr
-          WHERE ps.cod_elp ILIKE gr.module_pattern
-          AND gr.group_name = $2
-          AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" >= UPPER(gr.range_start) COLLATE "C"
-          AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" <= (UPPER(gr.range_end) || 'ZZZZZZ') COLLATE "C"
-        )
-      `;
-      params.push(group_name);
-    }
-
-    const eligibleResult = await pgClient.query(eligibleQuery, params);
-    const eligibleStudents = new Set(eligibleResult.rows.map(r => r.cod_etu));
-
-    // 3. Get CURRENTLY ASSIGNED students
-    const assignedResult = await pgClient.query(`SELECT cod_etu FROM exam_assignments WHERE exam_id = $1`, [id]);
-    const assignedStudents = new Set(assignedResult.rows.map(r => r.cod_etu));
-
-    // 4. Calculate Diff
-    const toAdd = [...eligibleStudents].filter(x => !assignedStudents.has(x));
-    const toRemove = [...assignedStudents].filter(x => !eligibleStudents.has(x));
-
-    // 5. Apply Changes
-    if (toAdd.length > 0) {
-      const values = toAdd.map((_, i) => `($1, $${i + 2})`).join(',');
-      await pgClient.query(
-        `INSERT INTO exam_assignments (exam_id, cod_etu) VALUES ${values} ON CONFLICT DO NOTHING`,
-        [id, ...toAdd]
-      );
-      
-      // Notify
-      const msg = `Ajouté ${toAdd.length} étudiant(s) à l'examen : ${module_name} (${group_name})`;
-      await createNotification(pgClient, 'INFO', 'Mise à jour Examen', msg);
-      logger.info(`   [Exam ${id}] Added ${toAdd.length} students.`);
-    }
-
-    if (toRemove.length > 0) {
-      await pgClient.query(
-        `DELETE FROM exam_assignments WHERE exam_id = $1 AND cod_etu = ANY($2)`,
-        [id, toRemove]
-      );
-      
-      // Notify
-      const msg = `Retiré ${toRemove.length} étudiant(s) de l'examen : ${module_name} (${group_name}) car ils ne sont plus inscrits.`;
-      await createNotification(pgClient, 'WARNING', 'Nettoyage Examen', msg);
-      logger.info(`   [Exam ${id}] Removed ${toRemove.length} students.`);
-    }
-
-    totalAdded += toAdd.length;
-    totalRemoved += toRemove.length;
-  }
-
-  logger.info(`✓ Exam Sync Complete. Added: ${totalAdded}, Removed: ${totalRemoved}`);
-}
-
-async function createNotification(client, type, title, message) {
-  // Ensure table exists just in case
-  await client.query(`
-    CREATE TABLE IF NOT EXISTS notifications (
-      id SERIAL PRIMARY KEY,
-      type VARCHAR(20),
-      title VARCHAR(200),
-      message TEXT,
-      is_read BOOLEAN DEFAULT FALSE,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-  
-  await client.query(
-    `INSERT INTO notifications (type, title, message) VALUES ($1, $2, $3)`,
-    [type, title, message]
-  );
-}
-
-// ==========================================
-// 4. MAIN SYNC FUNCTION
+// 3. SYNC FUNCTION
 // ==========================================
 
 async function syncPedagogicalSituationOnly() {
@@ -264,12 +162,13 @@ async function syncPedagogicalSituationOnly() {
         eta_iae VARCHAR(10),
         academic_level VARCHAR(20),
         is_yearly_element BOOLEAN DEFAULT FALSE,
-        semester_number INTEGER, 
+        semester_number INTEGER, -- New column
         last_sync TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(cod_etu, cod_elp, daa_uni_con)
       )
     `);
     
+    // Ensure new columns exist
     await pgClient.query(`ALTER TABLE pedagogical_situation ADD COLUMN IF NOT EXISTS lib_elp_arb VARCHAR(200)`);
     await pgClient.query(`ALTER TABLE pedagogical_situation ADD COLUMN IF NOT EXISTS semester_number INTEGER`);
 
@@ -289,8 +188,12 @@ async function syncPedagogicalSituationOnly() {
     let count = 0;
     
     for (const row of rows) {
+      // Destructure new columns (index shifted because of cod_nel/cod_pel)
       const [apogee, nom, prenom, date_uni_con, cod_elp, cod_nel, cod_pel, module, module_arb, ia] = row;
+      
       const { academicLevel, isYearlyElement } = classifyPedagogicalElement(cod_elp, module);
+      
+      // Calculate Semester Logic locally
       const elementType = mapElementType(cod_nel);
       const semesterNumber = determineSemester(cod_elp, cod_pel, elementType, module);
 
@@ -308,10 +211,7 @@ async function syncPedagogicalSituationOnly() {
     
     await pgClient.query('COMMIT');
     console.log('');
-    logger.info(`✓ Pedagogical Data Synced: ${count} records.`);
-
-    // 5. AUTO-UPDATE EXAMS (The new part)
-    await syncExamParticipants(pgClient);
+    logger.info(`✓ Success! Synced ${count} records.`);
 
   } catch (error) {
     logger.error(`✗ FAILED: ${error.message}`);
