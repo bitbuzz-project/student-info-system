@@ -3,7 +3,8 @@ import {
   Box, Typography, Paper, Grid, TextField, Button, Table, TableBody,
   TableCell, TableContainer, TableHead, TableRow, Autocomplete, IconButton,
   Card, CardContent, Chip, Alert, Dialog, DialogTitle, DialogContent,
-  DialogActions, Tooltip, CircularProgress, LinearProgress, Divider
+  DialogActions, Tooltip, CircularProgress, LinearProgress, Divider,
+  ToggleButton, ToggleButtonGroup
 } from '@mui/material';
 import {
   Event as EventIcon,
@@ -14,22 +15,55 @@ import {
   Balance as BalanceIcon,
   Block as BlockIcon,
   Class as ClassIcon,
-  People as PeopleIcon,          // Restored
-  CheckCircle as CheckCircleIcon, // Restored
-  Cancel as CancelIcon           // Restored
+  People as PeopleIcon,
+  CheckCircle as CheckCircleIcon,
+  Cancel as CancelIcon,
+  CalendarMonth as CalendarIcon,
+  List as ListIcon,
+  Download as DownloadIcon,
+  ChevronLeft as ChevronLeftIcon,
+  ChevronRight as ChevronRightIcon,
+  Assignment as AssignmentIcon,
+  Today as TodayIcon,
+  WarningAmber as WarningIcon
 } from '@mui/icons-material';
 import { adminAPI } from '../../services/api';
 
 // --- COMPONENT: STAT CARD ---
-const StatCard = ({ title, value, icon, color, loading }) => (
-  <Card sx={{ height: '100%', boxShadow: 2 }}>
+// Added onClick prop to make card clickable
+const StatCard = ({ title, value, icon, color, loading, subtitle, onClick }) => (
+  <Card 
+    sx={{ 
+      height: '100%', 
+      boxShadow: 2, 
+      position: 'relative', 
+      overflow: 'hidden',
+      cursor: onClick ? 'pointer' : 'default', // Change cursor if clickable
+      transition: 'transform 0.2s',
+      '&:hover': onClick ? { transform: 'scale(1.02)', boxShadow: 4 } : {}
+    }}
+    onClick={onClick}
+  >
+    <Box sx={{ 
+        position: 'absolute', 
+        top: -10, 
+        right: -10, 
+        width: 80, 
+        height: 80, 
+        borderRadius: '50%', 
+        bgcolor: (theme) => theme.palette[color].light, 
+        opacity: 0.2 
+    }} />
     <CardContent sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', p: 2, '&:last-child': { pb: 2 } }}>
-      <Box>
+      <Box sx={{ zIndex: 1 }}>
         <Typography color="text.secondary" variant="subtitle2" fontWeight="bold">{title}</Typography>
         {loading ? (
           <CircularProgress size={20} sx={{ mt: 1 }} />
         ) : (
-          <Typography variant="h4" fontWeight="bold" color={`${color}.main`}>{value}</Typography>
+          <>
+            <Typography variant="h4" fontWeight="bold" color={`${color}.main`}>{value}</Typography>
+            {subtitle && <Typography variant="caption" color="text.secondary">{subtitle}</Typography>}
+          </>
         )}
       </Box>
       <Box sx={{ 
@@ -38,13 +72,117 @@ const StatCard = ({ title, value, icon, color, loading }) => (
         bgcolor: (theme) => theme.palette[color].light, 
         color: (theme) => theme.palette[color].contrastText || theme.palette[color].dark,
         opacity: 0.8,
-        display: 'flex'
+        display: 'flex',
+        zIndex: 1
       }}>
         {icon}
       </Box>
     </CardContent>
   </Card>
 );
+
+// --- COMPONENT: CALENDAR VIEW ---
+const CalendarView = ({ exams, onSelectExam }) => {
+  const [currentDate, setCurrentDate] = useState(new Date());
+
+  const daysInMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate();
+  const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).getDay(); // 0 = Sun
+  
+  // Adjust for Monday start (0 = Mon, 6 = Sun)
+  const startOffset = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
+
+  const handlePrevMonth = () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
+  const handleNextMonth = () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
+
+  const monthName = currentDate.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+
+  // Group exams by day
+  const examsByDay = useMemo(() => {
+    const map = {};
+    exams.forEach(exam => {
+      const d = new Date(exam.exam_date);
+      // Only check if it matches current month/year
+      if (d.getMonth() === currentDate.getMonth() && d.getFullYear() === currentDate.getFullYear()) {
+        const day = d.getDate();
+        if (!map[day]) map[day] = [];
+        map[day].push(exam);
+      }
+    });
+    return map;
+  }, [exams, currentDate]);
+
+  const weekDays = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+
+  return (
+    <Box>
+      {/* Header */}
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+        <IconButton onClick={handlePrevMonth}><ChevronLeftIcon /></IconButton>
+        <Typography variant="h6" sx={{ textTransform: 'capitalize', fontWeight: 'bold' }}>{monthName}</Typography>
+        <IconButton onClick={handleNextMonth}><ChevronRightIcon /></IconButton>
+      </Box>
+
+      {/* Week Header */}
+      <Grid container spacing={1} sx={{ mb: 1 }}>
+        {weekDays.map(day => (
+          <Grid item xs={1.7} key={day}>
+            <Paper sx={{ textAlign: 'center', py: 0.5, bgcolor: 'primary.light', color: 'white', fontWeight: 'bold' }}>
+              {day}
+            </Paper>
+          </Grid>
+        ))}
+      </Grid>
+
+      {/* Days Grid */}
+      <Grid container spacing={1}>
+        {/* Empty slots for offset */}
+        {[...Array(startOffset)].map((_, i) => (
+           <Grid item xs={1.7} key={`empty-${i}`} />
+        ))}
+
+        {/* Days */}
+        {[...Array(daysInMonth)].map((_, i) => {
+          const day = i + 1;
+          const dayExams = examsByDay[day] || [];
+          return (
+            <Grid item xs={1.7} key={day} sx={{ minHeight: 120 }}>
+              <Paper 
+                sx={{ 
+                  height: '100%', 
+                  p: 1, 
+                  border: '1px solid #eee',
+                  bgcolor: dayExams.length > 0 ? '#fafafa' : 'white',
+                  position: 'relative'
+                }}
+              >
+                <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 1, color: 'text.secondary' }}>{day}</Typography>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                  {dayExams.map(exam => (
+                    <Tooltip key={exam.id} title={`${exam.module_name} (${exam.start_time}) - ${exam.location}`}>
+                      <Chip 
+                        label={`${exam.start_time.slice(0,5)} ${exam.module_name.slice(0, 10)}..`} 
+                        size="small" 
+                        color="primary" 
+                        variant="outlined"
+                        onClick={() => onSelectExam(exam)}
+                        sx={{ 
+                            height: 'auto', 
+                            '& .MuiChip-label': { display: 'block', whiteSpace: 'normal', fontSize: '0.7rem', p: 0.5 },
+                            cursor: 'pointer',
+                            bgcolor: 'white'
+                        }} 
+                      />
+                    </Tooltip>
+                  ))}
+                </Box>
+              </Paper>
+            </Grid>
+          );
+        })}
+      </Grid>
+    </Box>
+  );
+};
 
 const ExamPlanning = () => {
   // --- STATE ---
@@ -55,6 +193,8 @@ const ExamPlanning = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [viewMode, setViewMode] = useState('calendar'); 
+  const [conflictCount, setConflictCount] = useState(0);
 
   // Planning State
   const [selectedModules, setSelectedModules] = useState([]);
@@ -72,21 +212,25 @@ const ExamPlanning = () => {
   // Dialogs
   const [locationDialog, setLocationDialog] = useState(false);
   const [studentDialog, setStudentDialog] = useState({ open: false, students: [], title: '', loading: false });
+  // NEW: Conflict Dialog State
+  const [conflictDialog, setConflictDialog] = useState({ open: false, conflicts: [], loading: false });
   const [newLoc, setNewLoc] = useState({ name: '', capacity: '', type: 'AMPHI' });
 
   // --- FETCH DATA ---
   const loadData = async () => {
     setLoading(true);
     try {
-      const [examsData, statsData, locsData, employeesData] = await Promise.all([
+      const [examsData, statsData, locsData, employeesData, conflicts] = await Promise.all([
         adminAPI.getExams(),
         adminAPI.getDetailedStats(),
         adminAPI.getLocations(),
-        adminAPI.getEmployees({ type: 'PROF' })
+        adminAPI.getEmployees({ type: 'PROF' }),
+        adminAPI.getExamConflictsCount()
       ]);
 
       setExams(examsData);
       setRawStats(statsData);
+      setConflictCount(conflicts);
 
       const sortedLocations = locsData.sort((a, b) => 
         a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
@@ -108,6 +252,45 @@ const ExamPlanning = () => {
   };
 
   useEffect(() => { loadData(); }, []);
+
+  // --- GLOBAL STATS CALCULATIONS ---
+  const globalStats = useMemo(() => {
+    const totalSessions = exams.length;
+    const totalAssigned = exams.reduce((sum, e) => sum + (e.assigned_count || 0), 0);
+    const uniqueModules = new Set(exams.map(e => e.module_code)).size;
+    
+    // Calculate unique days with exams
+    const uniqueDays = new Set(exams.map(e => {
+        const d = new Date(e.exam_date);
+        return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    })).size;
+
+    return { totalSessions, totalAssigned, uniqueModules, uniqueDays };
+  }, [exams]);
+
+  // --- HANDLER: SHOW CONFLICT DETAILS ---
+  const handleShowConflicts = async () => {
+    if (conflictCount === 0) return;
+    setConflictDialog({ open: true, conflicts: [], loading: true });
+    try {
+      const data = await adminAPI.getExamConflictsDetails();
+      setConflictDialog({ open: true, conflicts: data, loading: false });
+    } catch (err) {
+      console.error(err);
+      setConflictDialog({ open: false, conflicts: [], loading: false });
+      setError("Erreur chargement détails conflits");
+    }
+  };
+
+  // --- LOGIC: EXPORT ---
+  const handleExport = async () => {
+    try {
+      await adminAPI.exportExamAssignments();
+      setSuccess("Exportation réussie !");
+    } catch (err) {
+      setError("Erreur lors de l'exportation.");
+    }
+  };
 
   // --- LOGIC: IDENTIFY OCCUPIED LOCATIONS ---
   const occupiedLocationNames = useMemo(() => {
@@ -393,6 +576,12 @@ const ExamPlanning = () => {
   const allocatedTotal = planningSessions.reduce((sum, s) => sum + (parseInt(s.count) || 0), 0);
   const remainingStudents = allGroupStudents.length - allocatedTotal;
 
+  // View Handler
+  const handleExamClick = (exam) => {
+    setStudentDialog({ open: true, students: [], loading: true, title: `${exam.module_name} (${exam.location})` });
+    adminAPI.getExamStudents(exam.id).then(s => setStudentDialog(p => ({ ...p, students: s, loading: false })));
+  };
+
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
@@ -403,27 +592,98 @@ const ExamPlanning = () => {
             <Typography variant="body2" color="text.secondary">Gestion des sessions, conflits & listes.</Typography>
           </Box>
         </Box>
-        <Button startIcon={<SettingsIcon />} variant="outlined" onClick={() => setLocationDialog(true)}>
-          Gérer les Locaux
-        </Button>
+        <Box sx={{ display: 'flex', gap: 2 }}>
+            <Button 
+                startIcon={<DownloadIcon />} 
+                variant="contained" 
+                color="success" 
+                onClick={handleExport}
+            >
+                Exporter (CSV)
+            </Button>
+            <Button startIcon={<SettingsIcon />} variant="outlined" onClick={() => setLocationDialog(true)}>
+                Gérer les Locaux
+            </Button>
+        </Box>
       </Box>
 
-      {/* STATS CARDS */}
-      <Grid container spacing={2} sx={{ mb: 3 }}>
-        <Grid item xs={12} sm={6} md={3}>
-          <StatCard title="Total Étudiants" value={allGroupStudents.length} icon={<PeopleIcon />} color="primary" loading={loading} />
+      {/* --- SECTION: GLOBAL STATISTICS --- */}
+      <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 1, color: 'text.primary', mt: 2 }}>
+        <AssignmentIcon color="action" /> Statistiques Globales
+      </Typography>
+      <Grid container spacing={2} sx={{ mb: 4 }}>
+        <Grid item xs={12} sm={6} md={2.4}>
+           <StatCard 
+             title="Total Sessions" 
+             value={globalStats.totalSessions} 
+             subtitle="Examens programmés"
+             icon={<EventIcon />} 
+             color="info" 
+           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <StatCard title="Affectés" value={allocatedTotal} icon={<CheckCircleIcon />} color="success" />
+        <Grid item xs={12} sm={6} md={2.4}>
+           <StatCard 
+             title="Étudiants Planifiés" 
+             value={globalStats.totalAssigned} 
+             subtitle="Total convocations"
+             icon={<PeopleIcon />} 
+             color="success" 
+           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <StatCard title="Non Affectés" value={remainingStudents} icon={<CancelIcon />} color={remainingStudents === 0 ? "success" : "warning"} />
+        <Grid item xs={12} sm={6} md={2.4}>
+           <StatCard 
+             title="Modules Uniques" 
+             value={globalStats.uniqueModules} 
+             subtitle="Matières distinctes"
+             icon={<ClassIcon />} 
+             color="warning" 
+           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-           {/* Placeholder for future stat */}
-           <StatCard title="Salles Occupées" value={occupiedLocationNames.length} icon={<MeetingRoomIcon />} color="info" />
+        <Grid item xs={12} sm={6} md={2.4}>
+           <StatCard 
+             title="Jours d'Examens" 
+             value={globalStats.uniqueDays} 
+             subtitle="Jours occupés"
+             icon={<TodayIcon />} 
+             color="primary" 
+           />
+        </Grid>
+        <Grid item xs={12} sm={6} md={2.4}>
+           {/* CLICKABLE CONFLICT CARD */}
+           <StatCard 
+             title="Conflits Horaire" 
+             value={conflictCount} 
+             subtitle="Étudiants en doublon (Cliquer)"
+             icon={<WarningIcon />} 
+             color={conflictCount > 0 ? "error" : "success"} 
+             loading={loading}
+             onClick={handleShowConflicts}
+           />
         </Grid>
       </Grid>
+      
+      <Divider sx={{ my: 3 }} />
+
+      {/* --- SECTION: CURRENT PLANNING STATS (WIZARD CONTEXT) --- */}
+      <Box sx={{ display: selectedModules.length > 0 ? 'block' : 'none', mb: 3 }}>
+        <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 1, color: 'text.secondary' }}>
+            <AddIcon color="action" /> État de la Planification en cours
+        </Typography>
+        <Grid container spacing={2}>
+            <Grid item xs={12} sm={6} md={3}>
+            <StatCard title="Total Étudiants (Sélection)" value={allGroupStudents.length} icon={<PeopleIcon />} color="primary" loading={loading} />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+            <StatCard title="Affectés (Sélection)" value={allocatedTotal} icon={<CheckCircleIcon />} color="success" />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+            <StatCard title="Non Affectés" value={remainingStudents} icon={<CancelIcon />} color={remainingStudents === 0 ? "success" : "warning"} />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+            <StatCard title="Salles Occupées (Créneau)" value={occupiedLocationNames.length} icon={<MeetingRoomIcon />} color="info" />
+            </Grid>
+        </Grid>
+      </Box>
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
       {success && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>{success}</Alert>}
@@ -577,90 +837,100 @@ const ExamPlanning = () => {
           </Card>
         </Grid>
 
-        {/* --- RIGHT: LIST VIEW (GROUPED) --- */}
+        {/* --- RIGHT: CALENDAR & LIST VIEW --- */}
         <Grid item xs={12} md={7}>
           <Card sx={{ borderRadius: 2, boxShadow: 2 }}>
             <CardContent>
-              <Typography variant="h6" gutterBottom>Liste des Examens</Typography>
-              <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid #eee', maxHeight: 600 }}>
-                <Table stickyHeader size="small">
-                  <TableHead sx={{ bgcolor: '#f8f9fa' }}>
-                    <TableRow>
-                      <TableCell><strong>Date</strong></TableCell>
-                      <TableCell><strong>Groupe</strong></TableCell>
-                      <TableCell><strong>Lieu</strong></TableCell>
-                      <TableCell align="center"><strong>Eff.</strong></TableCell>
-                      <TableCell align="center"><strong>Action</strong></TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {sortedModuleNames.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={5} align="center" sx={{ py: 3, color: 'text.secondary' }}>
-                           Aucun examen programmé.
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      sortedModuleNames.map(modName => (
-                        <React.Fragment key={modName}>
-                          {/* En-tête du Module */}
-                          <TableRow sx={{ bgcolor: '#e3f2fd' }}>
-                             <TableCell colSpan={5}>
-                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                 <ClassIcon color="primary" fontSize="small" />
-                                 <Typography variant="subtitle2" fontWeight="bold" color="primary.dark">
-                                   {modName}
-                                 </Typography>
-                               </Box>
-                             </TableCell>
-                          </TableRow>
-                          
-                          {/* Liste des Sessions pour ce Module */}
-                          {groupedExams[modName].map((exam) => (
-                            <TableRow key={exam.id} hover>
-                              <TableCell>
-                                <Typography variant="body2" fontWeight="bold">{new Date(exam.exam_date).toLocaleDateString('fr-FR')}</Typography>
-                                <Typography variant="caption" color="text.secondary">{exam.start_time.slice(0,5)} - {exam.end_time.slice(0,5)}</Typography>
-                              </TableCell>
-                              <TableCell>
-                                {/* On affiche uniquement le groupe car le module est dans le titre */}
-                                <Chip label={exam.group_name} size="small" sx={{ fontSize: '0.75rem', height: 24 }} />
-                              </TableCell>
-                              <TableCell>
-                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                   <MeetingRoomIcon fontSize="small" color="action" /> 
-                                   <Typography variant="body2">{exam.location}</Typography>
-                                 </Box>
-                              </TableCell>
-                              <TableCell align="center">
-                                <Tooltip title="Voir liste d'émargement">
-                                  <Button 
-                                    size="small" 
-                                    onClick={() => {
-                                      setStudentDialog({ open: true, students: [], loading: true, title: `${exam.module_name} (${exam.location})` });
-                                      adminAPI.getExamStudents(exam.id).then(s => setStudentDialog(p => ({ ...p, students: s, loading: false })));
-                                    }}
-                                    sx={{ minWidth: 40, borderRadius: 4, bgcolor: '#f5f5f5', color: 'text.primary' }}
-                                  >
-                                    {exam.assigned_count || 0}
-                                  </Button>
-                                </Tooltip>
-                              </TableCell>
-                              <TableCell align="center">
-                                <IconButton size="small" color="error" onClick={async () => {
-                                   if(confirm('Supprimer cet examen ?')) { await adminAPI.deleteExam(exam.id); loadData(); }
-                                }}>
-                                  <DeleteIcon fontSize="small" />
-                                </IconButton>
-                              </TableCell>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                  <Typography variant="h6">Planning</Typography>
+                  <ToggleButtonGroup 
+                    value={viewMode} 
+                    exclusive 
+                    onChange={(e, v) => v && setViewMode(v)} 
+                    size="small"
+                  >
+                      <ToggleButton value="calendar"><CalendarIcon sx={{ mr: 1 }}/> Calendrier</ToggleButton>
+                      <ToggleButton value="list"><ListIcon sx={{ mr: 1 }}/> Liste</ToggleButton>
+                  </ToggleButtonGroup>
+              </Box>
+              
+              {viewMode === 'calendar' ? (
+                <CalendarView exams={exams} onSelectExam={handleExamClick} />
+              ) : (
+                <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid #eee', maxHeight: 600 }}>
+                    <Table stickyHeader size="small">
+                    <TableHead sx={{ bgcolor: '#f8f9fa' }}>
+                        <TableRow>
+                        <TableCell><strong>Date</strong></TableCell>
+                        <TableCell><strong>Groupe</strong></TableCell>
+                        <TableCell><strong>Lieu</strong></TableCell>
+                        <TableCell align="center"><strong>Eff.</strong></TableCell>
+                        <TableCell align="center"><strong>Action</strong></TableCell>
+                        </TableRow>
+                    </TableHead>
+                    <TableBody>
+                        {sortedModuleNames.length === 0 ? (
+                        <TableRow>
+                            <TableCell colSpan={5} align="center" sx={{ py: 3, color: 'text.secondary' }}>
+                            Aucun examen programmé.
+                            </TableCell>
+                        </TableRow>
+                        ) : (
+                        sortedModuleNames.map(modName => (
+                            <React.Fragment key={modName}>
+                            <TableRow sx={{ bgcolor: '#e3f2fd' }}>
+                                <TableCell colSpan={5}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <ClassIcon color="primary" fontSize="small" />
+                                    <Typography variant="subtitle2" fontWeight="bold" color="primary.dark">
+                                    {modName}
+                                    </Typography>
+                                </Box>
+                                </TableCell>
                             </TableRow>
-                          ))}
-                        </React.Fragment>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
+                            
+                            {groupedExams[modName].map((exam) => (
+                                <TableRow key={exam.id} hover>
+                                <TableCell>
+                                    <Typography variant="body2" fontWeight="bold">{new Date(exam.exam_date).toLocaleDateString('fr-FR')}</Typography>
+                                    <Typography variant="caption" color="text.secondary">{exam.start_time.slice(0,5)} - {exam.end_time.slice(0,5)}</Typography>
+                                </TableCell>
+                                <TableCell>
+                                    <Chip label={exam.group_name} size="small" sx={{ fontSize: '0.75rem', height: 24 }} />
+                                </TableCell>
+                                <TableCell>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                    <MeetingRoomIcon fontSize="small" color="action" /> 
+                                    <Typography variant="body2">{exam.location}</Typography>
+                                    </Box>
+                                </TableCell>
+                                <TableCell align="center">
+                                    <Tooltip title="Voir liste d'émargement">
+                                    <Button 
+                                        size="small" 
+                                        onClick={() => handleExamClick(exam)}
+                                        sx={{ minWidth: 40, borderRadius: 4, bgcolor: '#f5f5f5', color: 'text.primary' }}
+                                    >
+                                        {exam.assigned_count || 0}
+                                    </Button>
+                                    </Tooltip>
+                                </TableCell>
+                                <TableCell align="center">
+                                    <IconButton size="small" color="error" onClick={async () => {
+                                    if(confirm('Supprimer cet examen ?')) { await adminAPI.deleteExam(exam.id); loadData(); }
+                                    }}>
+                                    <DeleteIcon fontSize="small" />
+                                    </IconButton>
+                                </TableCell>
+                                </TableRow>
+                            ))}
+                            </React.Fragment>
+                        ))
+                        )}
+                    </TableBody>
+                    </Table>
+                </TableContainer>
+              )}
             </CardContent>
           </Card>
         </Grid>
@@ -733,10 +1003,73 @@ const ExamPlanning = () => {
                const csv = ["CNE,Nom,Prenom", ...studentDialog.students.map(s => `${s.cod_etu},"${s.lib_nom_pat_ind}","${s.lib_pr1_ind}"`)].join('\n');
                const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
                link.download = "liste.csv"; document.body.appendChild(link); link.click();
-            }}>Excel</Button>
+            }}>Excel (Liste Seule)</Button>
             <Button onClick={() => setStudentDialog(prev => ({ ...prev, open: false }))}>Fermer</Button>
           </DialogActions>
         </Dialog>
+
+        {/* --- NEW: CONFLICT DETAILS DIALOG --- */}
+        <Dialog open={conflictDialog.open} onClose={() => setConflictDialog({ ...conflictDialog, open: false })} maxWidth="lg" fullWidth>
+          <DialogTitle sx={{ color: 'error.main', display: 'flex', alignItems: 'center', gap: 1 }}>
+             <WarningIcon /> Détails des Conflits ({conflictDialog.conflicts.length})
+          </DialogTitle>
+          <DialogContent dividers>
+             {conflictDialog.loading ? <CircularProgress /> : (
+               <TableContainer sx={{ maxHeight: 500 }}>
+                 <Table size="small" stickyHeader>
+                   <TableHead>
+                     <TableRow>
+                       <TableCell><strong>Étudiant</strong></TableCell>
+                       <TableCell><strong>Date</strong></TableCell>
+                       <TableCell sx={{ bgcolor: '#fff3e0' }}><strong>Examen 1</strong></TableCell>
+                       <TableCell sx={{ bgcolor: '#ffebee' }}><strong>Examen 2</strong></TableCell>
+                     </TableRow>
+                   </TableHead>
+                   <TableBody>
+                     {conflictDialog.conflicts.map((c, i) => (
+                       <TableRow key={i} hover>
+                         <TableCell>
+                           <Typography variant="body2" fontWeight="bold">{c.nom} {c.prenom}</Typography>
+                           <Typography variant="caption" color="text.secondary">{c.cod_etu}</Typography>
+                         </TableCell>
+                         <TableCell>
+                            {new Date(c.exam_date).toLocaleDateString()}
+                         </TableCell>
+                         <TableCell sx={{ bgcolor: '#fff3e0' }}>
+                           <Typography variant="body2">{c.module1}</Typography>
+                           <Typography variant="caption">{c.start1.slice(0,5)} - {c.end1.slice(0,5)} ({c.loc1})</Typography>
+                         </TableCell>
+                         <TableCell sx={{ bgcolor: '#ffebee' }}>
+                           <Typography variant="body2">{c.module2}</Typography>
+                           <Typography variant="caption">{c.start2.slice(0,5)} - {c.end2.slice(0,5)} ({c.loc2})</Typography>
+                         </TableCell>
+                       </TableRow>
+                     ))}
+                   </TableBody>
+                 </Table>
+               </TableContainer>
+             )}
+          </DialogContent>
+          <DialogActions>
+            <Button color="error" variant="outlined" onClick={() => {
+               // Export Conflict List
+               const csv = [
+                 "CNE,Nom,Prenom,Date,Module1,Horaire1,Lieu1,Module2,Horaire2,Lieu2", 
+                 ...conflictDialog.conflicts.map(c => 
+                    `${c.cod_etu},"${c.nom}","${c.prenom}",${new Date(c.exam_date).toLocaleDateString()},"${c.module1}","${c.start1}-${c.end1}","${c.loc1}","${c.module2}","${c.start2}-${c.end2}","${c.loc2}"`
+                 )
+               ].join('\n');
+               const link = document.createElement("a"); 
+               link.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
+               link.download = "conflits_examens.csv"; 
+               document.body.appendChild(link); link.click();
+            }}>
+                Exporter Conflits
+            </Button>
+            <Button onClick={() => setConflictDialog({ ...conflictDialog, open: false })}>Fermer</Button>
+          </DialogActions>
+        </Dialog>
+
       </Grid>
     </Box>
   );

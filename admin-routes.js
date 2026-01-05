@@ -1037,4 +1037,147 @@ router.get('/exams', authenticateAdmin, async (req, res) => {
   }
 });
 
+// GET Exams with Student Count (CORRECTED LIST VIEW)
+router.get('/exams', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT ep.*, COUNT(ea.cod_etu) as assigned_count 
+      FROM exam_planning ep
+      LEFT JOIN exam_assignments ea ON ep.id = ea.exam_id
+      GROUP BY ep.id
+      ORDER BY ep.exam_date DESC, ep.start_time ASC
+    `);
+    
+    // Ensure assigned_count is a number (Postgres returns it as a string)
+    const rows = result.rows.map(row => ({
+      ...row,
+      assigned_count: parseInt(row.assigned_count || 0)
+    }));
+
+    res.json(rows);
+  } catch (error) {
+    console.error('Get exams error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- NEW ROUTE: Export Full Exam Planning with Student Details ---
+router.get('/exams/export/assignments', authenticateAdmin, async (req, res) => {
+  try {
+    // FIX: Use DISTINCT ON to ensure we only get one name entry per student
+    // This prevents the row explosion caused by joining raw pedagogical_situation
+    const query = `
+      WITH unique_names AS (
+        SELECT DISTINCT ON (cod_etu) 
+          cod_etu, 
+          lib_nom_pat_ind, 
+          lib_pr1_ind 
+        FROM pedagogical_situation
+      )
+      SELECT 
+        ea.cod_etu as "CNE",
+        COALESCE(s.lib_nom_pat_ind, un.lib_nom_pat_ind) as "Nom",
+        COALESCE(s.lib_pr1_ind, un.lib_pr1_ind) as "Prenom",
+        ep.exam_date,
+        ep.start_time,
+        ep.group_name,
+        ep.location,
+        ep.module_name
+      FROM exam_planning ep
+      JOIN exam_assignments ea ON ep.id = ea.exam_id
+      LEFT JOIN students s ON ea.cod_etu = s.cod_etu
+      LEFT JOIN unique_names un ON ea.cod_etu = un.cod_etu
+      ORDER BY ep.exam_date, ep.start_time, ep.module_name, "Nom"
+    `;
+    
+    const result = await pool.query(query);
+    
+    // Generate CSV
+    let csv = "CNE,Nom,Prenom,Date,Heure,Groupe,Lieu,Module\n";
+    
+    result.rows.forEach(row => {
+      const date = row.exam_date ? new Date(row.exam_date).toLocaleDateString('fr-FR') : '';
+      const time = row.start_time ? row.start_time.substring(0, 5) : '';
+      
+      const clean = (str) => str ? `"${str.toString().replace(/"/g, '""')}"` : '';
+      
+      csv += `${clean(row.CNE)},${clean(row.Nom)},${clean(row.Prenom)},${clean(date)},${clean(time)},${clean(row.group_name)},${clean(row.location)},${clean(row.module_name)}\n`;
+    });
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=planning_global_detaile_${new Date().toISOString().split('T')[0]}.csv`);
+    res.send(csv);
+
+  } catch (error) {
+    console.error('Export assignments error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- NEW ROUTE: Get Count of Student Conflicts (Overlapping Exams) ---
+router.get('/exams/conflicts/count', authenticateAdmin, async (req, res) => {
+  try {
+    // This query finds students assigned to two different exams (ep1, ep2)
+    // that happen on the same date and have overlapping time intervals.
+    const query = `
+      SELECT COUNT(DISTINCT ea1.cod_etu) as conflict_count
+      FROM exam_assignments ea1
+      JOIN exam_planning ep1 ON ea1.exam_id = ep1.id
+      JOIN exam_assignments ea2 ON ea1.cod_etu = ea2.cod_etu
+      JOIN exam_planning ep2 ON ea2.exam_id = ep2.id
+      WHERE ep1.id < ep2.id -- Ensure we don't compare an exam to itself or count pairs twice
+      AND ep1.exam_date = ep2.exam_date -- Same day
+      AND (
+        (ep1.start_time < ep2.end_time AND ep1.end_time > ep2.start_time) -- Overlapping times
+      )
+    `;
+    
+    const result = await pool.query(query);
+    res.json({ count: parseInt(result.rows[0].conflict_count) });
+    
+  } catch (error) {
+    console.error('Get exam conflicts error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- NEW ROUTE: Get Detailed List of Student Conflicts ---
+router.get('/exams/conflicts/details', authenticateAdmin, async (req, res) => {
+  try {
+    const query = `
+      SELECT 
+        ea1.cod_etu,
+        COALESCE(s.lib_nom_pat_ind, ps.lib_nom_pat_ind) as nom,
+        COALESCE(s.lib_pr1_ind, ps.lib_pr1_ind) as prenom,
+        ep1.module_name as module1,
+        ep1.start_time as start1,
+        ep1.end_time as end1,
+        ep1.location as loc1,
+        ep2.module_name as module2,
+        ep2.start_time as start2,
+        ep2.end_time as end2,
+        ep2.location as loc2,
+        ep1.exam_date
+      FROM exam_assignments ea1
+      JOIN exam_planning ep1 ON ea1.exam_id = ep1.id
+      JOIN exam_assignments ea2 ON ea1.cod_etu = ea2.cod_etu
+      JOIN exam_planning ep2 ON ea2.exam_id = ep2.id
+      LEFT JOIN students s ON ea1.cod_etu = s.cod_etu
+      LEFT JOIN pedagogical_situation ps ON ea1.cod_etu = ps.cod_etu
+      WHERE ep1.id < ep2.id
+      AND ep1.exam_date = ep2.exam_date
+      AND (
+        (ep1.start_time < ep2.end_time AND ep1.end_time > ep2.start_time)
+      )
+      ORDER BY nom, prenom
+    `;
+    
+    const result = await pool.query(query);
+    res.json(result.rows);
+    
+  } catch (error) {
+    console.error('Get exam conflicts details error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 module.exports = router;

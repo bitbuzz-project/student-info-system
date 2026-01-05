@@ -192,7 +192,24 @@ export const adminAPI = {
     }
     return response.data;
   },
+  // Check for conflicts
+  getExamConflictsCount: async () => {
+    const response = await api.get('/admin/exams/conflicts/count');
+    return response.data.count;
+  },
 
+  // Check for conflicts count
+  getExamConflictsCount: async () => {
+    const response = await api.get('/admin/exams/conflicts/count');
+    return response.data.count;
+  },
+
+  // --- NEW: Get conflict details ---
+  getExamConflictsDetails: async () => {
+    const response = await api.get('/admin/exams/conflicts/details');
+    return response.data;
+  },
+  
   // Student Management APIs
   searchStudents: async (params = {}) => {
     const searchParams = new URLSearchParams();
@@ -252,16 +269,42 @@ export const adminAPI = {
     return response.data;
   },
 
-  createExam: async (examData) => {
-    const response = await api.post('/admin/exams', examData);
-    return response.data;
-  },
+
 
   deleteExam: async (id) => {
     const response = await api.delete(`/admin/exams/${id}`);
     return response.data;
   },
+createExam: async (examData) => {
+    const response = await api.post('/admin/exams', examData);
+    return response.data;
+  },
 
+
+
+  // --- NEW METHOD ---
+exportExamAssignments: async () => {
+    try {
+      const response = await api.get('/admin/exams/export/assignments', {
+        responseType: 'blob',
+        timeout: 120000 // FIX: Increased to 2 minutes (120s) to prevent timeouts
+      });
+      
+      const blob = new Blob([response.data], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `planning_global_detaile_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      return true;
+    } catch (error) {
+      console.error('Export failed:', error);
+      throw error;
+    }
+  },
   // Export Students Function
   exportStudents: async (params = {}) => {
     const searchParams = new URLSearchParams();
