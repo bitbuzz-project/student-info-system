@@ -1180,4 +1180,150 @@ router.get('/exams/conflicts/details', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+
+// GET Notifications
+router.get('/notifications', authenticateAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT * FROM notifications 
+      ORDER BY created_at DESC 
+      LIMIT 50
+    `);
+    
+    // Count unread
+    const countRes = await pool.query(`SELECT COUNT(*) as count FROM notifications WHERE is_read = FALSE`);
+    
+    res.json({
+      notifications: result.rows,
+      unread_count: parseInt(countRes.rows[0].count)
+    });
+  } catch (error) {
+    console.error('Get notifications error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// MARK Notifications as Read
+router.put('/notifications/read-all', authenticateAdmin, async (req, res) => {
+  try {
+    await pool.query(`UPDATE notifications SET is_read = TRUE WHERE is_read = FALSE`);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Mark notifications read error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+// --- NEW ROUTE: Refresh Exam Participants (On-Demand) ---
+router.post('/exams/refresh-participants', authenticateAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    console.log('🔄 Manual Refresh of Exam Participants started...');
+    await client.query('BEGIN');
+
+    // 1. Get all future (or today's) exams
+    const examsRes = await client.query(`
+      SELECT id, module_code, module_name, group_name 
+      FROM exam_planning 
+      WHERE exam_date >= CURRENT_DATE
+    `);
+    const exams = examsRes.rows;
+
+    let stats = { updatedExams: 0, added: 0, removed: 0 };
+
+    for (const exam of exams) {
+      const { id, module_code, group_name } = exam;
+
+      // 2. Parse Modules and Groups (Handle "Mod1 + Mod2" logic)
+      const modules = module_code ? module_code.split('+').map(s => s.trim()) : [];
+      
+      let groups = [];
+      if (group_name && group_name !== 'Tous') {
+          // Remove potential (Code) suffixes and split by '+'
+          groups = group_name.split('+').map(s => s.trim().replace(/\(.*\)$/, '').trim());
+      }
+
+      if (modules.length === 0) continue;
+
+      // 3. Build Dynamic Query to find Eligible Students
+      // Conditions: Student has ANY of the modules AND (if groups exist) belongs to ANY group
+      const params = [];
+      let paramIndex = 1;
+      
+      const modConds = modules.map(m => {
+          params.push(m);
+          return `TRIM(ps.cod_elp) ILIKE TRIM($${paramIndex++})`;
+      });
+
+      let groupClause = '';
+      if (groups.length > 0) {
+          const groupConds = groups.map(g => {
+              params.push(g);
+              return `EXISTS (
+                  SELECT 1 FROM grouping_rules gr
+                  WHERE (
+                      ${modules.map((_, i) => `TRIM(ps.cod_elp) ILIKE TRIM($${i + 1})`).join(' OR ')}
+                  )
+                  AND gr.group_name = $${paramIndex++}
+                  AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" >= UPPER(gr.range_start) COLLATE "C"
+                  AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" <= (UPPER(gr.range_end) || 'ZZZZZZ') COLLATE "C"
+              )`;
+          });
+          groupClause = `AND (${groupConds.join(' OR ')})`;
+      }
+
+      const eligibleQuery = `
+        SELECT DISTINCT ps.cod_etu
+        FROM pedagogical_situation ps
+        WHERE (${modConds.join(' OR ')}) ${groupClause}
+      `;
+
+      const eligibleRes = await client.query(eligibleQuery, params);
+      const eligibleStudents = new Set(eligibleRes.rows.map(r => r.cod_etu));
+
+      // 4. Get Current Assignments
+      const currentRes = await client.query('SELECT cod_etu FROM exam_assignments WHERE exam_id = $1', [id]);
+      const currentStudents = new Set(currentRes.rows.map(r => r.cod_etu));
+
+      // 5. Calculate Diff
+      const toAdd = [...eligibleStudents].filter(x => !currentStudents.has(x));
+      const toRemove = [...currentStudents].filter(x => !eligibleStudents.has(x));
+
+      // 6. Apply Changes
+      if (toAdd.length > 0) {
+        const values = toAdd.map((_, i) => `($1, $${i + 2})`).join(',');
+        await client.query(
+          `INSERT INTO exam_assignments (exam_id, cod_etu) VALUES ${values} ON CONFLICT DO NOTHING`,
+          [id, ...toAdd]
+        );
+        stats.added += toAdd.length;
+      }
+
+      if (toRemove.length > 0) {
+        // Safety: Only remove if we actually found eligible students (prevent accidental wipe)
+        if (eligibleStudents.size > 0) {
+            await client.query(
+              `DELETE FROM exam_assignments WHERE exam_id = $1 AND cod_etu = ANY($2)`,
+              [id, toRemove]
+            );
+            stats.removed += toRemove.length;
+        }
+      }
+
+      if (toAdd.length > 0 || toRemove.length > 0) {
+        stats.updatedExams++;
+      }
+    }
+
+    await client.query('COMMIT');
+    res.json({ success: true, ...stats, message: `Mise à jour terminée : ${stats.added} ajoutés, ${stats.removed} retirés.` });
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Refresh participants error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
+  }
+});
 module.exports = router;

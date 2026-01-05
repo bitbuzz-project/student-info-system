@@ -192,6 +192,21 @@ export const adminAPI = {
     }
     return response.data;
   },
+  // Refresh Exam Participants based on current Pedago Data
+  refreshExamParticipants: async () => {
+    const response = await api.post('/admin/exams/refresh-participants');
+    return response.data;
+  },
+  // --- NOTIFICATIONS ---
+  getNotifications: async () => {
+    const response = await api.get('/admin/notifications');
+    return response.data;
+  },
+
+  markNotificationsRead: async () => {
+    return await api.put('/admin/notifications/read-all');
+  },
+
   // Check for conflicts
   getExamConflictsCount: async () => {
     const response = await api.get('/admin/exams/conflicts/count');
@@ -209,7 +224,7 @@ export const adminAPI = {
     const response = await api.get('/admin/exams/conflicts/details');
     return response.data;
   },
-  
+
   // Student Management APIs
   searchStudents: async (params = {}) => {
     const searchParams = new URLSearchParams();

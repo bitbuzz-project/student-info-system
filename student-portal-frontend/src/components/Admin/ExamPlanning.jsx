@@ -4,7 +4,7 @@ import {
   TableCell, TableContainer, TableHead, TableRow, Autocomplete, IconButton,
   Card, CardContent, Chip, Alert, Dialog, DialogTitle, DialogContent,
   DialogActions, Tooltip, CircularProgress, LinearProgress, Divider,
-  ToggleButton, ToggleButtonGroup
+  ToggleButton, ToggleButtonGroup, Badge, Menu, MenuItem, ListItemText, ListItemIcon
 } from '@mui/material';
 import {
   Event as EventIcon,
@@ -25,12 +25,16 @@ import {
   ChevronRight as ChevronRightIcon,
   Assignment as AssignmentIcon,
   Today as TodayIcon,
-  WarningAmber as WarningIcon
+  WarningAmber as WarningIcon,
+  Notifications as NotificationsIcon,
+  Info as InfoIcon,
+  CheckCircleOutline as SuccessIcon,
+  Sync as SyncIcon // Added Sync Icon
 } from '@mui/icons-material';
 import { adminAPI } from '../../services/api';
 
+// ... (Keep StatCard and CalendarView components exactly as they were) ...
 // --- COMPONENT: STAT CARD ---
-// Added onClick prop to make card clickable
 const StatCard = ({ title, value, icon, color, loading, subtitle, onClick }) => (
   <Card 
     sx={{ 
@@ -38,7 +42,7 @@ const StatCard = ({ title, value, icon, color, loading, subtitle, onClick }) => 
       boxShadow: 2, 
       position: 'relative', 
       overflow: 'hidden',
-      cursor: onClick ? 'pointer' : 'default', // Change cursor if clickable
+      cursor: onClick ? 'pointer' : 'default',
       transition: 'transform 0.2s',
       '&:hover': onClick ? { transform: 'scale(1.02)', boxShadow: 4 } : {}
     }}
@@ -185,7 +189,7 @@ const CalendarView = ({ exams, onSelectExam }) => {
 };
 
 const ExamPlanning = () => {
-  // --- STATE ---
+  // ... (Keep existing state) ...
   const [exams, setExams] = useState([]);
   const [rawStats, setRawStats] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -195,6 +199,12 @@ const ExamPlanning = () => {
   const [success, setSuccess] = useState(null);
   const [viewMode, setViewMode] = useState('calendar'); 
   const [conflictCount, setConflictCount] = useState(0);
+
+  // Notifications State
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [anchorEl, setAnchorEl] = useState(null);
+  const openNotif = Boolean(anchorEl);
 
   // Planning State
   const [selectedModules, setSelectedModules] = useState([]);
@@ -212,7 +222,6 @@ const ExamPlanning = () => {
   // Dialogs
   const [locationDialog, setLocationDialog] = useState(false);
   const [studentDialog, setStudentDialog] = useState({ open: false, students: [], title: '', loading: false });
-  // NEW: Conflict Dialog State
   const [conflictDialog, setConflictDialog] = useState({ open: false, conflicts: [], loading: false });
   const [newLoc, setNewLoc] = useState({ name: '', capacity: '', type: 'AMPHI' });
 
@@ -251,24 +260,66 @@ const ExamPlanning = () => {
     }
   };
 
-  useEffect(() => { loadData(); }, []);
+  // --- FETCH NOTIFICATIONS ---
+  const fetchNotifications = async () => {
+    try {
+      const data = await adminAPI.getNotifications();
+      setNotifications(data.notifications);
+      setUnreadCount(data.unread_count);
+    } catch (err) {
+      console.error("Failed to load notifications", err);
+    }
+  };
 
-  // --- GLOBAL STATS CALCULATIONS ---
+  useEffect(() => { 
+    loadData(); 
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleNotificationClick = (event) => {
+    setAnchorEl(event.currentTarget);
+  };
+
+  const handleNotificationClose = () => {
+    setAnchorEl(null);
+    if (unreadCount > 0) {
+      adminAPI.markNotificationsRead();
+      setUnreadCount(0);
+      setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+    }
+  };
+
+  // --- NEW: HANDLE REFRESH PARTICIPANTS ---
+  const handleRefreshParticipants = async () => {
+    if(!confirm("Voulez-vous recalculer les listes d'étudiants pour tous les examens futurs ? Cette action mettra à jour les affectations en fonction des dernières données pédagogiques.")) return;
+    
+    setLoading(true);
+    try {
+      const result = await adminAPI.refreshExamParticipants();
+      setSuccess(result.message);
+      await loadData(); // Reload data to show new counts
+    } catch (err) {
+      setError("Erreur lors de l'actualisation des listes.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ... (Keep globalStats, occupiedLocationNames, handleSelectData, etc.) ...
+  
   const globalStats = useMemo(() => {
     const totalSessions = exams.length;
     const totalAssigned = exams.reduce((sum, e) => sum + (e.assigned_count || 0), 0);
     const uniqueModules = new Set(exams.map(e => e.module_code)).size;
-    
-    // Calculate unique days with exams
     const uniqueDays = new Set(exams.map(e => {
         const d = new Date(e.exam_date);
         return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
     })).size;
-
     return { totalSessions, totalAssigned, uniqueModules, uniqueDays };
   }, [exams]);
 
-  // --- HANDLER: SHOW CONFLICT DETAILS ---
   const handleShowConflicts = async () => {
     if (conflictCount === 0) return;
     setConflictDialog({ open: true, conflicts: [], loading: true });
@@ -282,7 +333,6 @@ const ExamPlanning = () => {
     }
   };
 
-  // --- LOGIC: EXPORT ---
   const handleExport = async () => {
     try {
       await adminAPI.exportExamAssignments();
@@ -292,10 +342,8 @@ const ExamPlanning = () => {
     }
   };
 
-  // --- LOGIC: IDENTIFY OCCUPIED LOCATIONS ---
   const occupiedLocationNames = useMemo(() => {
     if (!commonDate || !commonStartTime || !commonEndTime) return [];
-    
     return exams
       .filter(e => {
         const examDate = new Date(e.exam_date).toISOString().split('T')[0];
@@ -305,7 +353,6 @@ const ExamPlanning = () => {
       .map(e => e.location);
   }, [exams, commonDate, commonStartTime, commonEndTime]);
 
-  // --- LOGIC: FETCH STUDENTS ---
   const handleSelectData = async (modules, groups) => {
     setSelectedModules(modules);
     setSelectedGroups(groups);
@@ -315,7 +362,6 @@ const ExamPlanning = () => {
       setLoading(true);
       try {
         const requests = [];
-        
         if (groups.length === 0) {
             const moduleCodes = modules.map(m => m.cod_elp).join(',');
             requests.push(adminAPI.getGroupStudents(moduleCodes, 'Tous'));
@@ -325,27 +371,22 @@ const ExamPlanning = () => {
                 if (!moduleMap.has(g.cod_elp)) moduleMap.set(g.cod_elp, []);
                 moduleMap.get(g.cod_elp).push(g.group_name);
             });
-
             for (const [modCode, groupNames] of moduleMap.entries()) {
                 if (groupNames.length > 0) {
                     requests.push(adminAPI.getGroupStudents(modCode, groupNames.join(',')));
                 }
             }
         }
-
         if (requests.length === 0) {
             setAllGroupStudents([]);
             setLoading(false);
             return;
         }
-
         const results = await Promise.all(requests);
         const allStudents = results.flat();
         const uniqueStudents = Array.from(new Map(allStudents.map(s => [s.cod_etu, s])).values());
-        
         uniqueStudents.sort((a, b) => a.lib_nom_pat_ind.localeCompare(b.lib_nom_pat_ind));
         setAllGroupStudents(uniqueStudents);
-
       } catch (err) {
         console.error(err);
         setError("Erreur récupération étudiants");
@@ -357,63 +398,35 @@ const ExamPlanning = () => {
     }
   };
 
-  // --- LOGIC: AUTO DISTRIBUTE ---
   const handleAutoDistribute = () => {
     if (!rangeStart || !rangeEnd) return;
-    if (allGroupStudents.length === 0) {
-      setError("Aucun étudiant à répartir.");
-      return;
-    }
-
+    if (allGroupStudents.length === 0) { setError("Aucun étudiant à répartir."); return; }
     const idx1 = locations.findIndex(l => l.id === rangeStart.id);
     const idx2 = locations.findIndex(l => l.id === rangeEnd.id);
-
     if (idx1 === -1 || idx2 === -1) return;
-
     const start = Math.min(idx1, idx2);
     const end = Math.max(idx1, idx2);
-    
-    const locationSubset = locations.slice(start, end + 1).filter(loc => 
-      !occupiedLocationNames.includes(loc.name)
-    );
-
-    if (locationSubset.length === 0) {
-      setError("Tous les locaux de cette plage sont occupés !");
-      return;
-    }
-
+    const locationSubset = locations.slice(start, end + 1).filter(loc => !occupiedLocationNames.includes(loc.name));
+    if (locationSubset.length === 0) { setError("Tous les locaux de cette plage sont occupés !"); return; }
     const totalCapacity = locationSubset.reduce((sum, loc) => sum + (parseInt(loc.capacity) || 0), 0);
     const totalStudents = allGroupStudents.length;
-
     const ratio = Math.min(totalStudents / totalCapacity, 1);
-
     let assignedSoFar = 0;
     const newSessions = [];
-
     locationSubset.forEach((loc, index) => {
         const cap = parseInt(loc.capacity) || 0;
         let count = Math.floor(cap * ratio); 
         assignedSoFar += count;
-        newSessions.push({
-            id: Date.now() + index,
-            location: loc,
-            count: count,
-            professor: ''
-        });
+        newSessions.push({ id: Date.now() + index, location: loc, count: count, professor: '' });
     });
-
     let remainder = totalStudents - assignedSoFar;
     if (remainder > 0) {
         for (const session of newSessions) {
             if (remainder <= 0) break;
             const cap = parseInt(session.location.capacity) || 0;
-            if (session.count < cap) {
-                session.count++;
-                remainder--;
-            }
+            if (session.count < cap) { session.count++; remainder--; }
         }
     }
-
     setPlanningSessions(newSessions.filter(s => s.count > 0));
     setSuccess(`Répartition automatique effectuée.`);
   };
@@ -440,96 +453,57 @@ const ExamPlanning = () => {
   };
 
   const handleSubmitPlan = async () => {
-    setError(null);
-    setSuccess(null);
-
+    setError(null); setSuccess(null);
     if (selectedModules.length === 0 || !commonDate || !commonStartTime || !commonEndTime || planningSessions.length === 0) {
-      setError("Veuillez remplir tous les champs communs et ajouter au moins une session.");
-      return;
+      setError("Veuillez remplir tous les champs communs et ajouter au moins une session."); return;
     }
-
-    if (commonStartTime >= commonEndTime) {
-      setError("L'heure de fin doit être après l'heure de début.");
-      return;
-    }
-
-    const occupiedInDb = exams
-    .filter(e => {
+    if (commonStartTime >= commonEndTime) { setError("L'heure de fin doit être après l'heure de début."); return; }
+    const occupiedInDb = exams.filter(e => {
       const examDate = new Date(e.exam_date).toISOString().split('T')[0];
       if (examDate !== commonDate) return false;
       return e.start_time < commonEndTime && e.end_time > commonStartTime;
-    })
-    .map(e => e.location);
-
-    const dbConflicts = planningSessions.filter(s => 
-      s.location && occupiedInDb.includes(s.location.name)
-    );
-
+    }).map(e => e.location);
+    const dbConflicts = planningSessions.filter(s => s.location && occupiedInDb.includes(s.location.name));
     if (dbConflicts.length > 0) {
       const names = dbConflicts.map(s => s.location.name).join(', ');
-      setError(`ERREUR CRITIQUE: Les locaux suivants sont DÉJÀ occupés : ${names}`);
-      return;
+      setError(`ERREUR CRITIQUE: Les locaux suivants sont DÉJÀ occupés : ${names}`); return;
     }
-
     const currentSelectionNames = planningSessions.filter(s => s.location).map(s => s.location.name);
     const uniqueNames = new Set(currentSelectionNames);
     if (uniqueNames.size !== currentSelectionNames.length) {
       const duplicates = currentSelectionNames.filter((item, index) => currentSelectionNames.indexOf(item) !== index);
-      setError(`ERREUR: Vous avez sélectionné plusieurs fois le même local : ${duplicates.join(', ')}`);
-      return;
+      setError(`ERREUR: Vous avez sélectionné plusieurs fois le même local : ${duplicates.join(', ')}`); return;
     }
-
     setLoading(true);
     try {
       let startIndex = 0;
       const mergedCode = selectedModules.map(m => m.cod_elp).join(' + ');
       const mergedName = selectedModules.map(m => m.lib_elp).join(' & ');
-      const mergedGroups = selectedGroups.length > 0 
-        ? selectedGroups.map(g => `${g.group_name}(${g.cod_elp})`).join(' + ') 
-        : 'Tous';
-
+      const mergedGroups = selectedGroups.length > 0 ? selectedGroups.map(g => `${g.group_name}(${g.cod_elp})`).join(' + ') : 'Tous';
       for (const session of planningSessions) {
         if (!session.location || !session.count) continue;
         const count = parseInt(session.count);
         const sessionStudents = allGroupStudents.slice(startIndex, startIndex + count);
         const studentIds = sessionStudents.map(s => s.cod_etu);
-
         const payload = {
-          module_code: mergedCode,
-          module_name: mergedName,
-          group_name: mergedGroups,
-          exam_date: commonDate,
-          start_time: commonStartTime,
-          end_time: commonEndTime,
-          location: session.location.name,
-          professor_name: session.professor,
-          student_ids: studentIds
+          module_code: mergedCode, module_name: mergedName, group_name: mergedGroups, exam_date: commonDate,
+          start_time: commonStartTime, end_time: commonEndTime, location: session.location.name,
+          professor_name: session.professor, student_ids: studentIds
         };
-
         await adminAPI.createExam(payload);
         startIndex += count;
       }
-
       setSuccess(`Planification réussie pour ${startIndex} étudiants !`);
-      
-      setSelectedModules([]);
-      setSelectedGroups([]);
-      setAllGroupStudents([]);
-      setPlanningSessions([]);
-      setCommonDate('');
-      setCommonStartTime('');
-      setCommonEndTime('');
+      setSelectedModules([]); setSelectedGroups([]); setAllGroupStudents([]); setPlanningSessions([]);
+      setCommonDate(''); setCommonStartTime(''); setCommonEndTime('');
       loadData();
-
     } catch (err) {
-      console.error(err);
-      setError("Erreur lors de la planification.");
+      console.error(err); setError("Erreur lors de la planification.");
     } finally {
       setLoading(false);
     }
   };
 
-  // --- UTILS ---
   const uniqueModules = useMemo(() => {
     const map = new Map();
     rawStats.forEach(item => {
@@ -546,11 +520,8 @@ const ExamPlanning = () => {
       modStats.forEach(item => {
         if(item.group_name) {
             options.push({
-                key: `${mod.cod_elp}-${item.group_name}`,
-                group_name: item.group_name,
-                cod_elp: mod.cod_elp,
-                lib_elp: mod.lib_elp,
-                label: `${item.group_name} (${mod.cod_elp})`
+                key: `${mod.cod_elp}-${item.group_name}`, group_name: item.group_name,
+                cod_elp: mod.cod_elp, lib_elp: mod.lib_elp, label: `${item.group_name} (${mod.cod_elp})`
             });
         }
       });
@@ -558,7 +529,6 @@ const ExamPlanning = () => {
     return options.sort((a, b) => a.label.localeCompare(b.label));
   }, [rawStats, selectedModules]);
 
-  // --- GROUPING LOGIC FOR LIST ---
   const groupedExams = useMemo(() => {
     const groups = {};
     exams.forEach(exam => {
@@ -576,7 +546,6 @@ const ExamPlanning = () => {
   const allocatedTotal = planningSessions.reduce((sum, s) => sum + (parseInt(s.count) || 0), 0);
   const remainingStudents = allGroupStudents.length - allocatedTotal;
 
-  // View Handler
   const handleExamClick = (exam) => {
     setStudentDialog({ open: true, students: [], loading: true, title: `${exam.module_name} (${exam.location})` });
     adminAPI.getExamStudents(exam.id).then(s => setStudentDialog(p => ({ ...p, students: s, loading: false })));
@@ -592,7 +561,66 @@ const ExamPlanning = () => {
             <Typography variant="body2" color="text.secondary">Gestion des sessions, conflits & listes.</Typography>
           </Box>
         </Box>
-        <Box sx={{ display: 'flex', gap: 2 }}>
+        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            <IconButton color="primary" onClick={handleNotificationClick}>
+              <Badge badgeContent={unreadCount} color="error">
+                <NotificationsIcon />
+              </Badge>
+            </IconButton>
+
+            <Menu
+              anchorEl={anchorEl}
+              open={openNotif}
+              onClose={handleNotificationClose}
+              PaperProps={{ sx: { width: 400, maxHeight: 400 } }}
+              transformOrigin={{ horizontal: 'right', vertical: 'top' }}
+              anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
+            >
+              <Typography variant="subtitle1" sx={{ p: 2, fontWeight: 'bold', borderBottom: '1px solid #eee' }}>
+                Notifications ({notifications.length})
+              </Typography>
+              {notifications.length === 0 ? (
+                <MenuItem disabled>Aucune notification</MenuItem>
+              ) : (
+                notifications.map((notif) => (
+                  <MenuItem key={notif.id} sx={{ whiteSpace: 'normal', borderBottom: '1px solid #f0f0f0', py: 1.5 }}>
+                    <ListItemIcon>
+                      {notif.type === 'INFO' && <InfoIcon color="info" fontSize="small" />}
+                      {notif.type === 'WARNING' && <WarningIcon color="warning" fontSize="small" />}
+                      {notif.type === 'SUCCESS' && <SuccessIcon color="success" fontSize="small" />}
+                    </ListItemIcon>
+                    <ListItemText 
+                      primary={
+                        <Typography variant="body2" fontWeight={!notif.is_read ? 'bold' : 'normal'}>
+                          {notif.title}
+                        </Typography>
+                      } 
+                      secondary={
+                        <React.Fragment>
+                          <Typography variant="caption" color="text.primary" component="span" sx={{ display: 'block' }}>
+                            {notif.message}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {new Date(notif.created_at).toLocaleString()}
+                          </Typography>
+                        </React.Fragment>
+                      }
+                    />
+                  </MenuItem>
+                ))
+              )}
+            </Menu>
+
+            {/* --- NEW BUTTON: SYNC LISTS --- */}
+            <Button 
+                startIcon={<SyncIcon />} 
+                variant="outlined" 
+                color="secondary" 
+                onClick={handleRefreshParticipants}
+            >
+                Sync Listes
+            </Button>
+
             <Button 
                 startIcon={<DownloadIcon />} 
                 variant="contained" 
@@ -607,64 +635,32 @@ const ExamPlanning = () => {
         </Box>
       </Box>
 
+      {/* ... (Rest of the component remains unchanged) ... */}
+      
       {/* --- SECTION: GLOBAL STATISTICS --- */}
       <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 1, color: 'text.primary', mt: 2 }}>
         <AssignmentIcon color="action" /> Statistiques Globales
       </Typography>
       <Grid container spacing={2} sx={{ mb: 4 }}>
         <Grid item xs={12} sm={6} md={2.4}>
-           <StatCard 
-             title="Total Sessions" 
-             value={globalStats.totalSessions} 
-             subtitle="Examens programmés"
-             icon={<EventIcon />} 
-             color="info" 
-           />
+           <StatCard title="Total Sessions" value={globalStats.totalSessions} subtitle="Examens programmés" icon={<EventIcon />} color="info" />
         </Grid>
         <Grid item xs={12} sm={6} md={2.4}>
-           <StatCard 
-             title="Étudiants Planifiés" 
-             value={globalStats.totalAssigned} 
-             subtitle="Total convocations"
-             icon={<PeopleIcon />} 
-             color="success" 
-           />
+           <StatCard title="Étudiants Planifiés" value={globalStats.totalAssigned} subtitle="Total convocations" icon={<PeopleIcon />} color="success" />
         </Grid>
         <Grid item xs={12} sm={6} md={2.4}>
-           <StatCard 
-             title="Modules Uniques" 
-             value={globalStats.uniqueModules} 
-             subtitle="Matières distinctes"
-             icon={<ClassIcon />} 
-             color="warning" 
-           />
+           <StatCard title="Modules Uniques" value={globalStats.uniqueModules} subtitle="Matières distinctes" icon={<ClassIcon />} color="warning" />
         </Grid>
         <Grid item xs={12} sm={6} md={2.4}>
-           <StatCard 
-             title="Jours d'Examens" 
-             value={globalStats.uniqueDays} 
-             subtitle="Jours occupés"
-             icon={<TodayIcon />} 
-             color="primary" 
-           />
+           <StatCard title="Jours d'Examens" value={globalStats.uniqueDays} subtitle="Jours occupés" icon={<TodayIcon />} color="primary" />
         </Grid>
         <Grid item xs={12} sm={6} md={2.4}>
-           {/* CLICKABLE CONFLICT CARD */}
-           <StatCard 
-             title="Conflits Horaire" 
-             value={conflictCount} 
-             subtitle="Étudiants en doublon (Cliquer)"
-             icon={<WarningIcon />} 
-             color={conflictCount > 0 ? "error" : "success"} 
-             loading={loading}
-             onClick={handleShowConflicts}
-           />
+           <StatCard title="Conflits Horaire" value={conflictCount} subtitle="Étudiants en doublon (Cliquer)" icon={<WarningIcon />} color={conflictCount > 0 ? "error" : "success"} loading={loading} onClick={handleShowConflicts} />
         </Grid>
       </Grid>
       
       <Divider sx={{ my: 3 }} />
 
-      {/* --- SECTION: CURRENT PLANNING STATS (WIZARD CONTEXT) --- */}
       <Box sx={{ display: selectedModules.length > 0 ? 'block' : 'none', mb: 3 }}>
         <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 1, color: 'text.secondary' }}>
             <AddIcon color="action" /> État de la Planification en cours
@@ -689,16 +685,13 @@ const ExamPlanning = () => {
       {success && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>{success}</Alert>}
 
       <Grid container spacing={3}>
-        {/* --- LEFT: PLANNING WIZARD --- */}
         <Grid item xs={12} md={5}>
           <Card sx={{ borderRadius: 2, boxShadow: 3 }}>
             <CardContent>
               <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <AddIcon color="primary" /> Nouvelle Planification
               </Typography>
-              
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 2 }}>
-                
                 <Autocomplete
                   multiple
                   options={uniqueModules}
@@ -712,7 +705,6 @@ const ExamPlanning = () => {
                     ))
                   }
                 />
-                
                 <Autocomplete
                   multiple
                   options={availableGroups}
@@ -723,137 +715,68 @@ const ExamPlanning = () => {
                   disabled={selectedModules.length === 0}
                   renderInput={(params) => <TextField {...params} label="2. Groupes" size="small" />}
                 />
-
                 {allGroupStudents.length > 0 && (
                   <Paper sx={{ p: 2, bgcolor: '#e3f2fd', border: '1px solid #90caf9' }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                       <Typography variant="body2" fontWeight="bold">Total Étudiants:</Typography>
                       <Typography variant="body2" fontWeight="bold">{allGroupStudents.length}</Typography>
                     </Box>
-                    <LinearProgress 
-                      variant="determinate" 
-                      value={Math.min((allocatedTotal / allGroupStudents.length) * 100, 100)} 
-                      color={remainingStudents < 0 ? 'error' : 'success'}
-                    />
+                    <LinearProgress variant="determinate" value={Math.min((allocatedTotal / allGroupStudents.length) * 100, 100)} color={remainingStudents < 0 ? 'error' : 'success'} />
                   </Paper>
                 )}
-
                 <TextField type="date" label="Date" value={commonDate} onChange={(e) => setCommonDate(e.target.value)} InputLabelProps={{ shrink: true }} size="small" fullWidth />
                 <Box sx={{ display: 'flex', gap: 2 }}>
                   <TextField type="time" label="Début" value={commonStartTime} onChange={(e) => setCommonStartTime(e.target.value)} InputLabelProps={{ shrink: true }} size="small" fullWidth />
                   <TextField type="time" label="Fin" value={commonEndTime} onChange={(e) => setCommonEndTime(e.target.value)} InputLabelProps={{ shrink: true }} size="small" fullWidth />
                 </Box>
-                
                 {occupiedLocationNames.length > 0 && (
                    <Alert severity="warning" icon={<BlockIcon />} sx={{ mt: 0 }}>
                      <strong>Attention :</strong> {occupiedLocationNames.length} salles indisponibles.
                    </Alert>
                 )}
-
                 <Divider sx={{ my: 1 }}>Distribution Automatique</Divider>
-                
                 <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                  <Autocomplete
-                    options={locations}
-                    getOptionLabel={(opt) => `${opt.name} ${occupiedLocationNames.includes(opt.name) ? '(Occupé)' : ''}`}
-                    getOptionDisabled={(opt) => occupiedLocationNames.includes(opt.name)}
-                    value={rangeStart}
-                    onChange={(e, v) => setRangeStart(v)}
-                    renderInput={(p) => <TextField {...p} label="De..." size="small" />}
-                    sx={{ width: '40%' }}
-                  />
+                  <Autocomplete options={locations} getOptionLabel={(opt) => `${opt.name} ${occupiedLocationNames.includes(opt.name) ? '(Occupé)' : ''}`} getOptionDisabled={(opt) => occupiedLocationNames.includes(opt.name)} value={rangeStart} onChange={(e, v) => setRangeStart(v)} renderInput={(p) => <TextField {...p} label="De..." size="small" />} sx={{ width: '40%' }} />
                   <Typography variant="body2">-</Typography>
-                  <Autocomplete
-                    options={locations}
-                    getOptionLabel={(opt) => `${opt.name} ${occupiedLocationNames.includes(opt.name) ? '(Occupé)' : ''}`}
-                    getOptionDisabled={(opt) => occupiedLocationNames.includes(opt.name)}
-                    value={rangeEnd}
-                    onChange={(e, v) => setRangeEnd(v)}
-                    renderInput={(p) => <TextField {...p} label="À..." size="small" />}
-                    sx={{ width: '40%' }}
-                  />
+                  <Autocomplete options={locations} getOptionLabel={(opt) => `${opt.name} ${occupiedLocationNames.includes(opt.name) ? '(Occupé)' : ''}`} getOptionDisabled={(opt) => occupiedLocationNames.includes(opt.name)} value={rangeEnd} onChange={(e, v) => setRangeEnd(v)} renderInput={(p) => <TextField {...p} label="À..." size="small" />} sx={{ width: '40%' }} />
                   <Tooltip title="Répartition Équilibrée">
-                    <IconButton color="primary" onClick={handleAutoDistribute} disabled={!rangeStart || !rangeEnd}>
-                       <BalanceIcon />
-                    </IconButton>
+                    <IconButton color="primary" onClick={handleAutoDistribute} disabled={!rangeStart || !rangeEnd}><BalanceIcon /></IconButton>
                   </Tooltip>
                 </Box>
-
                 <Typography variant="subtitle2" sx={{ mt: 1, fontWeight: 'bold' }}>Répartition Détaillée</Typography>
                 {planningSessions.map((session, index) => (
                   <Box key={session.id} sx={{ p: 1.5, border: '1px solid #ddd', borderRadius: 1, position: 'relative', mb: 1 }}>
-                    <IconButton size="small" onClick={() => handleRemoveSession(session.id)} sx={{ position: 'absolute', right: 0, top: 0, color: 'error.main' }}>
-                      <DeleteIcon fontSize="small" />
-                    </IconButton>
+                    <IconButton size="small" onClick={() => handleRemoveSession(session.id)} sx={{ position: 'absolute', right: 0, top: 0, color: 'error.main' }}><DeleteIcon fontSize="small" /></IconButton>
                     <Grid container spacing={2}>
                       <Grid item xs={7}>
-                        <Autocomplete
-                          options={locations}
-                          getOptionLabel={(opt) => `${opt.name} (${opt.capacity}) ${occupiedLocationNames.includes(opt.name) ? '(Occupé)' : ''}`}
-                          value={session.location}
-                          onChange={(e, val) => handleUpdateSession(session.id, 'location', val)}
-                          renderInput={(params) => <TextField {...params} label={`Local ${index + 1}`} size="small" />}
-                        />
+                        <Autocomplete options={locations} getOptionLabel={(opt) => `${opt.name} (${opt.capacity}) ${occupiedLocationNames.includes(opt.name) ? '(Occupé)' : ''}`} value={session.location} onChange={(e, val) => handleUpdateSession(session.id, 'location', val)} renderInput={(params) => <TextField {...params} label={`Local ${index + 1}`} size="small" />} />
                       </Grid>
                       <Grid item xs={5}>
-                        <TextField 
-                          label="Effectif" 
-                          type="number" 
-                          size="small" 
-                          value={session.count} 
-                          onChange={(e) => handleUpdateSession(session.id, 'count', e.target.value)}
-                          fullWidth 
-                        />
+                        <TextField label="Effectif" type="number" size="small" value={session.count} onChange={(e) => handleUpdateSession(session.id, 'count', e.target.value)} fullWidth />
                       </Grid>
                       <Grid item xs={12}>
-                        <Autocomplete
-                           options={professors}
-                           getOptionLabel={(opt) => `${opt.nom.toUpperCase()} ${opt.prenom}`}
-                           inputValue={session.professor}
-                           onInputChange={(e, val) => handleUpdateSession(session.id, 'professor', val)}
-                           renderInput={(params) => <TextField {...params} label="Surveillant" size="small" />}
-                           freeSolo
-                        />
+                        <Autocomplete options={professors} getOptionLabel={(opt) => `${opt.nom.toUpperCase()} ${opt.prenom}`} inputValue={session.professor} onInputChange={(e, val) => handleUpdateSession(session.id, 'professor', val)} renderInput={(params) => <TextField {...params} label="Surveillant" size="small" />} freeSolo />
                       </Grid>
                     </Grid>
                   </Box>
                 ))}
-
-                <Button startIcon={<AddIcon />} variant="outlined" size="small" onClick={handleAddSession} disabled={remainingStudents <= 0}>
-                  Ajouter un Local
-                </Button>
-
-                <Button 
-                  variant="contained" 
-                  size="large" 
-                  onClick={handleSubmitPlan}
-                  disabled={remainingStudents !== 0 || planningSessions.length === 0}
-                  sx={{ mt: 2 }}
-                >
-                  Confirmer la Planification
-                </Button>
+                <Button startIcon={<AddIcon />} variant="outlined" size="small" onClick={handleAddSession} disabled={remainingStudents <= 0}>Ajouter un Local</Button>
+                <Button variant="contained" size="large" onClick={handleSubmitPlan} disabled={remainingStudents !== 0 || planningSessions.length === 0} sx={{ mt: 2 }}>Confirmer la Planification</Button>
               </Box>
             </CardContent>
           </Card>
         </Grid>
 
-        {/* --- RIGHT: CALENDAR & LIST VIEW --- */}
         <Grid item xs={12} md={7}>
           <Card sx={{ borderRadius: 2, boxShadow: 2 }}>
             <CardContent>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                   <Typography variant="h6">Planning</Typography>
-                  <ToggleButtonGroup 
-                    value={viewMode} 
-                    exclusive 
-                    onChange={(e, v) => v && setViewMode(v)} 
-                    size="small"
-                  >
+                  <ToggleButtonGroup value={viewMode} exclusive onChange={(e, v) => v && setViewMode(v)} size="small">
                       <ToggleButton value="calendar"><CalendarIcon sx={{ mr: 1 }}/> Calendrier</ToggleButton>
                       <ToggleButton value="list"><ListIcon sx={{ mr: 1 }}/> Liste</ToggleButton>
                   </ToggleButtonGroup>
               </Box>
-              
               {viewMode === 'calendar' ? (
                 <CalendarView exams={exams} onSelectExam={handleExamClick} />
               ) : (
@@ -870,11 +793,7 @@ const ExamPlanning = () => {
                     </TableHead>
                     <TableBody>
                         {sortedModuleNames.length === 0 ? (
-                        <TableRow>
-                            <TableCell colSpan={5} align="center" sx={{ py: 3, color: 'text.secondary' }}>
-                            Aucun examen programmé.
-                            </TableCell>
-                        </TableRow>
+                        <TableRow><TableCell colSpan={5} align="center" sx={{ py: 3, color: 'text.secondary' }}>Aucun examen programmé.</TableCell></TableRow>
                         ) : (
                         sortedModuleNames.map(modName => (
                             <React.Fragment key={modName}>
@@ -882,35 +801,25 @@ const ExamPlanning = () => {
                                 <TableCell colSpan={5}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                     <ClassIcon color="primary" fontSize="small" />
-                                    <Typography variant="subtitle2" fontWeight="bold" color="primary.dark">
-                                    {modName}
-                                    </Typography>
+                                    <Typography variant="subtitle2" fontWeight="bold" color="primary.dark">{modName}</Typography>
                                 </Box>
                                 </TableCell>
                             </TableRow>
-                            
                             {groupedExams[modName].map((exam) => (
                                 <TableRow key={exam.id} hover>
                                 <TableCell>
                                     <Typography variant="body2" fontWeight="bold">{new Date(exam.exam_date).toLocaleDateString('fr-FR')}</Typography>
                                     <Typography variant="caption" color="text.secondary">{exam.start_time.slice(0,5)} - {exam.end_time.slice(0,5)}</Typography>
                                 </TableCell>
-                                <TableCell>
-                                    <Chip label={exam.group_name} size="small" sx={{ fontSize: '0.75rem', height: 24 }} />
-                                </TableCell>
+                                <TableCell><Chip label={exam.group_name} size="small" sx={{ fontSize: '0.75rem', height: 24 }} /></TableCell>
                                 <TableCell>
                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                    <MeetingRoomIcon fontSize="small" color="action" /> 
-                                    <Typography variant="body2">{exam.location}</Typography>
+                                    <MeetingRoomIcon fontSize="small" color="action" /><Typography variant="body2">{exam.location}</Typography>
                                     </Box>
                                 </TableCell>
                                 <TableCell align="center">
                                     <Tooltip title="Voir liste d'émargement">
-                                    <Button 
-                                        size="small" 
-                                        onClick={() => handleExamClick(exam)}
-                                        sx={{ minWidth: 40, borderRadius: 4, bgcolor: '#f5f5f5', color: 'text.primary' }}
-                                    >
+                                    <Button size="small" onClick={() => handleExamClick(exam)} sx={{ minWidth: 40, borderRadius: 4, bgcolor: '#f5f5f5', color: 'text.primary' }}>
                                         {exam.assigned_count || 0}
                                     </Button>
                                     </Tooltip>
@@ -918,9 +827,7 @@ const ExamPlanning = () => {
                                 <TableCell align="center">
                                     <IconButton size="small" color="error" onClick={async () => {
                                     if(confirm('Supprimer cet examen ?')) { await adminAPI.deleteExam(exam.id); loadData(); }
-                                    }}>
-                                    <DeleteIcon fontSize="small" />
-                                    </IconButton>
+                                    }}><DeleteIcon fontSize="small" /></IconButton>
                                 </TableCell>
                                 </TableRow>
                             ))}
@@ -935,7 +842,6 @@ const ExamPlanning = () => {
           </Card>
         </Grid>
 
-        {/* --- DIALOGS --- */}
         <Dialog open={locationDialog} onClose={() => setLocationDialog(false)} maxWidth="sm" fullWidth>
           <DialogTitle>Gestion des Locaux</DialogTitle>
           <DialogContent dividers>
@@ -1008,7 +914,6 @@ const ExamPlanning = () => {
           </DialogActions>
         </Dialog>
 
-        {/* --- NEW: CONFLICT DETAILS DIALOG --- */}
         <Dialog open={conflictDialog.open} onClose={() => setConflictDialog({ ...conflictDialog, open: false })} maxWidth="lg" fullWidth>
           <DialogTitle sx={{ color: 'error.main', display: 'flex', alignItems: 'center', gap: 1 }}>
              <WarningIcon /> Détails des Conflits ({conflictDialog.conflicts.length})
@@ -1032,9 +937,7 @@ const ExamPlanning = () => {
                            <Typography variant="body2" fontWeight="bold">{c.nom} {c.prenom}</Typography>
                            <Typography variant="caption" color="text.secondary">{c.cod_etu}</Typography>
                          </TableCell>
-                         <TableCell>
-                            {new Date(c.exam_date).toLocaleDateString()}
-                         </TableCell>
+                         <TableCell>{new Date(c.exam_date).toLocaleDateString()}</TableCell>
                          <TableCell sx={{ bgcolor: '#fff3e0' }}>
                            <Typography variant="body2">{c.module1}</Typography>
                            <Typography variant="caption">{c.start1.slice(0,5)} - {c.end1.slice(0,5)} ({c.loc1})</Typography>
@@ -1052,20 +955,10 @@ const ExamPlanning = () => {
           </DialogContent>
           <DialogActions>
             <Button color="error" variant="outlined" onClick={() => {
-               // Export Conflict List
-               const csv = [
-                 "CNE,Nom,Prenom,Date,Module1,Horaire1,Lieu1,Module2,Horaire2,Lieu2", 
-                 ...conflictDialog.conflicts.map(c => 
-                    `${c.cod_etu},"${c.nom}","${c.prenom}",${new Date(c.exam_date).toLocaleDateString()},"${c.module1}","${c.start1}-${c.end1}","${c.loc1}","${c.module2}","${c.start2}-${c.end2}","${c.loc2}"`
-                 )
-               ].join('\n');
-               const link = document.createElement("a"); 
-               link.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
-               link.download = "conflits_examens.csv"; 
-               document.body.appendChild(link); link.click();
-            }}>
-                Exporter Conflits
-            </Button>
+               const csv = ["CNE,Nom,Prenom,Date,Module1,Horaire1,Lieu1,Module2,Horaire2,Lieu2", ...conflictDialog.conflicts.map(c => `${c.cod_etu},"${c.nom}","${c.prenom}",${new Date(c.exam_date).toLocaleDateString()},"${c.module1}","${c.start1}-${c.end1}","${c.loc1}","${c.module2}","${c.start2}-${c.end2}","${c.loc2}"`)].join('\n');
+               const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
+               link.download = "conflits_examens.csv"; document.body.appendChild(link); link.click();
+            }}>Exporter Conflits</Button>
             <Button onClick={() => setConflictDialog({ ...conflictDialog, open: false })}>Fermer</Button>
           </DialogActions>
         </Dialog>
