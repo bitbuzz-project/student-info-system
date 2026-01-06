@@ -1215,6 +1215,7 @@ router.put('/notifications/read-all', authenticateAdmin, async (req, res) => {
   }
 });
 // --- NEW ROUTE: Refresh Exam Participants (On-Demand) ---
+// --- NEW ROUTE: Refresh Exam Participants (On-Demand) ---
 router.post('/exams/refresh-participants', authenticateAdmin, async (req, res) => {
   const client = await pool.connect();
   try {
@@ -1234,19 +1235,17 @@ router.post('/exams/refresh-participants', authenticateAdmin, async (req, res) =
     for (const exam of exams) {
       const { id, module_code, group_name } = exam;
 
-      // 2. Parse Modules and Groups (Handle "Mod1 + Mod2" logic)
+      // 2. Parse Modules and Groups
       const modules = module_code ? module_code.split('+').map(s => s.trim()) : [];
       
       let groups = [];
       if (group_name && group_name !== 'Tous') {
-          // Remove potential (Code) suffixes and split by '+'
           groups = group_name.split('+').map(s => s.trim().replace(/\(.*\)$/, '').trim());
       }
 
       if (modules.length === 0) continue;
 
       // 3. Build Dynamic Query to find Eligible Students
-      // Conditions: Student has ANY of the modules AND (if groups exist) belongs to ANY group
       const params = [];
       let paramIndex = 1;
       
@@ -1259,11 +1258,10 @@ router.post('/exams/refresh-participants', authenticateAdmin, async (req, res) =
       if (groups.length > 0) {
           const groupConds = groups.map(g => {
               params.push(g);
+              // CORRECTION: Suppression des commentaires SQL pour éviter l'erreur de paramètres
               return `EXISTS (
                   SELECT 1 FROM grouping_rules gr
-                  WHERE (
-                      ${modules.map((_, i) => `TRIM(ps.cod_elp) ILIKE TRIM($${i + 1})`).join(' OR ')}
-                  )
+                  WHERE TRIM(ps.cod_elp) ILIKE gr.module_pattern
                   AND gr.group_name = $${paramIndex++}
                   AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" >= UPPER(gr.range_start) COLLATE "C"
                   AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" <= (UPPER(gr.range_end) || 'ZZZZZZ') COLLATE "C"
@@ -1300,7 +1298,6 @@ router.post('/exams/refresh-participants', authenticateAdmin, async (req, res) =
       }
 
       if (toRemove.length > 0) {
-        // Safety: Only remove if we actually found eligible students (prevent accidental wipe)
         if (eligibleStudents.size > 0) {
             await client.query(
               `DELETE FROM exam_assignments WHERE exam_id = $1 AND cod_etu = ANY($2)`,
@@ -1321,7 +1318,8 @@ router.post('/exams/refresh-participants', authenticateAdmin, async (req, res) =
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Refresh participants error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    // On renvoie l'erreur exacte au frontend pour le débogage si besoin
+    res.status(500).json({ error: 'Erreur serveur: ' + error.message });
   } finally {
     client.release();
   }
