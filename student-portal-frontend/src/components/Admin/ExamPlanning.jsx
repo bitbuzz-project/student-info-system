@@ -13,7 +13,6 @@ import {
   MeetingRoom as MeetingRoomIcon,
   Settings as SettingsIcon,
   Balance as BalanceIcon,
-  Block as BlockIcon,
   Class as ClassIcon,
   People as PeopleIcon,
   CheckCircle as CheckCircleIcon,
@@ -29,11 +28,10 @@ import {
   Notifications as NotificationsIcon,
   Info as InfoIcon,
   CheckCircleOutline as SuccessIcon,
-  Sync as SyncIcon // Added Sync Icon
+  Sync as SyncIcon
 } from '@mui/icons-material';
 import { adminAPI } from '../../services/api';
 
-// ... (Keep StatCard and CalendarView components exactly as they were) ...
 // --- COMPONENT: STAT CARD ---
 const StatCard = ({ title, value, icon, color, loading, subtitle, onClick }) => (
   <Card 
@@ -85,111 +83,395 @@ const StatCard = ({ title, value, icon, color, loading, subtitle, onClick }) => 
   </Card>
 );
 
-// --- COMPONENT: CALENDAR VIEW ---
-const CalendarView = ({ exams, onSelectExam }) => {
-  const [currentDate, setCurrentDate] = useState(new Date());
 
-  const daysInMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate();
-  const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).getDay(); // 0 = Sun
-  
-  // Adjust for Monday start (0 = Mon, 6 = Sun)
-  const startOffset = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
+// --- IMPROVED COMPONENT: WEEKLY CALENDAR VIEW (with merged module cards) ---
+const WeeklyCalendarView = ({ exams, onSelectExam }) => {
+  const [currentWeekStart, setCurrentWeekStart] = useState(() => {
+    const today = new Date();
+    const day = today.getDay();
+    const diff = today.getDate() - day + (day === 0 ? -6 : 1);
+    return new Date(today.setDate(diff));
+  });
 
-  const handlePrevMonth = () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
-  const handleNextMonth = () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
+  const timeSlots = [
+    '09h00→10h00', '10h00→11h00', '11h00→12h00', '12h00→13h00',
+    '14h00→15h00', '15h00→16h00', '16h00→17h00'
+  ];
 
-  const monthName = currentDate.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+  const weekDays = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
 
-  // Group exams by day
-  const examsByDay = useMemo(() => {
-    const map = {};
-    exams.forEach(exam => {
-      const d = new Date(exam.exam_date);
-      // Only check if it matches current month/year
-      if (d.getMonth() === currentDate.getMonth() && d.getFullYear() === currentDate.getFullYear()) {
-        const day = d.getDate();
-        if (!map[day]) map[day] = [];
-        map[day].push(exam);
-      }
+  const weekDates = useMemo(() => {
+    const dates = [];
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(currentWeekStart);
+      date.setDate(currentWeekStart.getDate() + i);
+      dates.push(date);
+    }
+    return dates;
+  }, [currentWeekStart]);
+
+  const handlePrevWeek = () => {
+    const newStart = new Date(currentWeekStart);
+    newStart.setDate(currentWeekStart.getDate() - 7);
+    setCurrentWeekStart(newStart);
+  };
+
+  const handleNextWeek = () => {
+    const newStart = new Date(currentWeekStart);
+    newStart.setDate(currentWeekStart.getDate() + 7);
+    setCurrentWeekStart(newStart);
+  };
+
+  const handleToday = () => {
+    const today = new Date();
+    const day = today.getDay();
+    const diff = today.getDate() - day + (day === 0 ? -6 : 1);
+    setCurrentWeekStart(new Date(today.setDate(diff)));
+  };
+
+  const weekRangeDisplay = useMemo(() => {
+    const start = weekDates[0];
+    const end = weekDates[6];
+    const startMonth = start.toLocaleDateString('fr-FR', { month: 'long' });
+    const endMonth = end.toLocaleDateString('fr-FR', { month: 'long' });
+    const year = start.getFullYear();
+    
+    if (startMonth === endMonth) {
+      return `${start.getDate()} - ${end.getDate()} ${startMonth} ${year}`;
+    } else {
+      return `${start.getDate()} ${startMonth} - ${end.getDate()} ${endMonth} ${year}`;
+    }
+  }, [weekDates]);
+
+  // Group exams by module+date+time, then merge locations
+  const getGroupedExamsForSlot = (date, timeSlot) => {
+    const dateStr = date.toISOString().split('T')[0];
+    const [startHour] = timeSlot.split('→')[0].replace('h', ':').split(':');
+    
+    const slotExams = exams.filter(exam => {
+      const examDate = new Date(exam.exam_date).toISOString().split('T')[0];
+      if (examDate !== dateStr) return false;
+      const examHour = exam.start_time.split(':')[0];
+      return examHour === startHour.padStart(2, '0');
     });
-    return map;
-  }, [exams, currentDate]);
 
-  const weekDays = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+    // Group by module_code + group_name + start_time + end_time
+    const grouped = {};
+    slotExams.forEach(exam => {
+      const key = `${exam.module_code}|${exam.group_name}|${exam.start_time}|${exam.end_time}`;
+      if (!grouped[key]) {
+        grouped[key] = {
+          module_code: exam.module_code,
+          module_name: exam.module_name,
+          group_name: exam.group_name,
+          start_time: exam.start_time,
+          end_time: exam.end_time,
+          exam_date: exam.exam_date,
+          locations: [],
+          exams: []
+        };
+      }
+      grouped[key].locations.push({
+        location: exam.location,
+        assigned_count: exam.assigned_count,
+        professor_name: exam.professor_name,
+        id: exam.id
+      });
+      grouped[key].exams.push(exam);
+    });
+
+    return Object.values(grouped);
+  };
+
+  const getExamColor = (moduleCode) => {
+    const colors = ['#E3F2FD', '#FFF3E0', '#F3E5F5', '#E8F5E9', '#FFF9C4', '#FCE4EC'];
+    const hash = moduleCode.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    return colors[hash % colors.length];
+  };
 
   return (
-    <Box>
-      {/* Header */}
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-        <IconButton onClick={handlePrevMonth}><ChevronLeftIcon /></IconButton>
-        <Typography variant="h6" sx={{ textTransform: 'capitalize', fontWeight: 'bold' }}>{monthName}</Typography>
-        <IconButton onClick={handleNextMonth}><ChevronRightIcon /></IconButton>
+    <Box sx={{ width: '100%', overflow: 'auto' }}>
+      {/* Header with Navigation */}
+      <Box sx={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'space-between', 
+        mb: 3,
+        p: 2,
+        bgcolor: 'background.paper',
+        borderRadius: 2,
+        boxShadow: 1
+      }}>
+        <Button 
+          startIcon={<ChevronLeftIcon />} 
+          onClick={handlePrevWeek}
+          variant="outlined"
+          size="small"
+        >
+          Semaine précédente
+        </Button>
+        
+        <Box sx={{ textAlign: 'center' }}>
+          <Typography variant="h5" sx={{ fontWeight: 'bold', textTransform: 'capitalize' }}>
+            {weekRangeDisplay}
+          </Typography>
+          <Button 
+            size="small" 
+            onClick={handleToday}
+            sx={{ mt: 0.5 }}
+          >
+            Aujourd'hui
+          </Button>
+        </Box>
+        
+        <Button 
+          endIcon={<ChevronRightIcon />} 
+          onClick={handleNextWeek}
+          variant="outlined"
+          size="small"
+        >
+          Semaine suivante
+        </Button>
       </Box>
 
-      {/* Week Header */}
-      <Grid container spacing={1} sx={{ mb: 1 }}>
-        {weekDays.map(day => (
-          <Grid item xs={1.7} key={day}>
-            <Paper sx={{ textAlign: 'center', py: 0.5, bgcolor: 'primary.light', color: 'white', fontWeight: 'bold' }}>
-              {day}
-            </Paper>
-          </Grid>
-        ))}
-      </Grid>
-
-      {/* Days Grid */}
-      <Grid container spacing={1}>
-        {/* Empty slots for offset */}
-        {[...Array(startOffset)].map((_, i) => (
-           <Grid item xs={1.7} key={`empty-${i}`} />
-        ))}
-
-        {/* Days */}
-        {[...Array(daysInMonth)].map((_, i) => {
-          const day = i + 1;
-          const dayExams = examsByDay[day] || [];
-          return (
-            <Grid item xs={1.7} key={day} sx={{ minHeight: 120 }}>
-              <Paper 
+      {/* Calendar Grid */}
+      <TableContainer component={Paper} sx={{ boxShadow: 3 }}>
+        <Table sx={{ minWidth: 1200 }}>
+          <TableHead>
+            <TableRow>
+              <TableCell 
                 sx={{ 
-                  height: '100%', 
-                  p: 1, 
-                  border: '1px solid #eee',
-                  bgcolor: dayExams.length > 0 ? '#fafafa' : 'white',
-                  position: 'relative'
+                  width: 120, 
+                  bgcolor: 'primary.main', 
+                  color: 'white', 
+                  fontWeight: 'bold',
+                  position: 'sticky',
+                  left: 0,
+                  zIndex: 2,
+                  borderRight: '2px solid white'
                 }}
               >
-                <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 1, color: 'text.secondary' }}>{day}</Typography>
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                  {dayExams.map(exam => (
-                    <Tooltip key={exam.id} title={`${exam.module_name} (${exam.start_time}) - ${exam.location}`}>
-                      <Chip 
-                        label={`${exam.start_time.slice(0,5)} ${exam.module_name.slice(0, 10)}..`} 
-                        size="small" 
-                        color="primary" 
-                        variant="outlined"
-                        onClick={() => onSelectExam(exam)}
-                        sx={{ 
-                            height: 'auto', 
-                            '& .MuiChip-label': { display: 'block', whiteSpace: 'normal', fontSize: '0.7rem', p: 0.5 },
-                            cursor: 'pointer',
-                            bgcolor: 'white'
-                        }} 
-                      />
-                    </Tooltip>
-                  ))}
-                </Box>
-              </Paper>
-            </Grid>
-          );
-        })}
-      </Grid>
+                Horaires
+              </TableCell>
+              {weekDates.map((date, index) => {
+                const isToday = date.toDateString() === new Date().toDateString();
+                return (
+                  <TableCell 
+                    key={index}
+                    align="center"
+                    sx={{ 
+                      bgcolor: isToday ? 'warning.light' : 'primary.main',
+                      color: 'white',
+                      fontWeight: 'bold',
+                      minWidth: 150,
+                      borderLeft: '1px solid white'
+                    }}
+                  >
+                    <Box>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
+                        {weekDays[index]}
+                      </Typography>
+                      <Typography variant="caption">
+                        {date.getDate()} {date.toLocaleDateString('fr-FR', { month: 'short' })}
+                      </Typography>
+                    </Box>
+                  </TableCell>
+                );
+              })}
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {timeSlots.map((timeSlot, slotIndex) => (
+              <TableRow key={slotIndex}>
+                <TableCell 
+                  sx={{ 
+                    bgcolor: 'grey.100', 
+                    fontWeight: 'bold',
+                    fontSize: '0.85rem',
+                    position: 'sticky',
+                    left: 0,
+                    zIndex: 1,
+                    borderRight: '2px solid #ddd'
+                  }}
+                >
+                  {timeSlot}
+                </TableCell>
+                {weekDates.map((date, dayIndex) => {
+                  const groupedExams = getGroupedExamsForSlot(date, timeSlot);
+                  return (
+                    <TableCell 
+                      key={dayIndex}
+                      sx={{ 
+                        p: 0.5,
+                        verticalAlign: 'top',
+                        minHeight: 80,
+                        borderLeft: '1px solid #ddd',
+                        bgcolor: groupedExams.length > 0 ? '#fafafa' : 'white',
+                        position: 'relative'
+                      }}
+                    >
+                      {groupedExams.map((groupedExam, groupIndex) => {
+                        const totalStudents = groupedExam.locations.reduce((sum, loc) => sum + (loc.assigned_count || 0), 0);
+                        
+                        return (
+                          <Paper
+                            key={groupIndex}
+                            onClick={() => onSelectExam(groupedExam.exams[0])}
+                            sx={{
+                              p: 1,
+                              mb: groupIndex < groupedExams.length - 1 ? 0.5 : 0,
+                              cursor: 'pointer',
+                              bgcolor: getExamColor(groupedExam.module_code),
+                              border: '1px solid',
+                              borderColor: 'divider',
+                              transition: 'all 0.2s',
+                              '&:hover': {
+                                boxShadow: 3,
+                                transform: 'translateY(-2px)',
+                                zIndex: 10
+                              }
+                            }}
+                          >
+                            {/* Module Name */}
+                            <Typography 
+                              variant="body2" 
+                              sx={{ 
+                                fontWeight: 'bold',
+                                fontSize: '0.75rem',
+                                color: 'primary.dark',
+                                mb: 0.5,
+                                lineHeight: 1.2
+                              }}
+                            >
+                              {groupedExam.module_name.length > 40 
+                                ? groupedExam.module_name.substring(0, 40) + '...' 
+                                : groupedExam.module_name}
+                            </Typography>
+
+                            {/* Group Info */}
+                            {groupedExam.group_name && groupedExam.group_name !== 'Tous' && (
+                              <Typography 
+                                variant="caption" 
+                                sx={{ 
+                                  display: 'block',
+                                  color: 'text.secondary',
+                                  fontSize: '0.7rem',
+                                  fontStyle: 'italic',
+                                  mb: 0.5
+                                }}
+                              >
+                                {groupedExam.group_name}
+                              </Typography>
+                            )}
+
+                            {/* Time Range */}
+                            <Typography 
+                              variant="caption" 
+                              sx={{ 
+                                display: 'block',
+                                color: 'error.main',
+                                fontWeight: 'bold',
+                                fontSize: '0.7rem',
+                                mb: 0.5
+                              }}
+                            >
+                              {groupedExam.start_time.substring(0, 5)} - {groupedExam.end_time.substring(0, 5)}
+                            </Typography>
+
+                            {/* Merged Locations */}
+                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 0.5 }}>
+                              {groupedExam.locations.map((loc, locIndex) => (
+                                <Chip
+                                  key={locIndex}
+                                  label={loc.location}
+                                  size="small"
+                                  sx={{
+                                    height: 18,
+                                    fontSize: '0.6rem',
+                                    bgcolor: 'white',
+                                    border: '1px solid',
+                                    borderColor: 'primary.main'
+                                  }}
+                                />
+                              ))}
+                            </Box>
+
+                            {/* Total Student Count */}
+                            {totalStudents > 0 && (
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
+                                <PeopleIcon sx={{ fontSize: 12, color: 'success.main' }} />
+                                <Typography variant="caption" sx={{ fontSize: '0.65rem', color: 'text.secondary' }}>
+                                  {totalStudents} étudiant{totalStudents > 1 ? 's' : ''}
+                                </Typography>
+                              </Box>
+                            )}
+
+                            {/* Room count indicator */}
+                            {groupedExam.locations.length > 1 && (
+                              <Typography 
+                                variant="caption" 
+                                sx={{ 
+                                  display: 'block',
+                                  fontSize: '0.6rem',
+                                  color: 'info.main',
+                                  fontStyle: 'italic',
+                                  mt: 0.5
+                                }}
+                              >
+                                {groupedExam.locations.length} salle{groupedExam.locations.length > 1 ? 's' : ''}
+                              </Typography>
+                            )}
+                          </Paper>
+                        );
+                      })}
+                    </TableCell>
+                  );
+                })}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
+
+      {/* Legend */}
+      <Box sx={{ mt: 2, p: 2, bgcolor: 'background.paper', borderRadius: 2 }}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 1 }}>
+          Légende:
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+          <Chip 
+            icon={<EventIcon />} 
+            label="Cliquez sur un examen pour voir les détails" 
+            size="small" 
+            variant="outlined"
+          />
+          <Chip 
+            icon={<PeopleIcon />} 
+            label="Total étudiants (toutes salles)" 
+            size="small" 
+            color="success"
+            variant="outlined"
+          />
+          <Chip 
+            icon={<MeetingRoomIcon />} 
+            label="Salles multiples affichées ensemble" 
+            size="small" 
+            color="info"
+            variant="outlined"
+          />
+          <Chip 
+            icon={<TodayIcon />} 
+            label="Aujourd'hui" 
+            size="small" 
+            sx={{ bgcolor: 'warning.light' }}
+          />
+        </Box>
+      </Box>
     </Box>
   );
 };
 
 const ExamPlanning = () => {
-  // ... (Keep existing state) ...
   const [exams, setExams] = useState([]);
   const [rawStats, setRawStats] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -306,8 +588,6 @@ const ExamPlanning = () => {
       setLoading(false);
     }
   };
-
-  // ... (Keep globalStats, occupiedLocationNames, handleSelectData, etc.) ...
   
   const globalStats = useMemo(() => {
     const totalSessions = exams.length;
@@ -341,17 +621,6 @@ const ExamPlanning = () => {
       setError("Erreur lors de l'exportation.");
     }
   };
-
-  const occupiedLocationNames = useMemo(() => {
-    if (!commonDate || !commonStartTime || !commonEndTime) return [];
-    return exams
-      .filter(e => {
-        const examDate = new Date(e.exam_date).toISOString().split('T')[0];
-        if (examDate !== commonDate) return false;
-        return e.start_time < commonEndTime && e.end_time > commonStartTime;
-      })
-      .map(e => e.location);
-  }, [exams, commonDate, commonStartTime, commonEndTime]);
 
   const handleSelectData = async (modules, groups) => {
     setSelectedModules(modules);
@@ -406,8 +675,8 @@ const ExamPlanning = () => {
     if (idx1 === -1 || idx2 === -1) return;
     const start = Math.min(idx1, idx2);
     const end = Math.max(idx1, idx2);
-    const locationSubset = locations.slice(start, end + 1).filter(loc => !occupiedLocationNames.includes(loc.name));
-    if (locationSubset.length === 0) { setError("Tous les locaux de cette plage sont occupés !"); return; }
+    const locationSubset = locations.slice(start, end + 1);
+    
     const totalCapacity = locationSubset.reduce((sum, loc) => sum + (parseInt(loc.capacity) || 0), 0);
     const totalStudents = allGroupStudents.length;
     const ratio = Math.min(totalStudents / totalCapacity, 1);
@@ -458,16 +727,7 @@ const ExamPlanning = () => {
       setError("Veuillez remplir tous les champs communs et ajouter au moins une session."); return;
     }
     if (commonStartTime >= commonEndTime) { setError("L'heure de fin doit être après l'heure de début."); return; }
-    const occupiedInDb = exams.filter(e => {
-      const examDate = new Date(e.exam_date).toISOString().split('T')[0];
-      if (examDate !== commonDate) return false;
-      return e.start_time < commonEndTime && e.end_time > commonStartTime;
-    }).map(e => e.location);
-    const dbConflicts = planningSessions.filter(s => s.location && occupiedInDb.includes(s.location.name));
-    if (dbConflicts.length > 0) {
-      const names = dbConflicts.map(s => s.location.name).join(', ');
-      setError(`ERREUR CRITIQUE: Les locaux suivants sont DÉJÀ occupés : ${names}`); return;
-    }
+    
     const currentSelectionNames = planningSessions.filter(s => s.location).map(s => s.location.name);
     const uniqueNames = new Set(currentSelectionNames);
     if (uniqueNames.size !== currentSelectionNames.length) {
@@ -494,8 +754,10 @@ const ExamPlanning = () => {
         startIndex += count;
       }
       setSuccess(`Planification réussie pour ${startIndex} étudiants !`);
-      setSelectedModules([]); setSelectedGroups([]); setAllGroupStudents([]); setPlanningSessions([]);
-      setCommonDate(''); setCommonStartTime(''); setCommonEndTime('');
+      setSelectedModules([]); 
+      setSelectedGroups([]); 
+      setAllGroupStudents([]); 
+      setPlanningSessions([]);
       loadData();
     } catch (err) {
       console.error(err); setError("Erreur lors de la planification.");
@@ -549,6 +811,10 @@ const ExamPlanning = () => {
   const handleExamClick = (exam) => {
     setStudentDialog({ open: true, students: [], loading: true, title: `${exam.module_name} (${exam.location})` });
     adminAPI.getExamStudents(exam.id).then(s => setStudentDialog(p => ({ ...p, students: s, loading: false })));
+  };
+
+  const handleSelectExam = (exam) => {
+    handleExamClick(exam);
   };
 
   return (
@@ -611,7 +877,6 @@ const ExamPlanning = () => {
               )}
             </Menu>
 
-            {/* --- NEW BUTTON: SYNC LISTS --- */}
             <Button 
                 startIcon={<SyncIcon />} 
                 variant="outlined" 
@@ -634,10 +899,7 @@ const ExamPlanning = () => {
             </Button>
         </Box>
       </Box>
-
-      {/* ... (Rest of the component remains unchanged) ... */}
       
-      {/* --- SECTION: GLOBAL STATISTICS --- */}
       <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 1, color: 'text.primary', mt: 2 }}>
         <AssignmentIcon color="action" /> Statistiques Globales
       </Typography>
@@ -676,7 +938,7 @@ const ExamPlanning = () => {
             <StatCard title="Non Affectés" value={remainingStudents} icon={<CancelIcon />} color={remainingStudents === 0 ? "success" : "warning"} />
             </Grid>
             <Grid item xs={12} sm={6} md={3}>
-            <StatCard title="Salles Occupées (Créneau)" value={occupiedLocationNames.length} icon={<MeetingRoomIcon />} color="info" />
+            <StatCard title="Sessions Créées" value={planningSessions.length} icon={<MeetingRoomIcon />} color="info" />
             </Grid>
         </Grid>
       </Box>
@@ -729,16 +991,25 @@ const ExamPlanning = () => {
                   <TextField type="time" label="Début" value={commonStartTime} onChange={(e) => setCommonStartTime(e.target.value)} InputLabelProps={{ shrink: true }} size="small" fullWidth />
                   <TextField type="time" label="Fin" value={commonEndTime} onChange={(e) => setCommonEndTime(e.target.value)} InputLabelProps={{ shrink: true }} size="small" fullWidth />
                 </Box>
-                {occupiedLocationNames.length > 0 && (
-                   <Alert severity="warning" icon={<BlockIcon />} sx={{ mt: 0 }}>
-                     <strong>Attention :</strong> {occupiedLocationNames.length} salles indisponibles.
-                   </Alert>
-                )}
                 <Divider sx={{ my: 1 }}>Distribution Automatique</Divider>
                 <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                  <Autocomplete options={locations} getOptionLabel={(opt) => `${opt.name} ${occupiedLocationNames.includes(opt.name) ? '(Occupé)' : ''}`} getOptionDisabled={(opt) => occupiedLocationNames.includes(opt.name)} value={rangeStart} onChange={(e, v) => setRangeStart(v)} renderInput={(p) => <TextField {...p} label="De..." size="small" />} sx={{ width: '40%' }} />
+                  <Autocomplete 
+                    options={locations} 
+                    getOptionLabel={(opt) => opt.name} 
+                    value={rangeStart} 
+                    onChange={(e, v) => setRangeStart(v)} 
+                    renderInput={(p) => <TextField {...p} label="De..." size="small" />} 
+                    sx={{ width: '40%' }} 
+                  />
                   <Typography variant="body2">-</Typography>
-                  <Autocomplete options={locations} getOptionLabel={(opt) => `${opt.name} ${occupiedLocationNames.includes(opt.name) ? '(Occupé)' : ''}`} getOptionDisabled={(opt) => occupiedLocationNames.includes(opt.name)} value={rangeEnd} onChange={(e, v) => setRangeEnd(v)} renderInput={(p) => <TextField {...p} label="À..." size="small" />} sx={{ width: '40%' }} />
+                  <Autocomplete 
+                    options={locations} 
+                    getOptionLabel={(opt) => opt.name} 
+                    value={rangeEnd} 
+                    onChange={(e, v) => setRangeEnd(v)} 
+                    renderInput={(p) => <TextField {...p} label="À..." size="small" />} 
+                    sx={{ width: '40%' }} 
+                  />
                   <Tooltip title="Répartition Équilibrée">
                     <IconButton color="primary" onClick={handleAutoDistribute} disabled={!rangeStart || !rangeEnd}><BalanceIcon /></IconButton>
                   </Tooltip>
@@ -749,7 +1020,13 @@ const ExamPlanning = () => {
                     <IconButton size="small" onClick={() => handleRemoveSession(session.id)} sx={{ position: 'absolute', right: 0, top: 0, color: 'error.main' }}><DeleteIcon fontSize="small" /></IconButton>
                     <Grid container spacing={2}>
                       <Grid item xs={7}>
-                        <Autocomplete options={locations} getOptionLabel={(opt) => `${opt.name} (${opt.capacity}) ${occupiedLocationNames.includes(opt.name) ? '(Occupé)' : ''}`} value={session.location} onChange={(e, val) => handleUpdateSession(session.id, 'location', val)} renderInput={(params) => <TextField {...params} label={`Local ${index + 1}`} size="small" />} />
+                        <Autocomplete 
+                          options={locations} 
+                          getOptionLabel={(opt) => `${opt.name} (${opt.capacity})`} 
+                          value={session.location} 
+                          onChange={(e, val) => handleUpdateSession(session.id, 'location', val)} 
+                          renderInput={(params) => <TextField {...params} label={`Local ${index + 1}`} size="small" />} 
+                        />
                       </Grid>
                       <Grid item xs={5}>
                         <TextField label="Effectif" type="number" size="small" value={session.count} onChange={(e) => handleUpdateSession(session.id, 'count', e.target.value)} fullWidth />
@@ -778,7 +1055,7 @@ const ExamPlanning = () => {
                   </ToggleButtonGroup>
               </Box>
               {viewMode === 'calendar' ? (
-                <CalendarView exams={exams} onSelectExam={handleExamClick} />
+                <WeeklyCalendarView exams={exams} onSelectExam={handleSelectExam} />
               ) : (
                 <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid #eee', maxHeight: 600 }}>
                     <Table stickyHeader size="small">

@@ -1144,11 +1144,21 @@ router.get('/exams/conflicts/count', authenticateAdmin, async (req, res) => {
 // --- NEW ROUTE: Get Detailed List of Student Conflicts ---
 router.get('/exams/conflicts/details', authenticateAdmin, async (req, res) => {
   try {
+    console.log('🔍 Fetching exam conflicts details...');
+    
     const query = `
       SELECT 
         ea1.cod_etu,
-        COALESCE(s.lib_nom_pat_ind, ps.lib_nom_pat_ind) as nom,
-        COALESCE(s.lib_pr1_ind, ps.lib_pr1_ind) as prenom,
+        COALESCE(
+          ps1.lib_nom_pat_ind,
+          s.lib_nom_pat_ind,
+          'Nom inconnu'
+        ) as nom,
+        COALESCE(
+          ps1.lib_pr1_ind,
+          s.lib_pr1_ind,
+          'Prénom inconnu'
+        ) as prenom,
         ep1.module_name as module1,
         ep1.start_time as start1,
         ep1.end_time as end1,
@@ -1160,27 +1170,38 @@ router.get('/exams/conflicts/details', authenticateAdmin, async (req, res) => {
         ep1.exam_date
       FROM exam_assignments ea1
       JOIN exam_planning ep1 ON ea1.exam_id = ep1.id
-      JOIN exam_assignments ea2 ON ea1.cod_etu = ea2.cod_etu
+      JOIN exam_assignments ea2 ON ea1.cod_etu = ea2.cod_etu AND ea1.exam_id != ea2.exam_id
       JOIN exam_planning ep2 ON ea2.exam_id = ep2.id
+      LEFT JOIN (
+        SELECT DISTINCT ON (cod_etu) 
+          cod_etu, 
+          lib_nom_pat_ind, 
+          lib_pr1_ind
+        FROM pedagogical_situation
+        ORDER BY cod_etu, last_sync DESC
+      ) ps1 ON ea1.cod_etu = ps1.cod_etu
       LEFT JOIN students s ON ea1.cod_etu = s.cod_etu
-      LEFT JOIN pedagogical_situation ps ON ea1.cod_etu = ps.cod_etu
       WHERE ep1.id < ep2.id
-      AND ep1.exam_date = ep2.exam_date
-      AND (
-        (ep1.start_time < ep2.end_time AND ep1.end_time > ep2.start_time)
-      )
-      ORDER BY nom, prenom
+        AND ep1.exam_date = ep2.exam_date
+        AND ep1.start_time < ep2.end_time 
+        AND ep1.end_time > ep2.start_time
+      ORDER BY nom, prenom, ep1.exam_date
     `;
     
     const result = await pool.query(query);
+    
+    console.log(`✅ Found ${result.rows.length} conflicts`);
     res.json(result.rows);
     
   } catch (error) {
-    console.error('Get exam conflicts details error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('❌ Get exam conflicts details error:', error);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      error: 'Erreur lors de la récupération des conflits',
+      details: error.message 
+    });
   }
 });
-
 
 // GET Notifications
 router.get('/notifications', authenticateAdmin, async (req, res) => {
@@ -1215,113 +1236,279 @@ router.put('/notifications/read-all', authenticateAdmin, async (req, res) => {
   }
 });
 // --- NEW ROUTE: Refresh Exam Participants (On-Demand) ---
-// --- NEW ROUTE: Refresh Exam Participants (On-Demand) ---
 router.post('/exams/refresh-participants', authenticateAdmin, async (req, res) => {
   const client = await pool.connect();
   try {
-    console.log('🔄 Manual Refresh of Exam Participants started...');
+    console.log('🔄 Intelligent Refresh of Exam Participants started...');
     await client.query('BEGIN');
 
-    // 1. Get all future (or today's) exams
+    // 1. Get all future exams
     const examsRes = await client.query(`
-      SELECT id, module_code, module_name, group_name 
+      SELECT id, module_code, module_name, group_name, exam_date, start_time, end_time, location
       FROM exam_planning 
       WHERE exam_date >= CURRENT_DATE
+      ORDER BY module_code, exam_date, start_time, location
     `);
     const exams = examsRes.rows;
 
-    let stats = { updatedExams: 0, added: 0, removed: 0 };
+    console.log(`Found ${exams.length} future exams to refresh`);
 
-    for (const exam of exams) {
-      const { id, module_code, group_name } = exam;
+    let stats = { updatedExams: 0, added: 0, removed: 0, distributionSets: 0, errors: [] };
 
-      // 2. Parse Modules and Groups
-      const modules = module_code ? module_code.split('+').map(s => s.trim()) : [];
-      
-      let groups = [];
-      if (group_name && group_name !== 'Tous') {
-          groups = group_name.split('+').map(s => s.trim().replace(/\(.*\)$/, '').trim());
+    // 2. GROUP exams by distribution key (module_code + group_name + date + time)
+    const distributionSets = {};
+    exams.forEach(exam => {
+      const key = `${exam.module_code}|${exam.group_name}|${exam.exam_date}|${exam.start_time}-${exam.end_time}`;
+      if (!distributionSets[key]) {
+        distributionSets[key] = {
+          exams: [],
+          module_code: exam.module_code,
+          group_name: exam.group_name,
+          date: exam.exam_date,
+          time: `${exam.start_time}-${exam.end_time}`
+        };
       }
+      distributionSets[key].exams.push(exam);
+    });
 
-      if (modules.length === 0) continue;
+    console.log(`Identified ${Object.keys(distributionSets).length} distribution sets`);
 
-      // 3. Build Dynamic Query to find Eligible Students
-      const params = [];
-      let paramIndex = 1;
-      
-      const modConds = modules.map(m => {
-          params.push(m);
-          return `TRIM(ps.cod_elp) ILIKE TRIM($${paramIndex++})`;
-      });
+    // 3. Process each distribution set
+    for (const [setKey, distSet] of Object.entries(distributionSets)) {
+      try {
+        console.log(`\n📦 Processing Distribution Set: ${setKey}`);
+        console.log(`   Contains ${distSet.exams.length} exam session(s)`);
 
-      let groupClause = '';
-      if (groups.length > 0) {
-          const groupConds = groups.map(g => {
-              params.push(g);
-              // CORRECTION: Suppression des commentaires SQL pour éviter l'erreur de paramètres
-              return `EXISTS (
-                  SELECT 1 FROM grouping_rules gr
-                  WHERE TRIM(ps.cod_elp) ILIKE gr.module_pattern
-                  AND gr.group_name = $${paramIndex++}
-                  AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" >= UPPER(gr.range_start) COLLATE "C"
-                  AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" <= (UPPER(gr.range_end) || 'ZZZZZZ') COLLATE "C"
-              )`;
-          });
-          groupClause = `AND (${groupConds.join(' OR ')})`;
-      }
-
-      const eligibleQuery = `
-        SELECT DISTINCT ps.cod_etu
-        FROM pedagogical_situation ps
-        WHERE (${modConds.join(' OR ')}) ${groupClause}
-      `;
-
-      const eligibleRes = await client.query(eligibleQuery, params);
-      const eligibleStudents = new Set(eligibleRes.rows.map(r => r.cod_etu));
-
-      // 4. Get Current Assignments
-      const currentRes = await client.query('SELECT cod_etu FROM exam_assignments WHERE exam_id = $1', [id]);
-      const currentStudents = new Set(currentRes.rows.map(r => r.cod_etu));
-
-      // 5. Calculate Diff
-      const toAdd = [...eligibleStudents].filter(x => !currentStudents.has(x));
-      const toRemove = [...currentStudents].filter(x => !eligibleStudents.has(x));
-
-      // 6. Apply Changes
-      if (toAdd.length > 0) {
-        const values = toAdd.map((_, i) => `($1, $${i + 2})`).join(',');
-        await client.query(
-          `INSERT INTO exam_assignments (exam_id, cod_etu) VALUES ${values} ON CONFLICT DO NOTHING`,
-          [id, ...toAdd]
-        );
-        stats.added += toAdd.length;
-      }
-
-      if (toRemove.length > 0) {
-        if (eligibleStudents.size > 0) {
-            await client.query(
-              `DELETE FROM exam_assignments WHERE exam_id = $1 AND cod_etu = ANY($2)`,
-              [id, toRemove]
-            );
-            stats.removed += toRemove.length;
+        // Parse modules and groups
+        const modules = distSet.module_code ? distSet.module_code.split('+').map(s => s.trim()) : [];
+        let groups = [];
+        if (distSet.group_name && distSet.group_name !== 'Tous') {
+            groups = distSet.group_name.split('+').map(s => s.trim().replace(/\(.*\)$/, '').trim());
         }
-      }
 
-      if (toAdd.length > 0 || toRemove.length > 0) {
-        stats.updatedExams++;
+        if (modules.length === 0) {
+          console.log(`   ⚠️ Skipping: No modules found`);
+          continue;
+        }
+
+        // 4. Build query to find ALL eligible students for this distribution set
+        const params = [];
+        let paramIndex = 1;
+        
+        const modConds = modules.map(m => {
+            params.push(m);
+            return `ps.cod_elp ILIKE $${paramIndex++}`;
+        });
+
+        let groupClause = '';
+        if (groups.length > 0) {
+            const groupConds = groups.map(g => {
+                params.push(g);
+                return `EXISTS (
+                    SELECT 1 FROM grouping_rules gr
+                    WHERE ps.cod_elp ILIKE gr.module_pattern
+                    AND gr.group_name = $${paramIndex++}
+                    AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" >= UPPER(gr.range_start) COLLATE "C"
+                    AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" <= (UPPER(gr.range_end) || 'ZZZZZZ') COLLATE "C"
+                )`;
+            });
+            groupClause = `AND (${groupConds.join(' OR ')})`;
+        }
+
+        const eligibleQuery = `
+          SELECT DISTINCT ps.cod_etu, ps.lib_nom_pat_ind, ps.lib_pr1_ind
+          FROM pedagogical_situation ps
+          WHERE ps.cod_elp IS NOT NULL 
+            AND (${modConds.join(' OR ')}) 
+            ${groupClause}
+          ORDER BY ps.lib_nom_pat_ind, ps.lib_pr1_ind
+        `;
+
+        const eligibleRes = await client.query(eligibleQuery, params);
+        const eligibleStudents = eligibleRes.rows;
+
+        console.log(`   ✓ Found ${eligibleStudents.size} eligible students for entire set`);
+
+        // 5. INTELLIGENT DISTRIBUTION LOGIC
+        if (distSet.exams.length === 1) {
+          // ============================================
+          // CASE A: Single Exam Session
+          // ============================================
+          console.log(`   → Single exam mode: Assign all students to one session`);
+          
+          const exam = distSet.exams[0];
+          const studentIds = eligibleStudents.map(s => s.cod_etu);
+          
+          await updateExamAssignments(client, exam.id, studentIds, stats);
+
+        } else {
+          // ============================================
+          // CASE B: Multiple Exam Sessions (DISTRIBUTION SET)
+          // ============================================
+          console.log(`   → Distribution mode: Split ${eligibleStudents.length} students across ${distSet.exams.length} rooms`);
+
+          // Get current room capacities from existing assignments
+          const capacityQuery = await client.query(`
+            SELECT 
+              ep.id,
+              ep.location,
+              COUNT(ea.cod_etu) as current_count
+            FROM exam_planning ep
+            LEFT JOIN exam_assignments ea ON ep.id = ea.exam_id
+            WHERE ep.id = ANY($1)
+            GROUP BY ep.id, ep.location
+            ORDER BY ep.location
+          `, [distSet.exams.map(e => e.id)]);
+
+          const roomCapacities = capacityQuery.rows;
+          const totalCurrentAssigned = roomCapacities.reduce((sum, r) => sum + parseInt(r.current_count), 0);
+
+          console.log(`   Current distribution:`);
+          roomCapacities.forEach(r => {
+            console.log(`     - ${r.location}: ${r.current_count} students`);
+          });
+
+          // Calculate target distribution (proportional based on current)
+          let targetDistribution;
+          
+          if (totalCurrentAssigned > 0) {
+            // Proportional redistribution based on existing ratios
+            console.log(`   → Using proportional distribution based on existing ratios`);
+            
+            targetDistribution = roomCapacities.map(room => {
+              const ratio = parseInt(room.current_count) / totalCurrentAssigned;
+              const targetCount = Math.round(eligibleStudents.length * ratio);
+              return {
+                exam_id: room.id,
+                location: room.location,
+                target_count: targetCount
+              };
+            });
+          } else {
+            // Equal distribution if no prior assignments
+            console.log(`   → Using equal distribution (no prior data)`);
+            
+            const baseCount = Math.floor(eligibleStudents.length / distSet.exams.length);
+            const remainder = eligibleStudents.length % distSet.exams.length;
+            
+            targetDistribution = distSet.exams.map((exam, idx) => ({
+              exam_id: exam.id,
+              location: exam.location,
+              target_count: baseCount + (idx < remainder ? 1 : 0)
+            }));
+          }
+
+          // Adjust for rounding errors
+          const totalTarget = targetDistribution.reduce((sum, t) => sum + t.target_count, 0);
+          if (totalTarget !== eligibleStudents.length) {
+            const diff = eligibleStudents.length - totalTarget;
+            targetDistribution[0].target_count += diff; // Add difference to first room
+          }
+
+          console.log(`   Target distribution:`);
+          targetDistribution.forEach(t => {
+            console.log(`     - ${t.location}: ${t.target_count} students (target)`);
+          });
+
+          // Distribute students across rooms
+          let studentIndex = 0;
+          for (const target of targetDistribution) {
+            const roomStudents = eligibleStudents.slice(studentIndex, studentIndex + target.target_count);
+            const studentIds = roomStudents.map(s => s.cod_etu);
+            
+            await updateExamAssignments(client, target.exam_id, studentIds, stats);
+            
+            studentIndex += target.target_count;
+          }
+
+          stats.distributionSets++;
+        }
+
+      } catch (setError) {
+        console.error(`   ❌ Error processing distribution set:`, setError.message);
+        stats.errors.push({ 
+          set: setKey, 
+          error: setError.message 
+        });
       }
     }
 
     await client.query('COMMIT');
-    res.json({ success: true, ...stats, message: `Mise à jour terminée : ${stats.added} ajoutés, ${stats.removed} retirés.` });
+    
+    console.log('\n✅ Intelligent Refresh Complete:');
+    console.log(`   Updated Exams: ${stats.updatedExams}`);
+    console.log(`   Distribution Sets Processed: ${stats.distributionSets}`);
+    console.log(`   Students Added: ${stats.added}`);
+    console.log(`   Students Removed: ${stats.removed}`);
+    console.log(`   Errors: ${stats.errors.length}`);
+
+    const message = stats.errors.length > 0 
+      ? `Mise à jour terminée avec ${stats.errors.length} erreur(s) : ${stats.added} ajoutés, ${stats.removed} retirés, ${stats.distributionSets} groupes redistribués.`
+      : `✅ Mise à jour réussie : ${stats.added} ajoutés, ${stats.removed} retirés, ${stats.distributionSets} groupes redistribués intelligemment.`;
+
+    res.json({ 
+      success: true, 
+      updatedExams: stats.updatedExams,
+      added: stats.added,
+      removed: stats.removed,
+      distributionSets: stats.distributionSets,
+      errors: stats.errors,
+      message: message
+    });
 
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Refresh participants error:', error);
-    // On renvoie l'erreur exacte au frontend pour le débogage si besoin
-    res.status(500).json({ error: 'Erreur serveur: ' + error.message });
+    console.error('❌ Fatal Refresh Error:', error);
+    console.error('Stack:', error.stack);
+    res.status(500).json({ 
+      success: false,
+      error: 'Erreur serveur lors de l\'actualisation', 
+      details: error.message
+    });
   } finally {
     client.release();
   }
 });
+// --- HELPER FUNCTION: Update Exam Assignments ---
+async function updateExamAssignments(client, examId, newStudentIds, stats) {
+  // Get current assignments
+  const currentRes = await client.query(
+    'SELECT cod_etu FROM exam_assignments WHERE exam_id = $1', 
+    [examId]
+  );
+  const currentStudentIds = new Set(currentRes.rows.map(r => r.cod_etu));
+  const newStudentSet = new Set(newStudentIds);
+
+  // Calculate diff
+  const toAdd = newStudentIds.filter(id => !currentStudentIds.has(id));
+  const toRemove = [...currentStudentIds].filter(id => !newStudentSet.has(id));
+
+  // Apply changes
+  if (toAdd.length > 0) {
+    const values = toAdd.map((_, i) => `($1, $${i + 2})`).join(',');
+    await client.query(
+      `INSERT INTO exam_assignments (exam_id, cod_etu) 
+       VALUES ${values} 
+       ON CONFLICT DO NOTHING`,
+      [examId, ...toAdd]
+    );
+    stats.added += toAdd.length;
+  }
+
+  if (toRemove.length > 0 && newStudentIds.length > 0) {
+    await client.query(
+      `DELETE FROM exam_assignments 
+       WHERE exam_id = $1 AND cod_etu = ANY($2)`,
+      [examId, toRemove]
+    );
+    stats.removed += toRemove.length;
+  }
+
+  if (toAdd.length > 0 || toRemove.length > 0) {
+    stats.updatedExams++;
+  }
+}
+
+
+
 module.exports = router;
