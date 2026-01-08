@@ -1016,15 +1016,28 @@ router.get('/exams/:id/students', authenticateAdmin, async (req, res) => {
 // GET Exams with Student Count (CORRECTED LIST VIEW)
 router.get('/exams', authenticateAdmin, async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT ep.*, COUNT(ea.cod_etu) as assigned_count 
+    // FIX: Optimized JOIN to find Arabic Names from element_pedagogi
+    // We trim whitespace to ensure 'M1' matches 'M1 '
+    const query = `
+      SELECT 
+        ep.*, 
+        -- Combine Arabic names if multiple modules are linked (e.g., "ArName1 + ArName2")
+        STRING_AGG(DISTINCT el.lib_elp_arb, ' + ') as lib_elp_arb,
+        COUNT(DISTINCT ea.cod_etu) as assigned_count 
       FROM exam_planning ep
+      -- JOIN logic: Find modules that are mentioned in the exam code string
+      LEFT JOIN element_pedagogi el ON (
+          ep.module_code ILIKE '%' || TRIM(el.cod_elp) || '%' 
+          AND LENGTH(TRIM(el.cod_elp)) > 0 -- Avoid matching empty strings
+      )
       LEFT JOIN exam_assignments ea ON ep.id = ea.exam_id
       GROUP BY ep.id
       ORDER BY ep.exam_date DESC, ep.start_time ASC
-    `);
+    `;
+
+    const result = await pool.query(query);
     
-    // Ensure assigned_count is a number (Postgres returns it as a string)
+    // Ensure assigned_count is a number
     const rows = result.rows.map(row => ({
       ...row,
       assigned_count: parseInt(row.assigned_count || 0)
@@ -1038,62 +1051,75 @@ router.get('/exams', authenticateAdmin, async (req, res) => {
 });
 
 // GET Exams with Student Count (CORRECTED LIST VIEW)
-router.get('/exams', authenticateAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT ep.*, COUNT(ea.cod_etu) as assigned_count 
-      FROM exam_planning ep
-      LEFT JOIN exam_assignments ea ON ep.id = ea.exam_id
-      GROUP BY ep.id
-      ORDER BY ep.exam_date DESC, ep.start_time ASC
-    `);
-    
-    // Ensure assigned_count is a number (Postgres returns it as a string)
-    const rows = result.rows.map(row => ({
-      ...row,
-      assigned_count: parseInt(row.assigned_count || 0)
-    }));
-
-    res.json(rows);
-  } catch (error) {
-    console.error('Get exams error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
 
 // --- NEW ROUTE: Export Full Exam Planning with Student Details ---
 router.get('/exams/export/assignments', authenticateAdmin, async (req, res) => {
   try {
-    // FIX: Use DISTINCT ON to ensure we only get one name entry per student
-    // This prevents the row explosion caused by joining raw pedagogical_situation
     const query = `
-      WITH unique_names AS (
-        SELECT DISTINCT ON (cod_etu) 
-          cod_etu, 
-          lib_nom_pat_ind, 
-          lib_pr1_ind 
+      WITH unique_students AS (
+        SELECT DISTINCT ON (cod_etu) cod_etu, lib_nom_pat_ind, lib_pr1_ind 
+        FROM students 
+        ORDER BY cod_etu, cod_anu DESC
+      ),
+      unique_names AS (
+        SELECT DISTINCT ON (cod_etu) cod_etu, lib_nom_pat_ind, lib_pr1_ind 
         FROM pedagogical_situation
+      ),
+      -- Step 1: Gather data, Deduplicate, and Fetch Specifics
+      clean_data AS (
+          SELECT DISTINCT ON (ep.id, ea.cod_etu)
+            ep.id as session_id,
+            -- FIX: Fetch the REAL module code from the student's record (ps_real), fallback to exam definition
+            COALESCE(ps_real.cod_elp, ep.module_code) as module_code,
+            ea.cod_etu,
+            COALESCE(us.lib_nom_pat_ind, un.lib_nom_pat_ind) as "Nom",
+            COALESCE(us.lib_pr1_ind, un.lib_pr1_ind) as "Prenom",
+            ep.exam_date,
+            ep.start_time,
+            COALESCE(gr.group_name, ep.group_name) as "group_name",
+            ep.location,
+            ep.module_name
+          FROM exam_planning ep
+          JOIN exam_assignments ea ON ep.id = ea.exam_id
+          LEFT JOIN unique_students us ON ea.cod_etu = us.cod_etu
+          LEFT JOIN unique_names un ON ea.cod_etu = un.cod_etu
+          
+          -- A. Find Grouping Rule (for correct Group Name)
+          LEFT JOIN grouping_rules gr ON (
+              ep.module_code ILIKE gr.module_pattern 
+              AND UPPER(COALESCE(us.lib_nom_pat_ind, un.lib_nom_pat_ind)) COLLATE "C" >= UPPER(gr.range_start) COLLATE "C"
+              AND UPPER(COALESCE(us.lib_nom_pat_ind, un.lib_nom_pat_ind)) COLLATE "C" <= (UPPER(gr.range_end) || 'ZZZZZZ') COLLATE "C"
+          )
+
+          -- B. Find Specific Student Module Code (Logic to match Exam)
+          LEFT JOIN pedagogical_situation ps_real ON (
+              ps_real.cod_etu = ea.cod_etu
+              AND (
+                  -- Case 1: Exam code contains the student's code (e.g. Exam="M1+M2", Student="M1")
+                  ep.module_code ILIKE '%' || ps_real.cod_elp || '%'
+                  OR
+                  -- Case 2: Student code matches the Group Rule Pattern (e.g. Rule="M1%", Student="M101")
+                  (gr.module_pattern IS NOT NULL AND ps_real.cod_elp ILIKE gr.module_pattern)
+              )
+          )
+          
+          ORDER BY ep.id, ea.cod_etu
       )
+      -- Step 2: Apply Ordering and Numbering
       SELECT 
-        ea.cod_etu as "CNE",
-        COALESCE(s.lib_nom_pat_ind, un.lib_nom_pat_ind) as "Nom",
-        COALESCE(s.lib_pr1_ind, un.lib_pr1_ind) as "Prenom",
-        ep.exam_date,
-        ep.start_time,
-        ep.group_name,
-        ep.location,
-        ep.module_name
-      FROM exam_planning ep
-      JOIN exam_assignments ea ON ep.id = ea.exam_id
-      LEFT JOIN students s ON ea.cod_etu = s.cod_etu
-      LEFT JOIN unique_names un ON ea.cod_etu = un.cod_etu
-      ORDER BY ep.exam_date, ep.start_time, ep.module_name, "Nom"
+        ROW_NUMBER() OVER (
+            PARTITION BY session_id 
+            ORDER BY "Nom", "Prenom"
+        ) as "num",
+        *
+      FROM clean_data
+      ORDER BY session_id, "Nom", "Prenom"
     `;
     
     const result = await pool.query(query);
     
     // Generate CSV
-    let csv = "CNE,Nom,Prenom,Date,Heure,Groupe,Lieu,Module\n";
+    let csv = "N°,Code Module,CNE,Nom,Prenom,Date,Heure,Groupe,Lieu,Module\n";
     
     result.rows.forEach(row => {
       const date = row.exam_date ? new Date(row.exam_date).toLocaleDateString('fr-FR') : '';
@@ -1101,7 +1127,8 @@ router.get('/exams/export/assignments', authenticateAdmin, async (req, res) => {
       
       const clean = (str) => str ? `"${str.toString().replace(/"/g, '""')}"` : '';
       
-      csv += `${clean(row.CNE)},${clean(row.Nom)},${clean(row.Prenom)},${clean(date)},${clean(time)},${clean(row.group_name)},${clean(row.location)},${clean(row.module_name)}\n`;
+      // row.module_code will now contain the student's specific code (e.g., "M123") instead of the exam string
+      csv += `${row.num},${clean(row.module_code)},${clean(row.cod_etu)},${clean(row.Nom)},${clean(row.Prenom)},${clean(date)},${clean(time)},${clean(row.group_name)},${clean(row.location)},${clean(row.module_name)}\n`;
     });
 
     res.setHeader('Content-Type', 'text/csv');
@@ -1110,7 +1137,7 @@ router.get('/exams/export/assignments', authenticateAdmin, async (req, res) => {
 
   } catch (error) {
     console.error('Export assignments error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error: ' + error.message });
   }
 });
 
