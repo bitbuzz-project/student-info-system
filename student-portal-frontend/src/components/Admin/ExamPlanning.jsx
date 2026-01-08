@@ -606,66 +606,21 @@ const ExamPlanning = () => {
     }
   };
 
-  // --- CLIENT-SIDE CSV EXPORT ---
-  const handleExport = () => {
+  // --- UPDATED: SERVER-SIDE CSV EXPORT ---
+  // This calls the backend to get the full list of assignments (all ~82k lines if necessary)
+const handleExport = async () => {
     try {
-      if (!exams || exams.length === 0) {
-        setError("Aucune donnée à exporter.");
-        return;
-      }
-
-      // 1. Prepare Header
-      const headers = [
-        "Numerotation",
-        "Date",
-        "Heure Debut",
-        "Heure Fin",
-        "Code Module",
-        "Module",
-        "Groupe",
-        "Salle",
-        "Surveillant" // ADDED COLUMN
-      ];
-
-      // 2. Prepare Rows
-      const rows = exams.map((event, index) => {
-        const formatDate = (d) => d ? new Date(d).toLocaleDateString('fr-FR') : '';
-        const formatTime = (t) => t ? t.substring(0, 5) : '';
-        
-        // Sanitize string fields to avoid breaking CSV
-        const safeStr = (str) => `"${(str || '').replace(/"/g, '""')}"`;
-
-        return [
-          index + 1,
-          safeStr(formatDate(event.exam_date)),
-          safeStr(formatTime(event.start_time)),
-          safeStr(formatTime(event.end_time)),
-          safeStr(event.module_code),
-          safeStr(event.module_name),
-          safeStr(event.group_name),
-          safeStr(event.location),
-          safeStr(event.professor_name) // ADDED FIELD
-        ].join(",");
-      });
-
-      // 3. Combine and Download
-      const csvContent = [headers.join(","), ...rows].join("\n");
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.setAttribute("href", url);
-      link.setAttribute("download", `planning_examens_${new Date().toISOString().slice(0,10)}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      setSuccess("Exportation réussie !");
+        setLoading(true);
+        // This triggers the download from the route defined above
+        await adminAPI.exportExamAssignments(); 
+        setSuccess("Exportation complète réussie !");
     } catch (err) {
-      console.error(err);
-      setError("Erreur lors de l'exportation.");
+        console.error(err);
+        setError("Erreur lors de l'exportation.");
+    } finally {
+        setLoading(false);
     }
   };
-
   const handleSelectData = async (modules, groups) => {
     setSelectedModules(modules);
     setSelectedGroups(groups);
@@ -851,15 +806,22 @@ const ExamPlanning = () => {
   };
 
   // --- SAVE SURVEILLANT ---
-  const handleSaveSurveillant = async () => {
+ const handleSaveSurveillant = async () => {
     if (!currentExam) return;
     try {
-      await adminAPI.updateExam(currentExam.id, { professor_name: surveillantName });
-      
-      // Update local state
-      setExams(prevExams => prevExams.map(e => 
-        e.id === currentExam.id ? { ...e, professor_name: surveillantName } : e
+      // FIX: Check if we have multiple IDs (merged view) or a single ID
+      // This ensures the professor is assigned to ALL locations for this exam
+      const idsToUpdate = currentExam.ids || [currentExam.id];
+
+      await Promise.all(idsToUpdate.map(id => 
+        adminAPI.updateExam(id, { professor_name: surveillantName })
       ));
+      
+      // Update local state for ALL updated IDs
+      setExams(prevExams => prevExams.map(e => 
+        idsToUpdate.includes(e.id) ? { ...e, professor_name: surveillantName } : e
+      ));
+
       setCurrentExam(prev => ({ ...prev, professor_name: surveillantName }));
       setSuccess("Surveillant mis à jour avec succès !");
     } catch (err) {
@@ -905,14 +867,15 @@ const ExamPlanning = () => {
                 Sync Listes
             </Button>
 
-            <Button 
-                startIcon={<DownloadIcon />} 
-                variant="contained" 
-                color="success" 
-                onClick={handleExport}
-            >
-                Exporter (CSV)
-            </Button>
+           <Button 
+        startIcon={<DownloadIcon />} 
+        variant="contained" 
+        color="success" 
+        onClick={handleExport} // Make sure this is linked
+        disabled={loading}
+    >
+        {loading ? 'Export...' : 'Exporter (CSV)'}
+    </Button>
             <Button startIcon={<SettingsIcon />} variant="outlined" onClick={() => setLocationDialog(true)}>
                 Gérer les Locaux
             </Button>

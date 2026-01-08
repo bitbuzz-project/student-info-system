@@ -1091,82 +1091,74 @@ router.get('/exams/export/assignments', authenticateAdmin, async (req, res) => {
         SELECT DISTINCT ON (cod_etu) cod_etu, lib_nom_pat_ind, lib_pr1_ind 
         FROM pedagogical_situation
       ),
-      -- Step 1: Gather data, Deduplicate, and Fetch Specifics
-      clean_data AS (
-          SELECT DISTINCT ON (ep.id, ea.cod_etu)
+      planning_data AS (
+          SELECT 
             ep.id as session_id,
-            -- FIX: Fetch the REAL module code from the student's record (ps_real), fallback to exam definition
-            COALESCE(ps_real.cod_elp, ep.module_code) as module_code,
+            ep.module_code,
+            ep.module_name,
             ea.cod_etu,
             COALESCE(us.lib_nom_pat_ind, un.lib_nom_pat_ind) as "Nom",
             COALESCE(us.lib_pr1_ind, un.lib_pr1_ind) as "Prenom",
             ep.exam_date,
             ep.start_time,
-            COALESCE(gr.group_name, ep.group_name) as "group_name",
+            -- Clean Group Name
+            TRIM(REGEXP_REPLACE(COALESCE(gr.group_name, ep.group_name), '\s*\\([^)]*\\)', '', 'g')) as "group_name",
             ep.location,
-            ep.module_name
+            
+            -- FIX: Auto-fill Professor Name (If one room has it, apply to all rooms for this module/group/time)
+            COALESCE(
+                ep.professor_name,
+                MAX(ep.professor_name) OVER (PARTITION BY ep.module_code, ep.group_name, ep.exam_date, ep.start_time)
+            ) as professor_name
+
           FROM exam_planning ep
           JOIN exam_assignments ea ON ep.id = ea.exam_id
           LEFT JOIN unique_students us ON ea.cod_etu = us.cod_etu
           LEFT JOIN unique_names un ON ea.cod_etu = un.cod_etu
           
-          -- A. Find Grouping Rule (for correct Group Name)
+          -- Join grouping rules to get consistent group names if used
           LEFT JOIN grouping_rules gr ON (
               ep.module_code ILIKE gr.module_pattern 
               AND UPPER(COALESCE(us.lib_nom_pat_ind, un.lib_nom_pat_ind)) COLLATE "C" >= UPPER(gr.range_start) COLLATE "C"
               AND UPPER(COALESCE(us.lib_nom_pat_ind, un.lib_nom_pat_ind)) COLLATE "C" <= (UPPER(gr.range_end) || 'ZZZZZZ') COLLATE "C"
           )
-
-          -- B. Find Specific Student Module Code (Logic to match Exam)
-          LEFT JOIN pedagogical_situation ps_real ON (
-              ps_real.cod_etu = ea.cod_etu
-              AND (
-                  -- Case 1: Exam code contains the student's code (e.g. Exam="M1+M2", Student="M1")
-                  ep.module_code ILIKE '%' || ps_real.cod_elp || '%'
-                  OR
-                  -- Case 2: Student code matches the Group Rule Pattern (e.g. Rule="M1%", Student="M101")
-                  (gr.module_pattern IS NOT NULL AND ps_real.cod_elp ILIKE gr.module_pattern)
-              )
-          )
           
-          ORDER BY ep.id, ea.cod_etu
+          ORDER BY ep.exam_date, ep.start_time, ep.location, us.lib_nom_pat_ind
       )
-      -- Step 2: Apply Ordering and Numbering
       SELECT 
         ROW_NUMBER() OVER (
-            PARTITION BY session_id 
+            PARTITION BY session_id  -- Reset numbering for each Room/Session
             ORDER BY "Nom", "Prenom"
         ) as "num",
         *
-      FROM clean_data
-      ORDER BY session_id, "Nom", "Prenom"
+      FROM planning_data
+      ORDER BY exam_date, start_time, location, "Nom", "Prenom"
     `;
     
     const result = await pool.query(query);
     
-    // Generate CSV
-    let csv = "N°,Code Module,CNE,Nom,Prenom,Date,Heure,Groupe,Lieu,Module\n";
+    // CSV Generation
+    let csv = "N°,Code Module,CNE,Nom,Prenom,Date,Heure,Groupe,Lieu,Surveillant,Module\n";
     
     result.rows.forEach(row => {
       const date = row.exam_date ? new Date(row.exam_date).toLocaleDateString('fr-FR') : '';
       const time = row.start_time ? row.start_time.substring(0, 5) : '';
-      
       const clean = (str) => str ? `"${str.toString().replace(/"/g, '""')}"` : '';
       
-      // row.module_code will now contain the student's specific code (e.g., "M123") instead of the exam string
-      csv += `${row.num},${clean(row.module_code)},${clean(row.cod_etu)},${clean(row.Nom)},${clean(row.Prenom)},${clean(date)},${clean(time)},${clean(row.group_name)},${clean(row.location)},${clean(row.module_name)}\n`;
+      csv += `${row.num},${clean(row.module_code)},${clean(row.cod_etu)},${clean(row.Nom)},${clean(row.Prenom)},${clean(date)},${clean(time)},${clean(row.group_name)},${clean(row.location)},${clean(row.professor_name)},${clean(row.module_name)}\n`;
     });
 
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename=planning_global_detaile_${new Date().toISOString().split('T')[0]}.csv`);
-    res.send(csv);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename=planning_examens_global_${new Date().toISOString().split('T')[0]}.csv`);
+    
+    // Add BOM for Excel support
+    res.send('\uFEFF' + csv);
 
   } catch (error) {
     console.error('Export assignments error:', error);
     res.status(500).json({ error: 'Internal server error: ' + error.message });
   }
 });
-
 // --- NEW ROUTE: Get Count of Student Conflicts (Overlapping Exams) ---
 router.get('/exams/conflicts/count', authenticateAdmin, async (req, res) => {
   try {
