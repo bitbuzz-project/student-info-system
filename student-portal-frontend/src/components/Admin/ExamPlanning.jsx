@@ -30,9 +30,120 @@ import {
   Print as PrintIcon,
   AccessTime as AccessTimeIcon,
   Save as SaveIcon,
-  Person as PersonIcon // Added Person Icon
+  Person as PersonIcon
 } from '@mui/icons-material';
 import { adminAPI } from '../../services/api';
+
+// --- CONSTANTS: PROFESSORS LIST (Hardcoded) ---
+const AVAILABLE_PROFESSORS = [
+  "pr.Akkour",
+  "pr.Aloui",
+  "pr.Arrach",
+  "pr.Badr DEHBI",
+  "pr.Belbesbes",
+  "pr.Belkadi",
+  "pr.Benbounou",
+  "pr.Benmanssour",
+  "pr.Bouzekraoui",
+  "pr.Brouksy",
+  "pr.Echcharyf",
+  "pr.El idrissi",
+  "pr.El jamri",
+  "pr.Es-saheb",
+  "pr.Hiroual",
+  "pr.Jabal",
+  "pr.M.Abed",
+  "pr.MLY driss el idrissi",
+  "pr.Maatouk",
+  "pr.Majidi",
+  "pr.Mbarki",
+  "pr.Meftah",
+  "pr.Moussadek",
+  "pr.Oualji",
+  "pr.Qorchi",
+  "pr.Rafik",
+  "pr.Razzok",
+  "pr.taybi",
+  "ذ. أفقير",
+  "ذ. أوقسو",
+  "ذ. أوهاروش",
+  "ذ. إ.الحافظي",
+  "ذ. البوشيخي",
+  "ذ. البوهالي",
+  "ذ. الجمري",
+  "ذ. الحجاجي",
+  "ذ. الحافظي",
+  "ذ. الذهبي",
+  "ذ. الرطيمات",
+  "ذ. الرقاي",
+  "ذ. السكتاني",
+  "ذ. الشرغاوي",
+  "ذ. الشداوي",
+  "ذ. الشيكر",
+  "ذ. الصالحي",
+  "ذ. الطيبي",
+  "ذ. العاشيري",
+  "ذ. العثماني",
+  "ذ. العلمى",
+  "ذ. العمراني",
+  "ذ. القشتول",
+  "ذ. المحراوي",
+  "ذ. المصبحي",
+  "ذ. الملوكي",
+  "ذ. المليحي",
+  "ذ. النوري",
+  "ذ. النوحي",
+  "ذ. ايت العكيد",
+  "ذ. بنقاسم",
+  "ذ. بوذياب",
+  "ذ. تملكوتان",
+  "ذ. جبران",
+  "ذ. حاسون",
+  "ذ. حميدا",
+  "ذ. خربوش",
+  "ذ. خفيف",
+  "ذ. خلوقي",
+  "ذ. رحو",
+  "ذ. سيتر",
+  "ذ. شحشي",
+  "ذ. صبونجي",
+  "ذ. عباد",
+  "ذ. عراش",
+  "ذ. فضيل",
+  "ذ. فلاح",
+  "ذ. قاسمي",
+  "ذ. قصبي",
+  "ذ. كواعروس",
+  "ذ. لبنى المصباحي",
+  "ذ. مالكي",
+  "ذ. مكاوي",
+  "ذ. منال النوحي",
+  "ذ. مهم",
+  "ذ. نبيه",
+  "ذ. نعناني",
+  "ذ. نقوب",
+  "ذ. هروال",
+  "ذ. وقاص",
+  "ذ. يحياوي",
+  "ذ. يونسي",
+  "ذة. أفقير",
+  "ذة. الجمري",
+  "ذة. الحافظي",
+  "ذة. الرطيمات",
+  "ذة. الصالحي",
+  "ذة. القشتول",
+  "ذة. النوري",
+  "ذة. بنقاسم",
+  "ذة. جبران",
+  "ذة. فضيل",
+  "ذة. فلاح",
+  "ذة. لبنى المصباحي",
+  "ذة. منال النوحي",
+  "ذة.العلمي",
+  "ذة.بنقاسم",
+  "ذة.سميح",
+  "ذة.وقاص"
+].sort((a, b) => a.localeCompare(b));
 
 // --- COMPONENT: STAT CARD ---
 const StatCard = ({ title, value, icon, color, loading, subtitle, onClick }) => (
@@ -141,7 +252,7 @@ const ExamCardContent = ({ exam }) => (
                  </Typography>
             </Box>
 
-            {/* PROFESSOR NAME DISPLAY (NEW) */}
+            {/* PROFESSOR NAME DISPLAY */}
             {exam.professor_name && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
                     <PersonIcon sx={{ fontSize: '1rem', color: 'text.secondary' }} />
@@ -282,7 +393,7 @@ const DailyPlanningView = ({ exams, onSelectExam }) => {
                                     acc[uniqueKey].total_assigned += (curr.assigned_count || 0);
                                     acc[uniqueKey].ids.push(curr.id);
                                     
-                                    // FIX: Capture Arabic name if missing in accumulator but present in current row
+                                    // Capture Arabic name if missing in accumulator
                                     if (!acc[uniqueKey].lib_elp_arb && curr.lib_elp_arb) {
                                         acc[uniqueKey].lib_elp_arb = curr.lib_elp_arb;
                                     }
@@ -364,7 +475,6 @@ const ExamPlanning = () => {
   const [exams, setExams] = useState([]);
   const [rawStats, setRawStats] = useState([]);
   const [locations, setLocations] = useState([]);
-  const [professors, setProfessors] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
@@ -404,11 +514,10 @@ const ExamPlanning = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [examsData, statsData, locsData, employeesData, conflicts] = await Promise.all([
+      const [examsData, statsData, locsData, conflicts] = await Promise.all([
         adminAPI.getExams(),
         adminAPI.getDetailedStats(),
         adminAPI.getLocations(),
-        adminAPI.getEmployees({ type: 'PROF' }),
         adminAPI.getExamConflictsCount()
       ]);
 
@@ -420,15 +529,6 @@ const ExamPlanning = () => {
         a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
       );
       setLocations(sortedLocations);
-      
-      // Filter & Sort Professors Alphabetically (A-Z)
-      const profs = employeesData
-        .filter(e => 
-            (e.type && e.type.toUpperCase() === 'PROF') || 
-            (e.grade && e.grade.toLowerCase().includes('prof'))
-        )
-        .sort((a, b) => (a.nom || '').localeCompare(b.nom || ''));
-      setProfessors(profs);
 
     } catch (err) {
       console.error(err);
@@ -506,11 +606,62 @@ const ExamPlanning = () => {
     }
   };
 
-  const handleExport = async () => {
+  // --- CLIENT-SIDE CSV EXPORT ---
+  const handleExport = () => {
     try {
-      await adminAPI.exportExamAssignments();
+      if (!exams || exams.length === 0) {
+        setError("Aucune donnée à exporter.");
+        return;
+      }
+
+      // 1. Prepare Header
+      const headers = [
+        "Numerotation",
+        "Date",
+        "Heure Debut",
+        "Heure Fin",
+        "Code Module",
+        "Module",
+        "Groupe",
+        "Salle",
+        "Surveillant" // ADDED COLUMN
+      ];
+
+      // 2. Prepare Rows
+      const rows = exams.map((event, index) => {
+        const formatDate = (d) => d ? new Date(d).toLocaleDateString('fr-FR') : '';
+        const formatTime = (t) => t ? t.substring(0, 5) : '';
+        
+        // Sanitize string fields to avoid breaking CSV
+        const safeStr = (str) => `"${(str || '').replace(/"/g, '""')}"`;
+
+        return [
+          index + 1,
+          safeStr(formatDate(event.exam_date)),
+          safeStr(formatTime(event.start_time)),
+          safeStr(formatTime(event.end_time)),
+          safeStr(event.module_code),
+          safeStr(event.module_name),
+          safeStr(event.group_name),
+          safeStr(event.location),
+          safeStr(event.professor_name) // ADDED FIELD
+        ].join(",");
+      });
+
+      // 3. Combine and Download
+      const csvContent = [headers.join(","), ...rows].join("\n");
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `planning_examens_${new Date().toISOString().slice(0,10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
       setSuccess("Exportation réussie !");
     } catch (err) {
+      console.error(err);
       setError("Erreur lors de l'exportation.");
     }
   };
@@ -982,12 +1133,11 @@ const ExamPlanning = () => {
           <DialogTitle>Liste d'émargement: {studentDialog.title}</DialogTitle>
           <DialogContent dividers>
              
-             {/* --- FORM FOR SURVEILLANT --- */}
+             {/* --- FORM FOR SURVEILLANT: USES HARDCODED LIST --- */}
              <Box sx={{ mb: 3, p: 2, bgcolor: '#f5f5f5', borderRadius: 1, display: 'flex', gap: 2, alignItems: 'center' }}>
                 <Autocomplete
                   freeSolo
-                  // Sort alphabetically strictly by Name (A-Z)
-                  options={professors.map(p => `${p.nom} ${p.prenom}`)}
+                  options={AVAILABLE_PROFESSORS} // UPDATED: Use hardcoded list
                   value={surveillantName}
                   onInputChange={(e, newVal) => setSurveillantName(newVal)}
                   renderInput={(params) => <TextField {...params} label="Surveillant / Professeur" size="small" />}
