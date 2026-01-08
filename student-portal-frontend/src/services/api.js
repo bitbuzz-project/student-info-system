@@ -192,6 +192,7 @@ export const adminAPI = {
     }
     return response.data;
   },
+
   // Refresh Exam Participants based on current Pedago Data
   refreshExamParticipants: async () => {
     const response = await api.post('/admin/exams/refresh-participants');
@@ -294,7 +295,10 @@ createExam: async (examData) => {
     const response = await api.post('/admin/exams', examData);
     return response.data;
   },
-
+updateExam: async (id, data) => {
+    const response = await api.put(`/admin/exams/${id}`, data);
+    return response.data;
+  },
 
 
   // --- NEW METHOD ---

@@ -824,6 +824,32 @@ router.delete('/exams/:id', authenticateAdmin, async (req, res) => {
   }
 });
 
+// --- NEW ROUTE: UPDATE EXAM ---
+router.put('/exams/:id', authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { professor_name } = req.body; 
+
+    const result = await pool.query(
+      `UPDATE exam_planning 
+       SET professor_name = $1 
+       WHERE id = $2 
+       RETURNING *`,
+      [professor_name, id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Exam not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Update exam error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+// ------------------------------
+
 // GET Students for Multiple Modules + Multiple Groups (MERGE FEATURE)
 router.get('/groups/students', authenticateAdmin, async (req, res) => {
   try {
@@ -1535,7 +1561,5 @@ async function updateExamAssignments(client, examId, newStudentIds, stats) {
     stats.updatedExams++;
   }
 }
-
-
 
 module.exports = router;

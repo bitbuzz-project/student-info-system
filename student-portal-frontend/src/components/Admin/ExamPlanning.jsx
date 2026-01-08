@@ -28,7 +28,9 @@ import {
   CheckCircleOutline as SuccessIcon,
   Sync as SyncIcon,
   Print as PrintIcon,
-  AccessTime as AccessTimeIcon
+  AccessTime as AccessTimeIcon,
+  Save as SaveIcon,
+  Person as PersonIcon // Added Person Icon
 } from '@mui/icons-material';
 import { adminAPI } from '../../services/api';
 
@@ -138,6 +140,16 @@ const ExamCardContent = ({ exam }) => (
                     {exam.all_groups.includes('Tous') ? 'Toutes Sections' : exam.all_groups.join(' + ')}
                  </Typography>
             </Box>
+
+            {/* PROFESSOR NAME DISPLAY (NEW) */}
+            {exam.professor_name && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
+                    <PersonIcon sx={{ fontSize: '1rem', color: 'text.secondary' }} />
+                    <Typography variant="caption" sx={{ fontWeight: 'bold', color: '#e65100', fontSize: '0.85rem' }}>
+                        {exam.professor_name}
+                    </Typography>
+                </Box>
+            )}
 
             {/* Stats Row */}
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0.5 }}>
@@ -384,6 +396,10 @@ const ExamPlanning = () => {
   const [conflictDialog, setConflictDialog] = useState({ open: false, conflicts: [], loading: false });
   const [newLoc, setNewLoc] = useState({ name: '', capacity: '', type: 'AMPHI' });
 
+  // --- NEW STATE FOR SURVEILLANT ---
+  const [currentExam, setCurrentExam] = useState(null);
+  const [surveillantName, setSurveillantName] = useState('');
+
   // --- FETCH DATA ---
   const loadData = async () => {
     setLoading(true);
@@ -405,10 +421,13 @@ const ExamPlanning = () => {
       );
       setLocations(sortedLocations);
       
-      const profs = employeesData.filter(e => 
-        (e.type && e.type.toUpperCase() === 'PROF') || 
-        (e.grade && e.grade.toLowerCase().includes('prof'))
-      );
+      // Filter & Sort Professors Alphabetically (A-Z)
+      const profs = employeesData
+        .filter(e => 
+            (e.type && e.type.toUpperCase() === 'PROF') || 
+            (e.grade && e.grade.toLowerCase().includes('prof'))
+        )
+        .sort((a, b) => (a.nom || '').localeCompare(b.nom || ''));
       setProfessors(profs);
 
     } catch (err) {
@@ -668,13 +687,34 @@ const ExamPlanning = () => {
   const allocatedTotal = planningSessions.reduce((sum, s) => sum + (parseInt(s.count) || 0), 0);
   const remainingStudents = allGroupStudents.length - allocatedTotal;
 
+  // --- HANDLE EXAM CLICK ---
   const handleExamClick = (exam) => {
+    setCurrentExam(exam);
+    setSurveillantName(exam.professor_name || ''); // Fill input
     setStudentDialog({ open: true, students: [], loading: true, title: `${exam.module_name} (${exam.location})` });
     adminAPI.getExamStudents(exam.id).then(s => setStudentDialog(p => ({ ...p, students: s, loading: false })));
   };
 
   const handleSelectExam = (exam) => {
     handleExamClick(exam);
+  };
+
+  // --- SAVE SURVEILLANT ---
+  const handleSaveSurveillant = async () => {
+    if (!currentExam) return;
+    try {
+      await adminAPI.updateExam(currentExam.id, { professor_name: surveillantName });
+      
+      // Update local state
+      setExams(prevExams => prevExams.map(e => 
+        e.id === currentExam.id ? { ...e, professor_name: surveillantName } : e
+      ));
+      setCurrentExam(prev => ({ ...prev, professor_name: surveillantName }));
+      setSuccess("Surveillant mis à jour avec succès !");
+    } catch (err) {
+      console.error(err);
+      setError("Erreur lors de la mise à jour du surveillant.");
+    }
   };
 
   return (
@@ -754,7 +794,6 @@ const ExamPlanning = () => {
 
       {/* PLANIFICATION FORM - HIDDEN IN PRINT */}
       <Box sx={{ display: selectedModules.length > 0 ? 'block' : 'none', mb: 3 }} className="no-print">
-        {/* ... (Same as before) ... */}
         {/* Simplified for brevity in this response, keep original planning form code here */}
         <Typography variant="h6">Planification en cours...</Typography>
       </Box>
@@ -849,13 +888,14 @@ const ExamPlanning = () => {
                                 <TableCell><strong>Module</strong></TableCell>
                                 <TableCell><strong>Groupe</strong></TableCell>
                                 <TableCell><strong>Lieu</strong></TableCell>
+                                <TableCell><strong>Surveillant</strong></TableCell>
                                 <TableCell align="center"><strong>Eff.</strong></TableCell>
                                 <TableCell align="center"><strong>Action</strong></TableCell>
                             </TableRow>
                         </TableHead>
                         <TableBody>
                             {exams.length === 0 ? (
-                                <TableRow><TableCell colSpan={6} align="center">Aucun examen programmé.</TableCell></TableRow>
+                                <TableRow><TableCell colSpan={7} align="center">Aucun examen programmé.</TableCell></TableRow>
                             ) : (
                                 exams.map(e => (
                                     <TableRow key={e.id} hover>
@@ -869,6 +909,17 @@ const ExamPlanning = () => {
                                         </TableCell>
                                         <TableCell><Chip label={e.group_name} size="small" sx={{ fontSize: '0.75rem' }} /></TableCell>
                                         <TableCell><Chip icon={<MeetingRoomIcon sx={{ fontSize:'12px !important' }}/>} label={e.location} size="small" variant="outlined" /></TableCell>
+                                        <TableCell>
+                                            {e.professor_name ? (
+                                                <Typography variant="body2" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                                                    {e.professor_name}
+                                                </Typography>
+                                            ) : (
+                                                <Typography variant="caption" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                                                    Non assigné
+                                                </Typography>
+                                            )}
+                                        </TableCell>
                                         <TableCell align="center">{e.assigned_count}</TableCell>
                                         <TableCell align="center">
                                             <IconButton size="small" color="error" onClick={async () => {
@@ -926,9 +977,33 @@ const ExamPlanning = () => {
           <DialogActions><Button onClick={() => setLocationDialog(false)}>Fermer</Button></DialogActions>
         </Dialog>
 
+        {/* --- STUDENT DIALOG WITH SURVEILLANT FORM --- */}
         <Dialog open={studentDialog.open} onClose={() => setStudentDialog(prev => ({ ...prev, open: false }))} maxWidth="md" fullWidth className="no-print">
           <DialogTitle>Liste d'émargement: {studentDialog.title}</DialogTitle>
           <DialogContent dividers>
+             
+             {/* --- FORM FOR SURVEILLANT --- */}
+             <Box sx={{ mb: 3, p: 2, bgcolor: '#f5f5f5', borderRadius: 1, display: 'flex', gap: 2, alignItems: 'center' }}>
+                <Autocomplete
+                  freeSolo
+                  // Sort alphabetically strictly by Name (A-Z)
+                  options={professors.map(p => `${p.nom} ${p.prenom}`)}
+                  value={surveillantName}
+                  onInputChange={(e, newVal) => setSurveillantName(newVal)}
+                  renderInput={(params) => <TextField {...params} label="Surveillant / Professeur" size="small" />}
+                  sx={{ flex: 1 }}
+                />
+                <Button 
+                  variant="contained" 
+                  color="primary" 
+                  startIcon={<SaveIcon />}
+                  onClick={handleSaveSurveillant}
+                >
+                  Enregistrer
+                </Button>
+             </Box>
+             {/* ----------------------------- */}
+
              {studentDialog.loading ? <CircularProgress /> : (
                <TableContainer sx={{ maxHeight: 400 }}>
                  <Table size="small" stickyHeader>
@@ -953,10 +1028,22 @@ const ExamPlanning = () => {
           </DialogContent>
           <DialogActions>
             <Button onClick={() => {
-               const csv = ["CNE,Nom,Prenom", ...studentDialog.students.map(s => `${s.cod_etu},"${s.lib_nom_pat_ind}","${s.lib_pr1_ind}"`)].join('\n');
-               const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
-               link.download = "liste.csv"; document.body.appendChild(link); link.click();
-            }}>Excel (Liste Seule)</Button>
+               // --- EXPORT CSV WITH SURVEILLANT ---
+               const headerInfo = [
+                 `Module: ${currentExam?.module_name || ''}`,
+                 `Date: ${currentExam?.exam_date || ''}`,
+                 `Horaire: ${currentExam?.start_time || ''} - ${currentExam?.end_time || ''}`,
+                 `Lieu: ${currentExam?.location || ''}`,
+                 `Surveillant: ${surveillantName}` 
+               ].join('\n');
+
+               const tableHeader = "CNE,Nom,Prenom,Signature";
+               const rows = studentDialog.students.map(s => `${s.cod_etu},"${s.lib_nom_pat_ind}","${s.lib_pr1_ind}",""`).join('\n');
+               const csvContent = `${headerInfo}\n\n${tableHeader}\n${rows}`;
+               
+               const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([csvContent], {type: 'text/csv'}));
+               link.download = `liste_emargement_${currentExam?.module_code || 'exam'}.csv`; document.body.appendChild(link); link.click();
+            }}>Excel (Liste + Surveillant)</Button>
             <Button onClick={() => setStudentDialog(prev => ({ ...prev, open: false }))}>Fermer</Button>
           </DialogActions>
         </Dialog>
