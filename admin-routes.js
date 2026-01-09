@@ -828,14 +828,22 @@ router.delete('/exams/:id', authenticateAdmin, async (req, res) => {
 router.put('/exams/:id', authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { professor_name } = req.body; 
+    // Extract all fields from the request
+    const { professor_name, exam_date, start_time, end_time, location } = req.body; 
 
+    // Build a dynamic query or update all columns
+    // This assumes you want to allow updating everything provided
     const result = await pool.query(
       `UPDATE exam_planning 
-       SET professor_name = $1 
-       WHERE id = $2 
+       SET 
+         professor_name = COALESCE($1, professor_name),
+         exam_date = COALESCE($2, exam_date),
+         start_time = COALESCE($3, start_time),
+         end_time = COALESCE($4, end_time),
+         location = COALESCE($5, location)
+       WHERE id = $6 
        RETURNING *`,
-      [professor_name, id]
+      [professor_name, exam_date, start_time, end_time, location, id]
     );
 
     if (result.rows.length === 0) {
