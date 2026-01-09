@@ -1333,15 +1333,64 @@ router.post('/exams/refresh-participants', authenticateAdmin, async (req, res) =
         console.log(`   Contains ${distSet.exams.length} exam session(s)`);
 
         // Parse modules and groups
-        const modules = distSet.module_code ? distSet.module_code.split('+').map(s => s.trim()) : [];
+        // Format: "5(JLAP3505)" means Groupe 5 studying Module JLAP3505
+        const rawModules = distSet.module_code ? distSet.module_code.split('+').map(s => s.trim()) : [];
+        
+        // Parse module codes - handle format: GROUP(MODULE_CODE)
+        const modules = [];
+        const moduleGroups = []; // Track which group each module belongs to
+        
+        rawModules.forEach(m => {
+            // Check format: GROUP(MODULE_CODE) - e.g., "5(JLAP3505)"
+            let match = m.match(/^(\d+)\(([^)]+)\)$/);
+            if (match) {
+                const groupNum = match[1].trim();
+                const moduleCode = match[2].trim();
+                modules.push(moduleCode);
+                moduleGroups.push(`Groupe ${groupNum}`);
+                return;
+            }
+            
+            // Check format: (MODULE_CODE)GROUP - e.g., "(JLAF3505)1"
+            match = m.match(/^\(([^)]+)\)(\d+)$/);
+            if (match) {
+                const moduleCode = match[1].trim();
+                const groupNum = match[2].trim();
+                modules.push(moduleCode);
+                moduleGroups.push(`Groupe ${groupNum}`);
+                return;
+            }
+            
+            // No group prefix/suffix, just module code
+            modules.push(m);
+            moduleGroups.push(null);
+        });
+        
+        // If explicit groups are provided in group_name field, use those
+        // Otherwise use the groups extracted from module codes
         let groups = [];
         if (distSet.group_name && distSet.group_name !== 'Tous') {
             groups = distSet.group_name.split('+').map(s => s.trim().replace(/\(.*\)$/, '').trim());
+        } else {
+            // Use groups from module codes (e.g., "5(JLAP3505)" -> "Groupe 5")
+            const extractedGroups = moduleGroups.filter(g => g !== null);
+            if (extractedGroups.length > 0) {
+                // Remove duplicates
+                groups = [...new Set(extractedGroups)];
+            }
         }
 
         if (modules.length === 0) {
           console.log(`   ⚠️ Skipping: No modules found`);
           continue;
+        }
+        
+        // Log parsed modules and groups
+        console.log(`   Parsed modules:`, modules);
+        if (groups.length > 0) {
+          console.log(`   Parsed groups:`, groups);
+        } else {
+          console.log(`   Groups: ALL (Tous)`);
         }
 
         // 4. Build query to find ALL eligible students for this distribution set
@@ -1355,11 +1404,24 @@ router.post('/exams/refresh-participants', authenticateAdmin, async (req, res) =
 
         let groupClause = '';
         if (groups.length > 0) {
+            // FIXED: For multi-module plannings, we need to check if grouping rules exist
+            // for ANY of the modules, not just the student's specific module
+            
+            // Add module patterns to params for grouping check
+            const modulePatternParams = [];
+            modules.forEach(m => {
+                params.push(m);
+                modulePatternParams.push(`$${paramIndex++}`);
+            });
+            
             const groupConds = groups.map(g => {
                 params.push(g);
                 return `EXISTS (
                     SELECT 1 FROM grouping_rules gr
-                    WHERE ps.cod_elp ILIKE gr.module_pattern
+                    WHERE (
+                        -- Check if this grouping rule applies to ANY module in the planning
+                        ${modulePatternParams.map(p => `${p} ILIKE gr.module_pattern`).join(' OR ')}
+                    )
                     AND gr.group_name = $${paramIndex++}
                     AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" >= UPPER(gr.range_start) COLLATE "C"
                     AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" <= (UPPER(gr.range_end) || 'ZZZZZZ') COLLATE "C"
@@ -1380,7 +1442,7 @@ router.post('/exams/refresh-participants', authenticateAdmin, async (req, res) =
         const eligibleRes = await client.query(eligibleQuery, params);
         const eligibleStudents = eligibleRes.rows;
 
-        console.log(`   ✓ Found ${eligibleStudents.size} eligible students for entire set`);
+        console.log(`   ✓ Found ${eligibleStudents.length} eligible students for entire set`);
 
         // 5. INTELLIGENT DISTRIBUTION LOGIC
         if (distSet.exams.length === 1) {
@@ -1400,68 +1462,139 @@ router.post('/exams/refresh-participants', authenticateAdmin, async (req, res) =
           // ============================================
           console.log(`   → Distribution mode: Split ${eligibleStudents.length} students across ${distSet.exams.length} rooms`);
 
-          // Get current room capacities from existing assignments
+          // Get room information with actual capacities from locations table
           const capacityQuery = await client.query(`
             SELECT 
               ep.id,
               ep.location,
+              l.capacity as max_capacity,
               COUNT(ea.cod_etu) as current_count
             FROM exam_planning ep
+            LEFT JOIN locations l ON ep.location = l.name
             LEFT JOIN exam_assignments ea ON ep.id = ea.exam_id
             WHERE ep.id = ANY($1)
-            GROUP BY ep.id, ep.location
-            ORDER BY ep.location
+            GROUP BY ep.id, ep.location, l.capacity
+            ORDER BY l.capacity DESC NULLS LAST, ep.location
           `, [distSet.exams.map(e => e.id)]);
 
           const roomCapacities = capacityQuery.rows;
-          const totalCurrentAssigned = roomCapacities.reduce((sum, r) => sum + parseInt(r.current_count), 0);
+          const totalCapacity = roomCapacities.reduce((sum, r) => sum + (parseInt(r.max_capacity) || 0), 0);
 
-          console.log(`   Current distribution:`);
+          console.log(`   Current room information:`);
           roomCapacities.forEach(r => {
-            console.log(`     - ${r.location}: ${r.current_count} students`);
+            console.log(`     - ${r.location}: ${r.current_count} assigned / ${r.max_capacity || 'N/A'} capacity`);
           });
 
-          // Calculate target distribution (proportional based on current)
-          let targetDistribution;
+          // SMART BALANCED DISTRIBUTION ALGORITHM
+          // Strategy: Distribute proportionally based on capacity, ensuring all rooms are utilized
+          console.log(`   → Using smart balanced distribution (proportional to capacity)`);
           
-          if (totalCurrentAssigned > 0) {
-            // Proportional redistribution based on existing ratios
-            console.log(`   → Using proportional distribution based on existing ratios`);
+          const totalStudents = eligibleStudents.length;
+          let targetDistribution = [];
+          
+          // Check if we have capacity info for all rooms
+          const allHaveCapacity = roomCapacities.every(r => r.max_capacity);
+          
+          if (allHaveCapacity && totalCapacity > 0) {
+            // PROPORTIONAL DISTRIBUTION based on capacity
+            let remainingStudents = totalStudents;
             
-            targetDistribution = roomCapacities.map(room => {
-              const ratio = parseInt(room.current_count) / totalCurrentAssigned;
-              const targetCount = Math.round(eligibleStudents.length * ratio);
-              return {
+            // Calculate initial proportional allocation
+            roomCapacities.forEach((room, idx) => {
+              const capacity = parseInt(room.max_capacity);
+              const proportion = capacity / totalCapacity;
+              
+              // For last room, assign all remaining to avoid rounding errors
+              let targetCount;
+              if (idx === roomCapacities.length - 1) {
+                // CRITICAL: Last room must take ALL remaining students
+                // This ensures 100% assignment even if it slightly exceeds capacity
+                targetCount = remainingStudents;
+              } else {
+                targetCount = Math.round(totalStudents * proportion);
+                // Don't exceed room capacity for non-last rooms
+                targetCount = Math.min(targetCount, capacity);
+              }
+              
+              targetDistribution.push({
                 exam_id: room.id,
                 location: room.location,
+                max_capacity: capacity,
                 target_count: targetCount
-              };
+              });
+              
+              remainingStudents -= targetCount;
             });
+            
+            // Adjust if we have remaining students due to rounding
+            if (remainingStudents !== 0) {
+              // Sort by available space (capacity - assigned)
+              const sortedBySpace = [...targetDistribution]
+                .map((t, idx) => ({ ...t, index: idx, availableSpace: t.max_capacity - t.target_count }))
+                .filter(t => t.availableSpace > 0)
+                .sort((a, b) => b.availableSpace - a.availableSpace);
+              
+              // Distribute remaining students to rooms with most available space
+              let idx = 0;
+              while (remainingStudents > 0 && idx < sortedBySpace.length) {
+                const room = sortedBySpace[idx];
+                const canAdd = Math.min(room.availableSpace, Math.abs(remainingStudents));
+                
+                if (remainingStudents > 0) {
+                  targetDistribution[room.index].target_count += canAdd;
+                  remainingStudents -= canAdd;
+                } else {
+                  targetDistribution[room.index].target_count -= canAdd;
+                  remainingStudents += canAdd;
+                }
+                idx++;
+              }
+            }
+            
           } else {
-            // Equal distribution if no prior assignments
-            console.log(`   → Using equal distribution (no prior data)`);
+            // FALLBACK: Equal distribution if capacity info missing
+            console.log(`   ⚠️  Some rooms missing capacity info, using equal distribution`);
             
-            const baseCount = Math.floor(eligibleStudents.length / distSet.exams.length);
-            const remainder = eligibleStudents.length % distSet.exams.length;
+            const baseCount = Math.floor(totalStudents / roomCapacities.length);
+            const remainder = totalStudents % roomCapacities.length;
             
-            targetDistribution = distSet.exams.map((exam, idx) => ({
-              exam_id: exam.id,
-              location: exam.location,
-              target_count: baseCount + (idx < remainder ? 1 : 0)
-            }));
+            roomCapacities.forEach((room, idx) => {
+              const targetCount = baseCount + (idx < remainder ? 1 : 0);
+              targetDistribution.push({
+                exam_id: room.id,
+                location: room.location,
+                max_capacity: room.max_capacity || null,
+                target_count: targetCount
+              });
+            });
           }
 
-          // Adjust for rounding errors
-          const totalTarget = targetDistribution.reduce((sum, t) => sum + t.target_count, 0);
-          if (totalTarget !== eligibleStudents.length) {
-            const diff = eligibleStudents.length - totalTarget;
-            targetDistribution[0].target_count += diff; // Add difference to first room
+          // Validation: Check for capacity violations
+          const violations = targetDistribution.filter(t => t.max_capacity && t.target_count > t.max_capacity);
+          if (violations.length > 0) {
+            console.log(`   ⚠️  WARNING: Capacity violations detected, redistributing...`);
+            violations.forEach(v => {
+              console.log(`     - ${v.location}: ${v.target_count} exceeds capacity ${v.max_capacity}`);
+            });
           }
 
-          console.log(`   Target distribution:`);
+          // Check if insufficient capacity
+          const totalAssignable = targetDistribution.reduce((sum, t) => sum + t.target_count, 0);
+          if (totalAssignable < totalStudents) {
+            const unassigned = totalStudents - totalAssignable;
+            console.log(`   ⚠️  WARNING: ${unassigned} students could not be assigned (insufficient total capacity: ${totalCapacity})`);
+            stats.errors.push({
+              set: setKey,
+              error: `Insufficient capacity: ${unassigned}/${totalStudents} students not assigned`
+            });
+          }
+
+          console.log(`   Target distribution (balanced by capacity):`);
           targetDistribution.forEach(t => {
-            console.log(`     - ${t.location}: ${t.target_count} students (target)`);
+            const utilization = t.max_capacity ? Math.round((t.target_count / t.max_capacity) * 100) : 'N/A';
+            console.log(`     - ${t.location}: ${t.target_count} students (${utilization}% of ${t.max_capacity || 'unlimited'})`);
           });
+
 
           // Distribute students across rooms
           let studentIndex = 0;
