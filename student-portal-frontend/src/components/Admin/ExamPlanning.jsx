@@ -839,8 +839,7 @@ const ExamPlanning = () => {
             doc.text(data.location, 105, 45, { align: 'center' });
             doc.setFont('Amiri', 'normal');
 
-            doc.setFontSize(18);
-            doc.text("Liste d'émargement", 105, 60, { align: 'center' });
+           
             
             let listY = 70;
             doc.setFontSize(11);
@@ -1133,7 +1132,7 @@ const ExamPlanning = () => {
 
         {/* --- STUDENT DIALOG WITH PROFESSOR FORM --- */}
         <Dialog open={studentDialog.open} onClose={() => setStudentDialog(prev => ({ ...prev, open: false }))} maxWidth="md" fullWidth className="no-print">
-          <DialogTitle>Liste d'émargement: {studentDialog.title}</DialogTitle>
+          
           <DialogContent dividers>
              
              <Box sx={{ mb: 3, p: 2, bgcolor: '#f5f5f5', borderRadius: 1, display: 'flex', gap: 2, alignItems: 'center' }}>

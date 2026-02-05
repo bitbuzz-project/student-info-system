@@ -187,8 +187,8 @@ router.get('/groups/rules/:id/students', authenticateAdmin, async (req, res) => 
       FROM pedagogical_situation ps
       LEFT JOIN students s ON ps.cod_etu = s.cod_etu
       WHERE ps.cod_elp ILIKE $1
-      AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" >= UPPER($2) COLLATE "C"
-      AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" <= (UPPER($3) || 'ZZZZZZ') COLLATE "C"
+      AND UPPER(COALESCE(ps.lib_nom_pat_ind, s.lib_nom_pat_ind)) COLLATE "C" >= UPPER($2) COLLATE "C"
+      AND UPPER(COALESCE(ps.lib_nom_pat_ind, s.lib_nom_pat_ind)) COLLATE "C" <= (UPPER($3) || 'ZZZZZZ') COLLATE "C"
       ORDER BY 2, 3
     `;
 
@@ -315,6 +315,10 @@ router.delete('/groups/rules/:id', authenticateAdmin, async (req, res) => {
 
 router.get('/dashboard/stats', authenticateAdmin, async (req, res) => {
   try {
+    // 1. First determine the current academic year (max year)
+    const yearResult = await pool.query('SELECT MAX(cod_anu) as max_year FROM students');
+    const currentYear = yearResult.rows[0].max_year || new Date().getFullYear();
+
     const stats = await Promise.all([
       pool.query('SELECT COUNT(*) as total FROM students'),
       pool.query('SELECT COUNT(*) as total FROM grades'),
@@ -323,14 +327,18 @@ router.get('/dashboard/stats', authenticateAdmin, async (req, res) => {
       pool.query('SELECT COUNT(DISTINCT lib_etp) as total FROM students WHERE lib_etp IS NOT NULL'),
       pool.query(`SELECT sync_timestamp FROM sync_log ORDER BY sync_timestamp DESC LIMIT 1`),
       pool.query(`SELECT COUNT(*) as recent_students FROM students WHERE last_sync >= NOW() - INTERVAL '7 days'`),
-      pool.query(`SELECT COUNT(*) as recent_grades FROM grades WHERE last_sync >= NOW() - INTERVAL '7 days'`)
+      pool.query(`SELECT COUNT(*) as recent_grades FROM grades WHERE last_sync >= NOW() - INTERVAL '7 days'`),
+      // New Query: Count students specifically for the current year
+      pool.query('SELECT COUNT(*) as total FROM students WHERE cod_anu = $1', [currentYear])
     ]);
 
-    const [totalStudents, totalGrades, totalElements, totalYears, totalPrograms, lastSync, recentStudents, recentGrades] = stats;
+    const [totalStudents, totalGrades, totalElements, totalYears, totalPrograms, lastSync, recentStudents, recentGrades, currentYearStudents] = stats;
 
     res.json({
       overview: {
         total_students: parseInt(totalStudents.rows[0].total),
+        current_year_students: parseInt(currentYearStudents.rows[0].total), // <--- New Field
+        current_year: parseInt(currentYear),                                // <--- New Field
         total_grades: parseInt(totalGrades.rows[0].total),
         total_elements: parseInt(totalElements.rows[0].total),
         total_years: parseInt(totalYears.rows[0].total),
@@ -1024,17 +1032,36 @@ router.post('/exams', authenticateAdmin, async (req, res) => {
 // NEW: Get Students specific to an exam instance (ROBUST - NO DUPLICATES)
 router.get('/exams/:id/students', authenticateAdmin, async (req, res) => {
   try {
+    // 1. Get Exam Details to know the Module Pattern for lookup
+    const examRes = await pool.query('SELECT module_code FROM exam_planning WHERE id = $1', [req.params.id]);
+    const moduleCode = examRes.rows[0]?.module_code || '';
+
+    // 2. Fetch Students with Group Calculation
     // FIX: Use DISTINCT ON (ea.cod_etu) to strictly ensure 1 row per student ID
+    // UPDATE: Changed ORDER BY to gr.range_start DESC to prioritize the "best match" in case of overlap
+    // Matches "Répartition Pédagogique" logic for display
     const result = await pool.query(`
       SELECT DISTINCT ON (ea.cod_etu)
         ea.cod_etu, 
         COALESCE(s.lib_nom_pat_ind, ps.lib_nom_pat_ind) as lib_nom_pat_ind, 
         COALESCE(s.lib_pr1_ind, ps.lib_pr1_ind) as lib_pr1_ind, 
         s.cin_ind, 
-        s.lib_etp
+        s.lib_etp,
+        (
+            SELECT gr.group_name 
+            FROM grouping_rules gr 
+            WHERE ps.cod_elp ILIKE gr.module_pattern 
+            AND UPPER(COALESCE(s.lib_nom_pat_ind, ps.lib_nom_pat_ind)) COLLATE "C" >= UPPER(gr.range_start) COLLATE "C"
+            AND UPPER(COALESCE(s.lib_nom_pat_ind, ps.lib_nom_pat_ind)) COLLATE "C" <= (UPPER(gr.range_end) || 'ZZZZZZ') COLLATE "C"
+            ORDER BY gr.range_start DESC, gr.group_name ASC
+            LIMIT 1
+        ) as specific_group
       FROM exam_assignments ea
+      JOIN exam_planning ep ON ea.exam_id = ep.id
       LEFT JOIN students s ON ea.cod_etu = s.cod_etu
-      LEFT JOIN pedagogical_situation ps ON ea.cod_etu = ps.cod_etu
+      -- Join PS but filter to only modules included in this exam (SMART MODULE MATCHING)
+      LEFT JOIN pedagogical_situation ps ON ea.cod_etu = ps.cod_etu 
+          AND (ep.module_code ILIKE '%' || TRIM(ps.cod_elp) || '%')
       WHERE ea.exam_id = $1
       ORDER BY ea.cod_etu, lib_nom_pat_ind
     `, [req.params.id]);
@@ -1084,11 +1111,10 @@ router.get('/exams', authenticateAdmin, async (req, res) => {
   }
 });
 
-// GET Exams with Student Count (CORRECTED LIST VIEW)
-
 // --- NEW ROUTE: Export Full Exam Planning with Student Details ---
 router.get('/exams/export/assignments', authenticateAdmin, async (req, res) => {
   try {
+    // UPDATED: Replaced LEFT JOIN with Subquery in SELECT to prevent duplicates and handle overlaps
     const query = `
       WITH unique_students AS (
         SELECT DISTINCT ON (cod_etu) cod_etu, lib_nom_pat_ind, lib_pr1_ind 
@@ -1109,27 +1135,35 @@ router.get('/exams/export/assignments', authenticateAdmin, async (req, res) => {
             COALESCE(us.lib_pr1_ind, un.lib_pr1_ind) as "Prenom",
             ep.exam_date,
             ep.start_time,
-            -- Clean Group Name
-            TRIM(REGEXP_REPLACE(COALESCE(gr.group_name, ep.group_name), '\s*\\([^)]*\\)', '', 'g')) as "group_name",
             ep.location,
             
             -- FIX: Auto-fill Professor Name (If one room has it, apply to all rooms for this module/group/time)
             COALESCE(
                 ep.professor_name,
                 MAX(ep.professor_name) OVER (PARTITION BY ep.module_code, ep.group_name, ep.exam_date, ep.start_time)
-            ) as professor_name
+            ) as professor_name,
+
+            -- FIX: Calculate Group Name using Subquery (Prioritize Range Start DESC)
+            -- Matches "Répartition Pédagogique" logic
+            (
+                SELECT gr.group_name 
+                FROM grouping_rules gr 
+                WHERE ps.cod_elp ILIKE gr.module_pattern 
+                AND UPPER(COALESCE(us.lib_nom_pat_ind, un.lib_nom_pat_ind)) COLLATE "C" >= UPPER(gr.range_start) COLLATE "C"
+                AND UPPER(COALESCE(us.lib_nom_pat_ind, un.lib_nom_pat_ind)) COLLATE "C" <= (UPPER(gr.range_end) || 'ZZZZZZ') COLLATE "C"
+                ORDER BY gr.range_start DESC, gr.group_name ASC
+                LIMIT 1
+            ) as calculated_group,
+            
+            ep.group_name as original_group_name
 
           FROM exam_planning ep
           JOIN exam_assignments ea ON ep.id = ea.exam_id
           LEFT JOIN unique_students us ON ea.cod_etu = us.cod_etu
+          -- Join PS but filter to only modules included in this exam (SMART MODULE MATCHING)
+          LEFT JOIN pedagogical_situation ps ON ea.cod_etu = ps.cod_etu 
+              AND (ep.module_code ILIKE '%' || TRIM(ps.cod_elp) || '%')
           LEFT JOIN unique_names un ON ea.cod_etu = un.cod_etu
-          
-          -- Join grouping rules to get consistent group names if used
-          LEFT JOIN grouping_rules gr ON (
-              ep.module_code ILIKE gr.module_pattern 
-              AND UPPER(COALESCE(us.lib_nom_pat_ind, un.lib_nom_pat_ind)) COLLATE "C" >= UPPER(gr.range_start) COLLATE "C"
-              AND UPPER(COALESCE(us.lib_nom_pat_ind, un.lib_nom_pat_ind)) COLLATE "C" <= (UPPER(gr.range_end) || 'ZZZZZZ') COLLATE "C"
-          )
           
           ORDER BY ep.exam_date, ep.start_time, ep.location, us.lib_nom_pat_ind
       )
@@ -1138,7 +1172,17 @@ router.get('/exams/export/assignments', authenticateAdmin, async (req, res) => {
             PARTITION BY session_id  -- Reset numbering for each Room/Session
             ORDER BY "Nom", "Prenom"
         ) as "num",
-        *
+        session_id,
+        module_code,
+        module_name,
+        cod_etu,
+        "Nom",
+        "Prenom",
+        exam_date,
+        start_time,
+        TRIM(REGEXP_REPLACE(COALESCE(calculated_group, original_group_name), '\s*\\([^)]*\\)', '', 'g')) as "group_name",
+        location,
+        professor_name
       FROM planning_data
       ORDER BY exam_date, start_time, location, "Nom", "Prenom"
     `;
@@ -1404,8 +1448,9 @@ router.post('/exams/refresh-participants', authenticateAdmin, async (req, res) =
 
         let groupClause = '';
         if (groups.length > 0) {
-            // FIXED: For multi-module plannings, we need to check if grouping rules exist
-            // for ANY of the modules, not just the student's specific module
+            // FIXED: Use COALESCE to match "Répartition Pédagogique" logic exactly.
+            // This ensures we use the Student table name if the Pedagogical name is missing/different.
+            // REVERTED: Removed "Best Match" logic to strictly rely on range boundaries.
             
             // Add module patterns to params for grouping check
             const modulePatternParams = [];
@@ -1416,27 +1461,33 @@ router.post('/exams/refresh-participants', authenticateAdmin, async (req, res) =
             
             const groupConds = groups.map(g => {
                 params.push(g);
+                // STRICT RANGE CHECK: Only fetches students whose names are within the defined bounds for this group.
                 return `EXISTS (
                     SELECT 1 FROM grouping_rules gr
                     WHERE (
-                        -- Check if this grouping rule applies to ANY module in the planning
                         ${modulePatternParams.map(p => `${p} ILIKE gr.module_pattern`).join(' OR ')}
                     )
                     AND gr.group_name = $${paramIndex++}
-                    AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" >= UPPER(gr.range_start) COLLATE "C"
-                    AND UPPER(ps.lib_nom_pat_ind) COLLATE "C" <= (UPPER(gr.range_end) || 'ZZZZZZ') COLLATE "C"
+                    AND UPPER(COALESCE(ps.lib_nom_pat_ind, s.lib_nom_pat_ind)) COLLATE "C" >= UPPER(gr.range_start) COLLATE "C"
+                    AND UPPER(COALESCE(ps.lib_nom_pat_ind, s.lib_nom_pat_ind)) COLLATE "C" <= (UPPER(gr.range_end) || 'ZZZZZZ') COLLATE "C"
                 )`;
             });
             groupClause = `AND (${groupConds.join(' OR ')})`;
         }
 
+        // FIXED: Added JOIN to students and COALESCE in SELECT/ORDER BY
+        // Matches "Répartition Pédagogique" logic for names
         const eligibleQuery = `
-          SELECT DISTINCT ps.cod_etu, ps.lib_nom_pat_ind, ps.lib_pr1_ind
+          SELECT DISTINCT 
+            ps.cod_etu, 
+            COALESCE(ps.lib_nom_pat_ind, s.lib_nom_pat_ind) as lib_nom_pat_ind, 
+            COALESCE(ps.lib_pr1_ind, s.lib_pr1_ind) as lib_pr1_ind
           FROM pedagogical_situation ps
+          LEFT JOIN students s ON ps.cod_etu = s.cod_etu
           WHERE ps.cod_elp IS NOT NULL 
             AND (${modConds.join(' OR ')}) 
             ${groupClause}
-          ORDER BY ps.lib_nom_pat_ind, ps.lib_pr1_ind
+          ORDER BY 2, 3
         `;
 
         const eligibleRes = await client.query(eligibleQuery, params);
