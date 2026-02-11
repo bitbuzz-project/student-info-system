@@ -4,6 +4,7 @@ const bcrypt = require('bcrypt');
 const { Pool } = require('pg');
 const multer = require('multer'); 
 const fs = require('fs'); 
+const { parse } = require('csv-parse'); // You may need to install this or use a similar parser
 const router = express.Router();
 require('dotenv').config();
 
@@ -867,32 +868,37 @@ router.put('/exams/:id', authenticateAdmin, async (req, res) => {
 // ------------------------------
 
 // GET Students for Multiple Modules + Multiple Groups (MERGE FEATURE)
+// ==========================================
+// FIXED: GET Students for Planning (Normal vs Rattrapage)
+// ==========================================
 router.get('/groups/students', authenticateAdmin, async (req, res) => {
   try {
-    const { module, group } = req.query;
-    
-    if (!module) return res.status(400).json({ error: 'Module code required' });
+    const { module: modQuery, group: grpQuery, isRattrapage } = req.query;
 
-    // 1. Parse comma-separated inputs
-    const modules = module.split(',').map(m => m.trim()).filter(m => m);
-    // Parse groups, filtering out 'null' or 'undefined' strings
-    const groups = group 
-      ? group.split(',').map(g => g.trim()).filter(g => g && g !== 'null' && g !== 'undefined') 
+    if (!modQuery) {
+      return res.status(400).json({ error: 'Module code required' });
+    }
+
+    // 1. Determine if Rattrapage mode is active (handles string 'true' or boolean true)
+    const isRattActive = isRattrapage === 'true' || isRattrapage === true;
+
+    // 2. Parse inputs
+    const modules = modQuery.split(',').map(m => m.trim()).filter(m => m);
+    const groups = grpQuery 
+      ? grpQuery.split(',').map(g => g.trim()).filter(g => g && g !== 'null' && g !== 'undefined') 
       : [];
 
-    console.log(`🔍 Fetching students for Modules: [${modules.join(', ')}], Groups: [${groups.join(', ')}]`);
+    console.log(`🔍 [PLANNING] Fetching: Modules: [${modules.join(', ')}], Mode: ${isRattActive ? 'RATTrapage' : 'NORMAL'}`);
 
-    // 2. Build Dynamic Module Conditions (OR logic)
-    // Result: (TRIM(ps.cod_elp) ILIKE TRIM($1) OR TRIM(ps.cod_elp) ILIKE TRIM($2) ...)
+    // 3. Build Module conditions
     const moduleConditions = modules.map((_, index) => `TRIM(ps.cod_elp) ILIKE TRIM($${index + 1})`).join(' OR ');
 
+    // 4. Base Query: Start with pedagogical registration
     let query = `
       SELECT DISTINCT 
         ps.cod_etu, 
         COALESCE(ps.lib_nom_pat_ind, s.lib_nom_pat_ind) as lib_nom_pat_ind, 
-        COALESCE(ps.lib_pr1_ind, s.lib_pr1_ind) as lib_pr1_ind, 
-        s.cin_ind, 
-        s.lib_etp
+        COALESCE(ps.lib_pr1_ind, s.lib_pr1_ind) as lib_pr1_ind
       FROM pedagogical_situation ps
       LEFT JOIN students s ON ps.cod_etu = s.cod_etu
       WHERE (${moduleConditions})
@@ -901,11 +907,21 @@ router.get('/groups/students', authenticateAdmin, async (req, res) => {
     const params = [...modules];
     let nextParamIndex = modules.length + 1;
 
-    // 3. Apply Group Filter (only if groups provided and not "Tous")
+    // 5. Apply the Rattrapage Filter (Check failures in dedicated import table)
+    if (isRattActive) {
+      query += `
+        AND EXISTS (
+          SELECT 1 FROM exam_results_import eri 
+          WHERE eri.cod_etu = ps.cod_etu 
+          AND eri.cod_elp = ps.cod_elp 
+          AND (eri.not_elp < 10 OR eri.is_absent = TRUE OR eri.not_elp = 0)
+        )
+      `;
+    }
+
+    // 6. Apply Group Filter (Alphabetical Range logic)
     if (groups.length > 0 && !groups.includes('Tous')) {
       const groupPlaceholders = groups.map((_, i) => `$${nextParamIndex + i}`).join(',');
-      
-      // We check if the student belongs to ANY of the selected groups for ANY of the selected modules
       query += `
         AND EXISTS (
           SELECT 1 FROM grouping_rules gr
@@ -920,10 +936,11 @@ router.get('/groups/students', authenticateAdmin, async (req, res) => {
       params.push(...groups);
     }
 
-    query += ` ORDER BY 2, 3`; // Order by Nom, Prenom
+    // 7. Final Ordering and Safety Limit to prevent browser crash
+    query += ` ORDER BY 2, 3 LIMIT 15000`; 
 
     const result = await pool.query(query, params);
-    console.log(`✅ Found ${result.rows.length} students.`);
+    console.log(`✅ [PLANNING] Found ${result.rows.length} students.`);
     
     res.json(result.rows);
   } catch (error) {
@@ -931,7 +948,6 @@ router.get('/groups/students', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
-
 // ==========================================
 // 12. LOCATION & ASSIGNMENT ROUTES
 // ==========================================
@@ -1745,5 +1761,70 @@ async function updateExamAssignments(client, examId, newStudentIds, stats) {
     stats.updatedExams++;
   }
 }
+router.post('/exams/import-results', authenticateAdmin, upload.single('file'), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'Fichier manquant' });
 
+    const client = await pool.connect();
+    try {
+        const results = [];
+        const parser = fs.createReadStream(req.file.path).pipe(
+            parse({
+                columns: true,
+                delimiter: ';', 
+                trim: true,
+                skip_empty_lines: true,
+                bom: true // Handles Excel UTF-8 hidden characters
+            })
+        );
+
+        for await (const row of parser) {
+            const cne = row.CNE || row.cne || row['CNE'];
+            let noteStr = row.Note || row.note || row['Note'];
+            const moduleCode = row.ModuleCode || row.modulecode || row['ModuleCode'];
+
+            if (!cne || !moduleCode) continue;
+
+            let noteValue = null;
+            let isAbsent = false;
+
+            if (noteStr) {
+                const upperNote = noteStr.toString().toUpperCase().trim();
+                if (upperNote === 'ABS') {
+                    isAbsent = true;
+                } else {
+                    // FIX: Convert "9,5" to 9.5
+                    noteValue = parseFloat(noteStr.toString().replace(',', '.'));
+                }
+            } else {
+                isAbsent = true;
+            }
+
+            results.push({ cne, noteValue, isAbsent, moduleCode });
+        }
+
+        await client.query('BEGIN');
+        const currentYear = new Date().getFullYear();
+
+        for (const data of results) {
+            await client.query(
+                `INSERT INTO exam_results_import (cod_etu, cod_elp, not_elp, is_absent, cod_anu) 
+                 VALUES ($1, $2, $3, $4, $5) 
+                 ON CONFLICT (cod_etu, cod_elp, cod_anu) 
+                 DO UPDATE SET not_elp = EXCLUDED.not_elp, is_absent = EXCLUDED.is_absent, imported_at = NOW()`,
+                [data.cne, data.moduleCode, data.noteValue, data.is_absent, currentYear]
+            );
+        }
+
+        await client.query('COMMIT');
+        if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+        res.json({ message: `${results.length} notes importées avec succès.` });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+        res.status(500).json({ error: error.message });
+    } finally {
+        client.release();
+    }
+});
 module.exports = router;

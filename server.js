@@ -4923,4 +4923,3 @@ app.post('/student/request/student-card', authenticateToken, upload.single('proo
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
